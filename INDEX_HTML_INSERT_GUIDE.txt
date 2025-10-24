@@ -1,0 +1,5 @@
+Add these three lines near the bottom of index.html, BELOW app.js and ABOVE </body>:
+
+<script src="v31-feature-patch.js"></script>
+<script src="v31-receivables.js"></script>
+<script src="cloud-addon.js"></script>
