@@ -1,5 +1,3 @@
-[file name]: test4.html
-[file content begin]
 <!doctype html>
 <html lang="en">
 <head>
@@ -236,6 +234,28 @@ function openPrintable(html){
   iframe.srcdoc=html; return false;
 }
 
+// DVLA Response Validation Helper
+function validateDVLAResponse(data) {
+  if (!data || typeof data !== 'object') {
+    return { isValid: false, error: 'Invalid response format' };
+  }
+  
+  // Check if we have at least some vehicle data
+  const hasData = data.make || data.colour || data.fuel || data.vin || 
+                 (data.raw && (data.raw.make || data.raw.colour || data.raw.fuelType));
+  
+  return { 
+    isValid: !!hasData, 
+    fieldsFound: {
+      make: !!data.make,
+      model: !!data.model,
+      colour: !!data.colour,
+      fuel: !!data.fuel,
+      vin: !!data.vin
+    }
+  };
+}
+
 /* ========= DB init ========= */
 let db=loadDB();
 const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Directors','Investors','Reports','To-Do','Users','Settings'];
@@ -332,7 +352,7 @@ async function syncPull(){ try{ const gistId=(db.company.gistId||'').trim(); if(
   const r=await fetch(`https://api.github.com/gists/${gistId}`); const txt=await r.text(); if(!r.ok) return alert('Gist fetch failed '+r.status+': '+txt);
   const j=JSON.parse(txt); const file=j.files&&(j.files['starcars.json']||Object.values(j.files)[0]); if(!file||!file.content) return alert('No starcars.json in that Gist');
   const incoming=JSON.parse(file.content);
-  Object.keys(incoming).forEach(k=>{ if(Array.isArray(incoming[k])){ const ids=new Set((db[k]||[]).map(x=>x.id)); (incoming[k]||[]).forEach(x=>{ if(!ids.has(x.id)) (db[k]=db[k]||[]).push(x); }); } else if(typeof incoming[k]==='object'){ db[k]=Object.assign(db[k]||{},incoming[k]); } else db[k]=incoming[k]; });
+  Object.keys(incoming).forEach(k=>{ if(Array.isArray(incoming[k])){ const ids=new Set((db[k]||[]).map(x=>x.id)); (incoming[k]||[]).forEach(x=>{ if(!ids.has(x.id)) (db[k]=db[k]||[]).push(x); }); } else if(typeof incoming[k]==='object'){ db[k]=Object.assign(db[k]||{}, incoming[k]); } else db[k]=incoming[k]; });
   db.users=(db.users||[]).map(u=>{u.perms=normalizePerms(u.perms);return u;}); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('sync','pull',gistId,'Pulled from Gist'); alert('Pulled & merged from Gist'); render();
 }catch(e){ alert('Pull failed: '+e.message); } }
 async function syncPush(){ try{ const gistId=(db.company.gistId||'').trim(); if(!gistId) return alert('Enter Gist ID in Settings');
@@ -441,14 +461,14 @@ function viewVehicles(){
   if(!canTab('Vehicles')) return document.createElement('div'); const wrap=document.createElement('div'); wrap.className='card';
   wrap.innerHTML=`<h2>Vehicles</h2>
   <div class="row">
-    <label>REG *<input id="v_reg" placeholder="AB12CDE"><button id="v_lookup" type="button">DVLA/DVSA Lookup</button></label>
-    <button id="v_dvla">Lookup DVLA</button>
+    <label>REG *<input id="v_reg" placeholder="AB12CDE"><button id="v_dvla" type="button">DVLA Lookup</button></label>
     <label>Make<input id="v_make"></label>
     <label>Model<input id="v_model"></label>
     <label>Colour<input id="v_colour"></label>
     <label>Fuel<input id="v_fuel" placeholder="PETROL/DIESEL/EV"></label>
     <label>Mileage<input id="v_mileage" type="number" placeholder="0"></label>
     <label>Purchase £<input id="v_purchase" type="number" placeholder="0"></label>
+    <label>Date of First Reg<input id="v_firstReg" type="date"></label>
     <label>Owner Type<select id="v_ownerType"><option value="owned">owned</option><option value="investor">investor</option></select></label>
     <label>Investor<input id="v_investor" placeholder="Investor name (if any)"></label>
     <label>Supplier Invoice #<input id="v_supplier" placeholder="INV-001"></label>
@@ -471,8 +491,9 @@ function viewVehicles(){
     <input id="veh_search" placeholder="Search reg/make/model (auto filter)">
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_instock" checked> In stock only</label>
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_soldonly"> Sold only</label>
+    <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_investoronly"> Investor stock</label>
   </div>
-  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>Type</th><th>Investor</th><th>Purchase</th><th>Status</th><th>Supplier #</th><th>Media</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
+  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Type</th><th>Investor</th><th>Purchase</th><th>Status</th><th>Supplier #</th><th>Media</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
   let editId=null; const body=wrap.querySelector('#vehBody');
 
@@ -486,17 +507,24 @@ function viewVehicles(){
     renderPreview(merged);
   });
 
-  const rows=(q='', mode='instock')=>{
+  function rows(q='', mode='instock'){
     body.innerHTML='';
     q=(q||'').toLowerCase().trim();
     (db.vehicles||[]).forEach(v=>{
+      // Apply stock status filters
       if(mode==='instock' && v.status==='sold') return;
       if(mode==='sold' && v.status!=='sold') return;
+      
+      // Apply investor stock filter
+      const investorOnly = wrap.querySelector('#veh_investoronly').checked;
+      if(investorOnly && v.ownerType !== 'investor') return;
+      
       const hay = ((v.reg||'')+' '+(v.make||'')+' '+(v.model||'')).toLowerCase();
       if(q && !hay.includes(q)) return;
+      
       const tr=document.createElement('tr');
       const mcount=(v.media||[]).length + ((v.video&&1)||0);
-      tr.innerHTML=`<td>${v.reg||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${v.colour||''}</td><td>${v.mileage||''}</td><td>${v.fuel||''}</td><td>${v.ownerType||'owned'}</td><td>${v.investor||''}</td><td class="right">${fmtMoney(v.purchase||0)}</td><td>${v.status||''}</td><td>${v.supplier||''}</td>
+      tr.innerHTML=`<td>${v.reg||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${v.colour||''}</td><td>${v.mileage||''}</td><td>${v.fuel||''}</td><td>${ddmmyyyy(v.firstReg||'')}</td><td>${v.ownerType||'owned'}</td><td>${v.investor||''}</td><td class="right">${fmtMoney(v.purchase||0)}</td><td>${v.status||''}</td><td>${v.supplier||''}</td>
       <td>${mcount?mcount+' item(s)':''}</td>
       <td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''}</td>`;
       body.appendChild(tr);
@@ -510,33 +538,91 @@ function viewVehicles(){
     const instock=chkIn && chkIn.checked; const soldonly=chkSold && chkSold.checked;
     const mode=soldonly?'sold':(instock?'instock':'all'); rows(q,mode);
   }
+  
   const SRCH=wrap.querySelector('#veh_search'); if(SRCH) SRCH.addEventListener('input', applyVehFilter);
-  const CHK_IN=wrap.querySelector('#veh_instock'); if(CHK_IN) CHK_IN.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_soldonly'); if(s) s.checked=false; } applyVehFilter(); });
-  const CHK_SOLD=wrap.querySelector('#veh_soldonly'); if(CHK_SOLD) CHK_SOLD.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; } applyVehFilter(); });
+  const CHK_IN=wrap.querySelector('#veh_instock'); if(CHK_IN) CHK_IN.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_soldonly'); if(s) s.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; } applyVehFilter(); });
+  const CHK_SOLD=wrap.querySelector('#veh_soldonly'); if(CHK_SOLD) CHK_SOLD.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; } applyVehFilter(); });
+  const CHK_INVESTOR=wrap.querySelector('#veh_investoronly'); if(CHK_INVESTOR) CHK_INVESTOR.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const sold=wrap.querySelector('#veh_soldonly'); if(sold) sold.checked=false; } applyVehFilter(); });
 
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
     if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const v=db.vehicles.find(x=>x.id===id); editId=id;
-      ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_ownerType','v_investor','v_supplier','v_status','v_vin','v_video'].forEach(k=>{ const el=wrap.querySelector('#'+k); if(!el)return; const key=k.replace(/^v_/,''); el.value=(v[key]??''); });
+      ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_firstReg','v_ownerType','v_investor','v_supplier','v_status','v_vin','v_video'].forEach(k=>{ const el=wrap.querySelector('#'+k); if(!el)return; const key=k.replace(/^v_/,''); el.value=(v[key]??''); });
       wrap.querySelector('#v_mediaUrls').value=(v.media||[]).filter(u=>!u.startsWith('data:')).join(', ');
       wrap.querySelector('#v_mediaPreview').dataset.urls=JSON.stringify((v.media||[]));
       renderPreview(v.media||[]);
     }else if(act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete vehicle?')) return; const delV=db.vehicles.find(x=>x.id===id); db.vehicles=db.vehicles.filter(x=>x.id!==id); db.vehicleExpenses=db.vehicleExpenses.filter(e=>e.vehicleId!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','vehicle',id,delV?delV.reg:''); rows(); }
   });
 
-  wrap.querySelector('#v_dvla').onclick=async()=>{
-    const reg=(wrap.querySelector('#v_reg').value||'').trim().toUpperCase(); if(!reg) return alert('Enter REG first');
-    const url=db.company.dvlaProxy||''; if(!url) return alert('Add DVLA Proxy URL in Settings.');
-    try{
-      const rsp=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({registrationNumber:reg, apiKey:(db.company.dvlaKey||db.company.dvsaKey||'')})});
-      const txt=await rsp.text(); if(!rsp.ok){ alert('Proxy error '+rsp.status+': '+txt); return; }
-      const j=JSON.parse(txt||'{}');
-      wrap.querySelector('#v_make').value=j.make||j.raw?.make||'';
-      wrap.querySelector('#v_colour').value=j.colour||j.raw?.colour||'';
-      wrap.querySelector('#v_fuel').value=(j.fuel||j.raw?.fuelType||'').toString().toUpperCase();
-      if(j.model) wrap.querySelector('#v_model').value=j.model;
-      if(j.vin) wrap.querySelector('#v_vin').value=j.vin;
-      alert('DVLA filled available fields.');
-    }catch(err){ alert('Lookup failed: '+err.message); }
+  // Fixed DVLA Lookup with Date of First Registration
+  wrap.querySelector('#v_dvla').onclick = async () => {
+    const reg = (wrap.querySelector('#v_reg').value || '').trim().toUpperCase();
+    if (!reg) return alert('Enter REG first');
+    
+    const url = db.company.dvlaProxy || '';
+    if (!url) return alert('Add DVLA Proxy URL in Settings.');
+    
+    // Save original button text and disable during lookup
+    const btn = wrap.querySelector('#v_dvla');
+    const originalText = btn.textContent;
+    btn.textContent = 'Looking up...';
+    btn.disabled = true;
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          reg: reg,
+          apiKey: (db.company.dvlaKey || db.company.dvsaKey || '')
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
+      const data = await response.json();
+      
+      // Enhanced field mapping with fallbacks
+      const make = data.make || data.raw?.make || '';
+      const model = data.model || data.raw?.model || '';
+      const colour = data.colour || data.raw?.colour || '';
+      const fuelType = (data.fuel || data.raw?.fuelType || '').toString().toUpperCase();
+      const vin = data.vin || data.raw?.vin || '';
+      const yearOfManufacture = data.yearOfManufacture || data.raw?.yearOfManufacture || '';
+      
+      // Populate fields
+      if (make) wrap.querySelector('#v_make').value = make;
+      if (model) wrap.querySelector('#v_model').value = model;
+      if (colour) wrap.querySelector('#v_colour').value = colour;
+      if (fuelType) wrap.querySelector('#v_fuel').value = fuelType;
+      if (vin) wrap.querySelector('#v_vin').value = vin;
+      
+      // Populate Date of First Registration if year is available
+      if (yearOfManufacture) {
+        // Set to first day of the year (YYYY-01-01) as we don't have exact date
+        const firstRegDate = `${yearOfManufacture}-01-01`;
+        wrap.querySelector('#v_firstReg').value = firstRegDate;
+      }
+      
+      // Show success message with details
+      const foundFields = [make && 'Make', model && 'Model', colour && 'Colour', 
+                          fuelType && 'Fuel', vin && 'VIN', yearOfManufacture && 'First Reg Year'].filter(Boolean);
+      const message = foundFields.length > 0 
+        ? `DVLA lookup successful! Found: ${foundFields.join(', ')}`
+        : 'DVLA lookup completed but no vehicle data found';
+      
+      alert(message);
+      
+    } catch (err) {
+      console.error('DVLA lookup failed:', err);
+      alert('DVLA lookup failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      // Restore button state
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }
   };
 
   wrap.querySelector('#v_add').onclick=()=>{ if(!canAction('add')) return alert('No permission');
@@ -545,13 +631,28 @@ function viewVehicles(){
     const urls=(wrap.querySelector('#v_mediaUrls').value||'').split(',').map(s=>s.trim()).filter(Boolean);
     const uploaded=(wrap.querySelector('#v_mediaPreview').dataset.urls?JSON.parse(wrap.querySelector('#v_mediaPreview').dataset.urls):[]);
     const media=[...uploaded,...urls];
-    const v={ id:editId||uid(), reg, make:wrap.querySelector('#v_make').value.trim(), model:wrap.querySelector('#v_model').value.trim(), colour:wrap.querySelector('#v_colour').value.trim(), fuel:wrap.querySelector('#v_fuel').value.trim(),
-      mileage:Number(wrap.querySelector('#v_mileage').value||0), purchase:Number(wrap.querySelector('#v_purchase').value||0), ownerType:wrap.querySelector('#v_ownerType').value, investor:wrap.querySelector('#v_investor').value.trim(),
-      supplier:wrap.querySelector('#v_supplier').value.trim(), vin:wrap.querySelector('#v_vin').value.trim(), status:wrap.querySelector('#v_status').value, createdAt:(db.vehicles.find(x=>x.id===editId)?.createdAt)||new Date().toISOString(),
-      media, video:(wrap.querySelector('#v_video').value||'').trim() };
+    const v={ 
+      id:editId||uid(), 
+      reg, 
+      make:wrap.querySelector('#v_make').value.trim(), 
+      model:wrap.querySelector('#v_model').value.trim(), 
+      colour:wrap.querySelector('#v_colour').value.trim(), 
+      fuel:wrap.querySelector('#v_fuel').value.trim(),
+      mileage:Number(wrap.querySelector('#v_mileage').value||0), 
+      purchase:Number(wrap.querySelector('#v_purchase').value||0), 
+      firstReg:wrap.querySelector('#v_firstReg').value,
+      ownerType:wrap.querySelector('#v_ownerType').value, 
+      investor:wrap.querySelector('#v_investor').value.trim(),
+      supplier:wrap.querySelector('#v_supplier').value.trim(), 
+      vin:wrap.querySelector('#v_vin').value.trim(), 
+      status:wrap.querySelector('#v_status').value, 
+      createdAt:(db.vehicles.find(x=>x.id===editId)?.createdAt)||new Date().toISOString(),
+      media, 
+      video:(wrap.querySelector('#v_video').value||'').trim() 
+    };
     if(editId){ const i=db.vehicles.findIndex(x=>x.id===editId); db.vehicles[i]=v; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); editId=null; }
     else { db.vehicles.unshift(v); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); }
-    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_investor','v_supplier','v_vin','v_mediaUrls','v_video'].forEach(k=>document.getElementById(k).value=''); wrap.querySelector('#v_mediaPreview').dataset.urls='[]'; renderPreview([]);
+    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_firstReg','v_investor','v_supplier','v_vin','v_mediaUrls','v_video'].forEach(k=>document.getElementById(k).value=''); wrap.querySelector('#v_mediaPreview').dataset.urls='[]'; renderPreview([]);
   };
   return wrap;
 }
@@ -665,7 +766,8 @@ function hint(){ const bal=calcBalances(); wrap.querySelector('#s_totHint').text
 
 /* ========= Sales ========= */
 function viewSales(){ if(!canTab('Sales')) return document.createElement('div'); const wrap=document.createElement('div'); wrap.className='card';
-  const regOptions=(db.vehicles||[]).filter(v=>v.status!=='sold').map(v=>`<option value="${(v.reg||'').toUpperCase()}">`).join('');
+  // Remove the filter that excludes sold vehicles from the REG dropdown
+  const regOptions=(db.vehicles||[]).map(v=>`<option value="${(v.reg||'').toUpperCase()}">`).join('');
   wrap.innerHTML=`<h2>Sales</h2>
   <div class="row">
     <label>Vehicle REG<datalist id="sale_reg_list">${regOptions}</datalist><input id="sale_reg" list="sale_reg_list" placeholder="Type REG to select vehicle"></label>
@@ -699,7 +801,10 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
   </div>
   <table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Reg</th><th>Customer</th><th class="right">Price</th><th>Breakdown</th>${canProfit()?'<th class="right">Profit</th>':''}<th>Actions</th></tr></thead><tbody id="sale_body"></tbody></table>`;
   let editId=null; const body=wrap.querySelector('#sale_body');
-  function findVehicleIdByReg(reg){ reg=(reg||'').toUpperCase().trim(); const v=(db.vehicles||[]).find(x=>(x.reg||'').toUpperCase()===reg&&x.status!=='sold'); return v?v.id:null; }
+  
+  // Update this function to find vehicles regardless of status
+  function findVehicleIdByReg(reg){ reg=(reg||'').toUpperCase().trim(); const v=(db.vehicles||[]).find(x=>(x.reg||'').toUpperCase()===reg); return v?v.id:null; }
+  
   function rows(){ body.innerHTML=''; (db.sales||[]).forEach(s=>{ const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,x)=>t+Number(x.amount||0),0);
     const profit=Number(s.salePrice||0)-Number(v.purchase||0)-vexp; const br=`£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
     const tr=document.createElement('tr'); tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td><td>${v.reg||''}</td><td>${s.buyer||''}</td><td class="right">${fmtMoney(s.salePrice)}</td><td>${br}</td>${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
@@ -722,7 +827,7 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
     } else if(b.dataset.act==='inv'){ printInvoice(s.id); } else if(b.dataset.act==='proforma'){ printFinanceProforma(s.id); }
   });
 
-  wrap.querySelector('#sale_add').onclick=()=>{ if(!canAction('add')) return alert('No permission'); const regInput=(wrap.querySelector('#sale_reg').value||'').toUpperCase().trim(); const vid=findVehicleIdByReg(regInput); if(!vid) return alert('Enter a valid in-stock REG (use the suggestions).');
+  wrap.querySelector('#sale_add').onclick=()=>{ if(!canAction('add')) return alert('No permission'); const regInput=(wrap.querySelector('#sale_reg').value||'').toUpperCase().trim(); const vid=findVehicleIdByReg(regInput); if(!vid) return alert('Enter a valid REG (use the suggestions).');
     const price=Number(wrap.querySelector('#sale_price').value||0);
     const s={ id:editId||uid(), vehicleId:vid, date:wrap.querySelector('#sale_date').value, firstReg:wrap.querySelector('#sale_firstReg').value, buyer:wrap.querySelector('#sale_buyer').value.trim(), address:wrap.querySelector('#sale_addr').value.trim(),
       phone:wrap.querySelector('#sale_phone').value.trim(), email:wrap.querySelector('#sale_email').value.trim(), mileage:Number(wrap.querySelector('#sale_mileage').value||0), salePrice:price, deposit:Number(wrap.querySelector('#sale_dep').value||0),
@@ -731,8 +836,28 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
       financeCompany:wrap.querySelector('#sale_finCo').value.trim(), agreement:wrap.querySelector('#sale_agree').value.trim(), deliverTo:wrap.querySelector('#sale_deliver').value.trim(), invNo:(Date.now()+'').slice(-6)};
     const sumBreak=s.deposit+s.cash+s.card+s.bank+s.finance+s.pxAllowance;
     if(sumBreak!==s.salePrice){ if(!confirm('Payments + PX do not equal sale price. Continue?')) return; }
-    if(editId){ db.sales=db.sales.map(x=>x.id===editId?s:x); addAudit('update','sale',s.id,(db.vehicles.find(x=>x.id===s.vehicleId)||{}).reg+' inv '+s.invNo); const vM=db.vehicles.find(x=>x.id===s.vehicleId); if(vM) vM.mileage=s.mileage||vM.mileage; editId=null; }
-    else { db.sales.unshift(s); addAudit('add','sale',s.id,(db.vehicles.find(x=>x.id===s.vehicleId)||{}).reg+' inv '+s.invNo); const vStat=db.vehicles.find(x=>x.id===vid); if(vStat){ vStat.status='sold'; vStat.mileage=s.mileage||vStat.mileage; } if(s.pxReg&&s.pxAllowance>0){ const px={id:uid(),reg:s.pxReg,make:s.pxMake,model:s.pxModel,colour:'',fuel:'',mileage:0,purchase:s.pxAllowance,ownerType:'owned',investor:'',supplier:'PART-EX',vin:'',status:'for sale',createdAt:new Date().toISOString(),media:[],video:''}; db.vehicles.unshift(px); addAudit('add','vehicle',px.id,'PX '+px.reg+' '+(px.make||'')+' '+(px.model||'')); } }
+    if(editId){ 
+      // Update existing sale - don't change vehicle status
+      db.sales=db.sales.map(x=>x.id===editId?s:x); 
+      addAudit('update','sale',s.id,(db.vehicles.find(x=>x.id===s.vehicleId)||{}).reg+' inv '+s.invNo); 
+      const vM=db.vehicles.find(x=>x.id===s.vehicleId); 
+      if(vM) vM.mileage=s.mileage||vM.mileage; 
+      editId=null; 
+    } else { 
+      // New sale - mark vehicle as sold
+      db.sales.unshift(s); 
+      addAudit('add','sale',s.id,(db.vehicles.find(x=>x.id===s.vehicleId)||{}).reg+' inv '+s.invNo); 
+      const vStat=db.vehicles.find(x=>x.id===vid); 
+      if(vStat){ 
+        vStat.status='sold'; 
+        vStat.mileage=s.mileage||vStat.mileage; 
+      } 
+      if(s.pxReg&&s.pxAllowance>0){ 
+        const px={id:uid(),reg:s.pxReg,make:s.pxMake,model:s.pxModel,colour:'',fuel:'',mileage:0,purchase:s.pxAllowance,ownerType:'owned',investor:'',supplier:'PART-EX',vin:'',status:'for sale',createdAt:new Date().toISOString(),media:[],video:''}; 
+        db.vehicles.unshift(px); 
+        addAudit('add','vehicle',px.id,'PX '+px.reg+' '+(px.make||'')+' '+(px.model||'')); 
+      } 
+    }
     saveDB(); try{renderAlertBell();}catch(e){}; render();
   };
   return wrap;
@@ -776,6 +901,7 @@ function viewCredit(){
     <input id="cr_date" type="date">
     <input id="cr_customer" placeholder="Customer Name">
     <input id="cr_vehicle" placeholder="Vehicle REG (if applicable)">
+    <button id="cr_dvla">DVLA Lookup</button>
     <select id="cr_type">
       <option value="refund">Refund</option>
       <option value="credit_note">Credit Note</option>
@@ -784,6 +910,14 @@ function viewCredit(){
     <input id="cr_amount" type="number" placeholder="Amount £">
     <input id="cr_reason" placeholder="Reason for credit/refund">
     <button id="cr_add" class="primary">Add Credit</button>
+  </div>
+  <div class="row" id="cr_vehicleDetailsSection">
+    <label>Make<input id="cr_make" placeholder="Vehicle Make"></label>
+    <label>Model<input id="cr_model" placeholder="Vehicle Model"></label>
+    <label>VIN<input id="cr_vin" placeholder="Vehicle VIN"></label>
+    <label>Mileage<input id="cr_mileage" type="number" placeholder="Mileage"></label>
+    <label>Colour<input id="cr_colour" placeholder="Vehicle Colour"></label>
+    <label>Fuel<input id="cr_fuel" placeholder="Fuel Type"></label>
   </div>
   <table class="table" style="margin-top:10px">
     <thead>
@@ -795,6 +929,7 @@ function viewCredit(){
         <th>Method</th>
         <th class="right">Amount</th>
         <th>Reason</th>
+        <th>In Stock</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -804,9 +939,50 @@ function viewCredit(){
   const body=wrap.querySelector('#cr_body');
   let editId=null;
   
+  // DVLA Lookup for Credit tab - Updated to populate individual fields
+  wrap.querySelector('#cr_dvla').onclick = async () => {
+    const reg = (wrap.querySelector('#cr_vehicle').value || '').trim().toUpperCase();
+    if (!reg) return alert('Enter REG first');
+    
+    const url = db.company.dvlaProxy || '';
+    if (!url) return alert('Add DVLA Proxy URL in Settings.');
+    
+    try {
+      const rsp = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          reg: reg,
+          apiKey: (db.company.dvlaKey || db.company.dvsaKey || '')
+        })
+      });
+      
+      const txt = await rsp.text();
+      if (!rsp.ok) {
+        alert('Proxy error ' + rsp.status + ': ' + txt);
+        return;
+      }
+      
+      const j = JSON.parse(txt || '{}');
+      
+      // Populate individual fields from DVLA data
+      if (j.make || j.raw?.make) wrap.querySelector('#cr_make').value = j.make || j.raw.make || '';
+      if (j.model) wrap.querySelector('#cr_model').value = j.model || '';
+      if (j.colour || j.raw?.colour) wrap.querySelector('#cr_colour').value = j.colour || j.raw.colour || '';
+      if (j.fuel || j.raw?.fuelType) wrap.querySelector('#cr_fuel').value = (j.fuel || j.raw.fuelType || '').toString().toUpperCase();
+      if (j.vin || j.raw?.vin) wrap.querySelector('#cr_vin').value = j.vin || j.raw.vin || '';
+      
+      alert('DVLA lookup completed. Vehicle details filled.');
+      
+    } catch (err) {
+      alert('DVLA lookup failed: ' + err.message);
+    }
+  };
+  
   function renderCredits(){
     body.innerHTML='';
     (db.credits||[]).forEach(cr=>{
+      const inStock = (db.vehicles||[]).some(v => v.reg === cr.vehicle && v.status === 'for sale');
       const tr=document.createElement('tr');
       tr.innerHTML=`<td>${ddmmyyyy(cr.date)}</td>
                    <td>${cr.customer||''}</td>
@@ -815,9 +991,12 @@ function viewCredit(){
                    <td>${cr.method||'bank'}</td>
                    <td class="right">${fmtMoney(cr.amount)}</td>
                    <td>${cr.reason||''}</td>
+                   <td>${cr.vehicle && inStock ? '✅' : ''}</td>
                    <td>
+                     <button data-act="print" data-id="${cr.id}">Print Invoice</button>
                      ${canAction('edit')?`<button data-act="edit" data-id="${cr.id}">Edit</button>`:''}
                      ${canAction('del')?`<button class="danger" data-act="del" data-id="${cr.id}">Delete</button>`:''}
+                     ${cr.vehicle && !inStock && cr.type === 'refund' ? `<button data-act="addToStock" data-id="${cr.id}">Add to Stock</button>` : ''}
                    </td>`;
       body.appendChild(tr);
     });
@@ -834,11 +1013,52 @@ function viewCredit(){
       type: wrap.querySelector('#cr_type').value,
       method: wrap.querySelector('#cr_method').value,
       amount: Number(wrap.querySelector('#cr_amount').value||0),
-      reason: wrap.querySelector('#cr_reason').value.trim()
+      reason: wrap.querySelector('#cr_reason').value.trim(),
+      make: wrap.querySelector('#cr_make').value.trim(),
+      model: wrap.querySelector('#cr_model').value.trim(),
+      vin: wrap.querySelector('#cr_vin').value.trim(),
+      mileage: Number(wrap.querySelector('#cr_mileage').value||0),
+      colour: wrap.querySelector('#cr_colour').value.trim(),
+      fuel: wrap.querySelector('#cr_fuel').value.trim()
     };
     
     if(!cr.date || !cr.customer || !cr.amount) {
       return alert('Date, Customer and Amount are required');
+    }
+    
+    // If it's a refund with a vehicle REG, automatically add to stock if details are provided
+    if(cr.type === 'refund' && cr.vehicle) {
+      if(!cr.make.trim() || !cr.model.trim()) {
+        return alert('Please provide vehicle Make and Model for refunds with vehicle REG');
+      }
+      
+      // Check if vehicle already exists in stock
+      const existingVehicle = (db.vehicles||[]).find(v => v.reg === cr.vehicle);
+      if(existingVehicle) {
+        return alert(`Vehicle ${cr.vehicle} already exists in stock`);
+      }
+      
+      const vehicle = {
+        id: uid(),
+        reg: cr.vehicle,
+        make: cr.make,
+        model: cr.model,
+        colour: cr.colour,
+        fuel: cr.fuel,
+        mileage: cr.mileage,
+        purchase: cr.amount, // Use refund amount as purchase price
+        ownerType: 'owned',
+        investor: '',
+        supplier: `Refund from ${cr.customer}`,
+        vin: cr.vin,
+        status: 'for sale',
+        createdAt: cr.date || new Date().toISOString(),
+        media: [],
+        video: ''
+      };
+      
+      db.vehicles.unshift(vehicle);
+      addAudit('add','vehicle',vehicle.id,`Added to stock from refund - ${vehicle.reg}`);
     }
     
     if(editId){
@@ -860,6 +1080,12 @@ function viewCredit(){
     wrap.querySelector('#cr_vehicle').value = '';
     wrap.querySelector('#cr_amount').value = '';
     wrap.querySelector('#cr_reason').value = '';
+    wrap.querySelector('#cr_make').value = '';
+    wrap.querySelector('#cr_model').value = '';
+    wrap.querySelector('#cr_vin').value = '';
+    wrap.querySelector('#cr_mileage').value = '';
+    wrap.querySelector('#cr_colour').value = '';
+    wrap.querySelector('#cr_fuel').value = '';
   };
   
   wrap.addEventListener('click',(ev)=>{
@@ -888,11 +1114,110 @@ function viewCredit(){
       wrap.querySelector('#cr_method').value=cr.method||'bank';
       wrap.querySelector('#cr_amount').value=cr.amount||0;
       wrap.querySelector('#cr_reason').value=cr.reason||'';
+      wrap.querySelector('#cr_make').value=cr.make||'';
+      wrap.querySelector('#cr_model').value=cr.model||'';
+      wrap.querySelector('#cr_vin').value=cr.vin||'';
+      wrap.querySelector('#cr_mileage').value=cr.mileage||0;
+      wrap.querySelector('#cr_colour').value=cr.colour||'';
+      wrap.querySelector('#cr_fuel').value=cr.fuel||'';
+    }
+    else if(act==='print'){
+      printCreditInvoice(id);
+    }
+    else if(act==='addToStock'){
+      const cr=db.credits.find(x=>x.id===id);
+      if(!cr || !cr.vehicle) return;
+      
+      // Check if vehicle already exists in stock
+      const existingVehicle = (db.vehicles||[]).find(v => v.reg === cr.vehicle);
+      if(existingVehicle) {
+        return alert(`Vehicle ${cr.vehicle} already exists in stock`);
+      }
+      
+      // Use existing vehicle details from the credit record
+      if(!cr.make || !cr.model) {
+        return alert('Vehicle Make and Model are required to add to stock');
+      }
+      
+      const vehicle = {
+        id: uid(),
+        reg: cr.vehicle,
+        make: cr.make,
+        model: cr.model,
+        colour: cr.colour || '',
+        fuel: cr.fuel || '',
+        mileage: cr.mileage || 0,
+        purchase: cr.amount,
+        ownerType: 'owned',
+        investor: '',
+        supplier: `Refund from ${cr.customer}`,
+        vin: cr.vin || '',
+        status: 'for sale',
+        createdAt: cr.date || new Date().toISOString(),
+        media: [],
+        video: ''
+      };
+      
+      db.vehicles.unshift(vehicle);
+      saveDB();
+      try{renderAlertBell();}catch(e){}
+      addAudit('add','vehicle',vehicle.id,`Added to stock from refund - ${vehicle.reg}`);
+      alert(`Vehicle ${cr.vehicle} added to stock`);
+      renderCredits();
     }
   });
   
   renderCredits();
   return wrap;
+}
+
+/* ========= Credit Invoice Printing ========= */
+function printCreditInvoice(creditId){
+  const cr=db.credits.find(x=>x.id===creditId); 
+  if(!cr) return; 
+  
+  const co=db.company||{}; 
+  const fontPx=Number(co.invoiceFontPx||12);
+  
+  const title = cr.type === 'credit_note' ? 'CREDIT NOTE' : 'REFUND RECEIPT';
+  const refNo = 'CR' + (cr.id || '').slice(-6).toUpperCase();
+  
+  const logo = (co.logo||'').trim() ? `<img src="${co.logo}" style="max-width:${Number(co.logoMaxW||140)}px;max-height:${Number(co.logoMaxH||80)}px;object-fit:contain">` : '';
+  
+  const headerHTML = `<div class="h"><div>${logo}</div>
+    <div style="text-align:right"><h2 style="margin:0">${title}</h2><div>Ref #: ${refNo}</div><div>Date: ${ddmmyyyy(cr.date||'')}</div></div></div>
+    <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''}</div>`;
+
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+  <style>@page{size:A4;margin:10mm 10mm}body{font-family:Arial;color:#111;font-size:${fontPx}px} .h{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:6px}
+  table{width:100%;border-collapse:collapse}th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}th{background:#f5f5f5;text-align:left}
+  .terms{font-size:${Math.max(11,fontPx)}px;line-height:1.35} .tight td{padding:4px 6px} .negative{color:#d00;font-weight:bold}</style></head><body>
+  <button class="no-print" onclick="window.print()" style="margin:8px 0">Print / Save as PDF</button>
+  ${headerHTML}
+  <table class="tight">
+    <tr><th>Customer</th><td>${cr.customer||''}</td></tr>
+    ${cr.vehicle ? `<tr><th>Vehicle</th><td>${cr.vehicle}</td></tr>` : ''}
+    <tr><th>Type</th><td>${cr.type === 'credit_note' ? 'Credit Note' : 'Refund'}</td></tr>
+    <tr><th>Payment Method</th><td>${cr.method === 'cash' ? 'Cash' : 'Bank Transfer'}</td></tr>
+    <tr><th>Reason</th><td>${cr.reason||''}</td></tr>
+  </table>
+  <h3>Amount</h3>
+  <table class="tight">
+    <tr><th>Total ${cr.type === 'credit_note' ? 'Credit' : 'Refund'}</th><td class="right negative">${fmtMoney(cr.amount)}</td></tr>
+  </table>
+  <p class="terms">
+    <b>Terms:</b><br>
+    ${cr.type === 'credit_note' 
+      ? 'This credit note may be used against future purchases with ' + (co.name || 'Star Cars London Ltd') + '. Valid for 12 months from date of issue.'
+      : 'This refund has been processed as indicated above. Please allow 3-5 working days for bank transfers to clear.'}
+  </p>
+  <p>Customer signature: _______________________ &nbsp;&nbsp; Authorised by: _______________________</p>
+  <p style="margin-top:20px;font-size:${Math.max(10,fontPx-2)}px;color:#666">
+    Issued by: ${co.name || 'Star Cars London Ltd'} • ${ddmmyyyy(cr.date)} • Ref: ${refNo}
+  </p>
+  </body></html>`;
+  
+  openPrintable(html);
 }
 
 /* ========= Purchase Invoice ========= */
@@ -928,6 +1253,7 @@ function viewPurchaseInvoice(){
         <th class="right">Amount</th>
         <th>Method</th>
         <th>Invoice #</th>
+        <th>In Stock</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -940,6 +1266,9 @@ function viewPurchaseInvoice(){
   function renderPurchases(){
     body.innerHTML='';
     (db.purchaseInvoices||[]).forEach(pi=>{
+      // Check if vehicle is in stock
+      const inStock = (db.vehicles||[]).some(v => v.reg === pi.reg && v.status === 'for sale');
+      
       const tr=document.createElement('tr');
       tr.innerHTML=`<td>${ddmmyyyy(pi.date)}</td>
                    <td>${pi.supplier||''}</td>
@@ -950,10 +1279,12 @@ function viewPurchaseInvoice(){
                    <td class="right">${fmtMoney(pi.amount)}</td>
                    <td>${pi.method||'bank'}</td>
                    <td>${pi.invoiceNo||''}</td>
+                   <td>${inStock ? '✅' : ''}</td>
                    <td>
+                     <button data-act="print" data-id="${pi.id}">Print Invoice</button>
                      ${canAction('edit')?`<button data-act="edit" data-id="${pi.id}">Edit</button>`:''}
                      ${canAction('del')?`<button class="danger" data-act="del" data-id="${pi.id}">Delete</button>`:''}
-                     <button data-act="addToStock" data-id="${pi.id}">Add to Stock</button>
+                     ${!inStock ? `<button data-act="addToStock" data-id="${pi.id}">Add to Stock</button>` : ''}
                    </td>`;
       body.appendChild(tr);
     });
@@ -1042,6 +1373,9 @@ function viewPurchaseInvoice(){
       wrap.querySelector('#pi_invoiceNo').value=pi.invoiceNo||'';
       wrap.querySelector('#pi_notes').value=pi.notes||'';
     }
+    else if(act==='print'){
+      printPurchaseInvoice(id);
+    }
     else if(act==='addToStock'){
       const pi=db.purchaseInvoices.find(x=>x.id===id);
       if(!pi) return;
@@ -1077,11 +1411,70 @@ function viewPurchaseInvoice(){
       try{renderAlertBell();}catch(e){}
       addAudit('add','vehicle',vehicle.id,`Added to stock from purchase invoice - ${vehicle.reg}`);
       alert(`Vehicle ${pi.reg} added to stock`);
+      renderPurchases();
     }
   });
   
   renderPurchases();
   return wrap;
+}
+
+/* ========= Purchase Invoice Printing ========= */
+function printPurchaseInvoice(purchaseId){
+  const pi=db.purchaseInvoices.find(x=>x.id===purchaseId); 
+  if(!pi) return; 
+  
+  const co=db.company||{}; 
+  const fontPx=Number(co.invoiceFontPx||12);
+  
+  const refNo = 'PI' + (pi.id || '').slice(-6).toUpperCase();
+  
+  const logo = (co.logo||'').trim() ? `<img src="${co.logo}" style="max-width:${Number(co.logoMaxW||140)}px;max-height:${Number(co.logoMaxH||80)}px;object-fit:contain">` : '';
+  
+  const headerHTML = `<div class="h"><div>${logo}</div>
+    <div style="text-align:right"><h2 style="margin:0">PURCHASE INVOICE</h2><div>Ref #: ${refNo}</div><div>Date: ${ddmmyyyy(pi.date||'')}</div></div></div>
+    <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''}</div>`;
+
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>Purchase Invoice</title>
+  <style>@page{size:A4;margin:10mm 10mm}body{font-family:Arial;color:#111;font-size:${fontPx}px} .h{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:6px}
+  table{width:100%;border-collapse:collapse}th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}th{background:#f5f5f5;text-align:left}
+  .terms{font-size:${Math.max(11,fontPx)}px;line-height:1.35} .tight td{padding:4px 6px}</style></head><body>
+  <button class="no-print" onclick="window.print()" style="margin:8px 0">Print / Save as PDF</button>
+  ${headerHTML}
+  <table class="tight">
+    <tr><th>Seller</th><td>${pi.supplier||''}</td></tr>
+    <tr><th>Invoice Number</th><td>${pi.invoiceNo||refNo}</td></tr>
+    <tr><th>Payment Method</th><td>${pi.method === 'cash' ? 'Cash' : 'Bank Transfer'}</td></tr>
+  </table>
+  
+  <h3>Vehicle Details</h3>
+  <table class="tight">
+    <tr><th>Registration</th><td>${pi.reg||''}</td></tr>
+    <tr><th>Make</th><td>${pi.make||''}</td></tr>
+    <tr><th>Model</th><td>${pi.model||''}</td></tr>
+    <tr><th>VIN</th><td>${pi.vin||''}</td></tr>
+    <tr><th>Mileage</th><td>${pi.mileage||''}</td></tr>
+  </table>
+  
+  <h3>Purchase Details</h3>
+  <table class="tight">
+    <tr><th>Purchase Amount</th><td class="right">${fmtMoney(pi.amount)}</td></tr>
+  </table>
+  
+  <div class="terms">
+    <b>Purchase Terms:</b><br>
+    Vehicle purchased as seen. Payment made as indicated above. All relevant documentation and keys exchanged at time of purchase.
+    ${pi.notes ? `<br><br><b>Additional Notes:</b><br>${pi.notes}` : ''}
+  </div>
+  
+  <p>Seller signature: _______________________ &nbsp;&nbsp; Buyer signature: _______________________</p>
+  
+  <p style="margin-top:20px;font-size:${Math.max(10,fontPx-2)}px;color:#666">
+    Issued by: ${co.name || 'Star Cars London Ltd'} • ${ddmmyyyy(pi.date)} • Ref: ${refNo}
+  </p>
+  </body></html>`;
+  
+  openPrintable(html);
 }
 
 /* ========= Directors ========= */
@@ -1113,7 +1506,7 @@ function renderBox(){ const i=Number(sel().value||0); const p=db.partners[i]; if
     let editTxId=null; wrap.querySelector('#d_add').onclick=()=>{ if(!canAction('add')) return alert('No permission'); const t={id:editTxId||uid(),date:wrap.querySelector('#d_date').value,type:wrap.querySelector('#d_type').value,method:wrap.querySelector('#d_method').value,amount:Number(wrap.querySelector('#d_amt').value||0),note:wrap.querySelector('#d_note').value.trim()};
       if(editTxId){ p.tx=p.tx.map(x=>x.id===editTxId?t:x); addAudit('update','directorTx',t.id,(p?.name||'')+' '+t.type+' '+t.amount); editTxId=null; } else { p.tx=p.tx||[]; p.tx.unshift(t); addAudit('add','directorTx',t.id,(p?.name||'')+' '+t.type+' '+t.amount); }
       p.balance=(p.tx||[]).reduce((bal,x)=> bal+((x.type==='invest'||x.type==='profit')?+x.amount:-x.amount),0); saveDB(); try{renderAlertBell();}catch(e){}; renderBox(); };
-    wrap.querySelector('#d_body').addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b)return; const id=b.dataset.id,act=b.dataset.act; const t=(p.tx||[]).find(x=>x.id===id);
+    wrap.querySelector('#d_body').addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act; const t=(p.tx||[]).find(x=>x.id===id);
       if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); editTxId=t.id; wrap.querySelector('#d_date').value=t.date; wrap.querySelector('#d_type').value=t.type; wrap.querySelector('#d_method').value=t.method||'bank'; wrap.querySelector('#d_amt').value=t.amount||0; wrap.querySelector('#d_note').value=t.note||''; }
       else if(act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete transaction?'))return; p.tx=p.tx.filter(x=>x.id!==id); p.balance=(p.tx||[]).reduce((bal,x)=> bal+((x.type==='invest'||x.type==='profit')?+x.amount:-x.amount),0); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','directorTx',id,(p?.name||'')); renderBox(); } });
   }
@@ -1136,90 +1529,165 @@ function viewInvestors(){ if(!canTab('Investors')) return document.createElement
       addBtn.parentNode.insertBefore(del, addBtn.nextSibling);
     }
   })();
-wrap.querySelector('#i_addInv').onclick=()=>{ if(!canAction('add')) return alert('No permission'); 
   
+  wrap.querySelector('#i_addInv').onclick=()=>{ 
+    if(!canAction('add')) return alert('No permission'); 
+    const name=wrap.querySelector('#i_name').value.trim(); 
+    if(!name) return alert('Enter name'); 
+    const inv={id:uid(),name,balance:0,tx:[]}; 
+    (db.investors=db.investors||[]).unshift(inv); 
+    saveDB(); 
+    try{renderAlertBell();}catch(e){}; 
+    addAudit('add','investor',inv.id,name); 
+    setTab('Investors'); 
+  };
   
-  
-  // Safe delete investor with optional reassignment (guarded)
+  // Investor deletion - single clean implementation
   (function(){
-    const del=wrap.querySelector('#i_delbtn');
-    if(!del || del._wired) return;
-    del._wired=true;
-    del.onclick=()=>{
-      const sel=wrap.querySelector('#i_sel'); const id=(sel&&sel.value)||''; if(!id) return alert('Select an investor');
-      const inv=(db.investors||[]).find(x=>x.id===id||x.name===id); if(!inv) return alert('Investor not found');
-      const linked=(db.vehicles||[]).filter(v=> v.ownerType==='investor' && (v.investor||'')===inv.name);
-      if(linked.length>0){
-        const others=(db.investors||[]).filter(x=>x!==inv);
-        let choice='dealer';
-        if(others.length>0){
-          const names=others.map(o=>o.name).join(', ');
-          const ans=prompt('Investor \"'+inv.name+'\" has '+linked.length+' vehicle(s).\nType a new investor name to reassign ('+names+'), or leave blank for DEALER:','');
-          if(ans && others.some(o=>o.name===ans)) choice=ans; else choice='dealer';
+    const delBtn = wrap.querySelector('#i_delbtn');
+    if(!delBtn || delBtn._wired) return;
+    delBtn._wired = true;
+    delBtn.onclick = () => {
+      if(!canAction('del')) return alert('No permission to delete investors');
+      
+      const sel = wrap.querySelector('#i_sel');
+      const id = (sel && sel.value) || '';
+      if(!id) return alert('Select an investor to delete');
+      
+      const inv = (db.investors||[]).find(x => x.id === id || x.name === id);
+      if(!inv) return alert('Investor not found');
+      
+      // Check for linked vehicles
+      const linked = (db.vehicles||[]).filter(v => 
+        v.ownerType === 'investor' && (v.investor||'') === inv.name
+      );
+      
+      if(linked.length > 0){
+        const others = (db.investors||[]).filter(x => x !== inv);
+        let choice = 'dealer';
+        
+        if(others.length > 0){
+          const names = others.map(o => o.name).join(', ');
+          const ans = prompt(
+            'Investor \"' + inv.name + '\" has ' + linked.length + ' vehicle(s).\n' +
+            'Type a new investor name to reassign (' + names + '), or leave blank for DEALER:',
+            ''
+          );
+          if(ans && others.some(o => o.name === ans)) {
+            choice = ans;
+          } else {
+            choice = 'dealer';
+          }
         }
-        linked.forEach(v=>{ if(choice==='dealer'){ v.ownerType='dealer'; v.investor=''; } else { v.ownerType='investor'; v.investor=choice; } });
+        
+        // Reassign vehicles
+        linked.forEach(v => {
+          if(choice === 'dealer'){
+            v.ownerType = 'owned';
+            v.investor = '';
+          } else {
+            v.ownerType = 'investor';
+            v.investor = choice;
+          }
+        });
       }
-      if(!confirm('Delete investor \"'+(inv.name||'')+'\"?')) return;
-      db.investors=(db.investors||[]).filter(x=>x!==inv);
-      saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','investor',inv.id,(inv.name||'')); setTab('Investors');
+      
+      if(!confirm('Delete investor \"' + (inv.name||'') + '\"?')) return;
+      
+      db.investors = (db.investors||[]).filter(x => x !== inv);
+      saveDB(); 
+      try{renderAlertBell();}catch(e){}
+      addAudit('delete','investor',inv.id,(inv.name||''));
+      setTab('Investors'); // Refresh the view
     };
   })();
-(function(){ const del=wrap.querySelector('#i_delbtn'); if(!del||del._wired) return; del._wired=true; del.onclick=()=>{
-    const sel=wrap.querySelector('#i_sel'); const id=(sel&&sel.value)||''; if(!id) return alert('Select an investor');
-    const inv=(db.investors||[]).find(x=>x.id===id||x.name===id); if(!inv) return alert('Investor not found');
+
+  function renderDetails(id){ 
+    let assigned = 0, unassigned = 0;
+    const inv=(db.investors||[]).find(x=>x.id===id); 
+    if(!inv){ wrap.querySelector('#i_box').innerHTML=''; return; }
+    
+    let ins=0,outs=0; 
+    (inv.tx||[]).forEach(x=>{ 
+      if(x.type==='fund_in') ins+=+x.amount||0; 
+      if(x.type==='withdraw') outs+=+x.amount||0; 
+    }); 
+    inv.balance=ins-outs;
+    
     const linked=(db.vehicles||[]).filter(v=> v.ownerType==='investor' && (v.investor||'')===inv.name);
-    if(linked.length>0){ const others=(db.investors||[]).filter(x=>x!==inv); let choice='dealer'; if(others.length>0){ const names=others.map(o=>o.name).join(', ');
-      const ans=prompt('Investor \"'+inv.name+'\" has '+linked.length+' vehicle(s).\nType a new investor name to reassign ('+names+'), or leave blank for DEALER:','');
-      if(ans && others.some(o=>o.name===ans)) choice=ans; else choice='dealer'; }
-      linked.forEach(v=>{ if(choice==='dealer'){ v.ownerType='dealer'; v.investor=''; } else { v.ownerType='investor'; v.investor=choice; } }); }
-    if(!confirm('Delete investor \"'+(inv.name||'')+'\"?')) return;
-    db.investors=(db.investors||[]).filter(x=>x!==inv); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','investor',inv.id,(inv.name||'')); setTab('Investors');
-  }; })();
-(function(){ const btn=wrap.querySelector('#i_delbtn'); if(!btn||btn._wired) return; btn._wired=true; btn.onclick=()=>{
-    const sel=wrap.querySelector('#i_sel'); const id=(sel&&sel.value)||''; if(!id) return alert('Select an investor');
-    const inv=(db.investors||[]).find(x=>x.id===id||x.name===id); if(!inv) return alert('Investor not found');
-    const linked=(db.vehicles||[]).filter(v=> v.ownerType==='investor' && (v.investor||'')===inv.name);
-    if(linked.length>0){ const others=(db.investors||[]).filter(x=>x!==inv); let choice='dealer'; if(others.length>0){ const names=others.map(o=>o.name).join(', ');
-      const ans=prompt('Investor \"'+inv.name+'\" has '+linked.length+' vehicle(s).\nType a new investor name to reassign ('+names+'), or leave blank for DEALER:','');
-      if(ans && others.some(o=>o.name===ans)) choice=ans; else choice='dealer'; }
-      linked.forEach(v=>{ if(choice==='dealer'){ v.ownerType='dealer'; v.investor=''; } else { v.ownerType='investor'; v.investor=choice; } }); }
-    if(!confirm('Delete investor \"'+(inv.name||'')+'\"?')) return;
-    db.investors=(db.investors||[]).filter(x=>x!==inv); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','investor',inv.id,(inv.name||'')); setTab('Investors');
-  }; })();
-// Delete investor button
-  const __idel=wrap.querySelector('#i_delbtn'); if(__idel) __idel.onclick=()=>{
-    const sel=wrap.querySelector('#i_sel'); const val=(sel&&sel.value)||'';
-    if(!val) return alert('Select an investor');
-    const list=(db.investors||[]);
-    let idx=list.findIndex(x=>x.id===val||x.name===val);
-    if(idx<0){ const n=parseInt(val,10); if(!isNaN(n)) idx=n; }
-    const inv=list[idx]; if(!inv) return alert('Investor not found');
-    if(!confirm('Delete investor \"'+(inv.name||'')+'\"? This will remove their record.')) return;
-    list.splice(idx,1); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','investor',inv.id,(inv.name||'')); setTab('Investors');
-  };
-const name=wrap.querySelector('#i_name').value.trim(); if(!name) return alert('Enter name'); const inv={id:uid(),name,balance:0,tx:[]}; (db.investors=db.investors||[]).unshift(inv); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','investor',inv.id,name); setTab('Investors'); };
-  function renderDetails(id){ let assigned = 0, unassigned = 0;
-    const inv=(db.investors||[]).find(x=>x.id===id); if(!inv){ wrap.querySelector('#i_box').innerHTML=''; return; }
-    let ins=0,outs=0; (inv.tx||[]).forEach(x=>{ if(x.type==='fund_in') ins+=+x.amount||0; if(x.type==='withdraw') outs+=+x.amount||0; }); inv.balance=ins-outs;
-        const linked=(db.vehicles||[]).filter(v=> v.ownerType==='investor' && (v.investor||'')===inv.name);
     const soldIds=new Set((db.sales||[]).map(s=>s.vehicleId));
     const live=linked.filter(v=>!soldIds.has(v.id));
-    assigned = live.reduce((t,v)=>{ const vx=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===v.id).reduce((u,e)=>u+Number(e.amount||0),0); return t + Number(v.purchase||0) + vx; },0);
+    assigned = live.reduce((t,v)=>{ 
+      const vx=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===v.id).reduce((u,e)=>u+Number(e.amount||0),0); 
+      return t + Number(v.purchase||0) + vx; 
+    },0);
     unassigned = Number(inv.balance||0) - assigned;
-const txRows=(inv.tx||[]).map(t=>`<tr><td>${ddmmyyyy(t.date||'')}</td><td>${t.type}</td><td>${t.method||'bank'}</td><td class="right">${fmtMoney(t.amount)}</td><td>${t.note||''}</td><td>${canAction('edit')?`<button data-act="edit" data-id="${t.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${t.id}">Delete</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="small">No transactions</td></tr>';
+
+    const txRows=(inv.tx||[]).map(t=>`<tr><td>${ddmmyyyy(t.date||'')}</td><td>${t.type}</td><td>${t.method||'bank'}</td><td class="right">${fmtMoney(t.amount)}</td><td>${t.note||''}</td><td>${canAction('edit')?`<button data-act="edit" data-id="${t.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${t.id}">Delete</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="small">No transactions</td></tr>';
+    
     wrap.querySelector('#i_box').innerHTML=`<div class="row"><input id="i_date" type="date"><select id="i_type"><option value="fund_in">fund_in</option><option value="withdraw">withdraw</option></select><select id="i_method"><option>bank</option><option>cash</option></select><input id="i_amt" type="number" placeholder="Amount"><input id="i_note" placeholder="Note"><button id="i_tx" class="primary">Add / Update</button></div>
     <div class="row small"><b>Balance:</b> ${fmtMoney(inv.balance||0)}</div>
     <div class=\"row small\"><b>Assigned to vehicles (unsold):</b> ${fmtMoney(assigned)} &nbsp; <b>Unassigned:</b> ${fmtMoney(unassigned)}</div><table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Type</th><th>Method</th><th class="right">Amount</th><th>Note</th><th>Actions</th></tr></thead><tbody id="i_body">${txRows}</tbody></table>`;
-    let editTxId=null; wrap.querySelector('#i_tx').onclick=()=>{ if(!canAction('add')) return alert('No permission'); const t={id:editTxId||uid(),date:wrap.querySelector('#i_date').value,type:wrap.querySelector('#i_type').value,method:wrap.querySelector('#i_method').value,amount:Number(wrap.querySelector('#i_amt').value||0),note:wrap.querySelector('#i_note').value.trim()};
-      if(editTxId){ inv.tx=inv.tx.map(x=>x.id===editTxId?t:x); addAudit('update','investorTx',t.id,inv.name+' '+t.type+' '+t.amount); } else { inv.tx=inv.tx||[]; inv.tx.unshift(t); addAudit('add','investorTx',t.id,inv.name+' '+t.type+' '+t.amount); }
-      let ins=0,outs=0; (inv.tx||[]).forEach(x=>{ if(x.type==='fund_in') ins+=+x.amount||0; if(x.type==='withdraw') outs+=+x.amount||0; }); inv.balance=ins-outs; saveDB(); try{renderAlertBell();}catch(e){}; editTxId=null; wrap.querySelector('#i_amt').value=''; wrap.querySelector('#i_note').value=''; renderDetails(id);
+    
+    let editTxId=null; 
+    wrap.querySelector('#i_tx').onclick=()=>{ 
+      if(!canAction('add')) return alert('No permission'); 
+      const t={id:editTxId||uid(),date:wrap.querySelector('#i_date').value,type:wrap.querySelector('#i_type').value,method:wrap.querySelector('#i_method').value,amount:Number(wrap.querySelector('#i_amt').value||0),note:wrap.querySelector('#i_note').value.trim()};
+      if(editTxId){ 
+        inv.tx=inv.tx.map(x=>x.id===editTxId?t:x); 
+        addAudit('update','investorTx',t.id,inv.name+' '+t.type+' '+t.amount); 
+      } else { 
+        inv.tx=inv.tx||[]; 
+        inv.tx.unshift(t); 
+        addAudit('add','investorTx',t.id,inv.name+' '+t.type+' '+t.amount); 
+      }
+      let ins=0,outs=0; 
+      (inv.tx||[]).forEach(x=>{ 
+        if(x.type==='fund_in') ins+=+x.amount||0; 
+        if(x.type==='withdraw') outs+=+x.amount||0; 
+      }); 
+      inv.balance=ins-outs; 
+      saveDB(); 
+      try{renderAlertBell();}catch(e){}; 
+      editTxId=null; 
+      wrap.querySelector('#i_amt').value=''; 
+      wrap.querySelector('#i_note').value=''; 
+      renderDetails(id);
     };
-    wrap.querySelector('#i_body').addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const t=(inv.tx||[]).find(x=>x.id===b.dataset.id);
-      if(b.dataset.act==='edit'){ if(!canAction('edit')) return alert('No permission'); editTxId=t.id; wrap.querySelector('#i_date').value=t.date; wrap.querySelector('#i_type').value=t.type; wrap.querySelector('#i_method').value=t.method||'bank'; wrap.querySelector('#i_amt').value=t.amount||0; wrap.querySelector('#i_note').value=t.note||''; }
-      else if(b.dataset.act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete?')) return; inv.tx=inv.tx.filter(x=>x.id!==t.id); let ins=0,outs=0; (inv.tx||[]).forEach(x=>{ if(x.type==='fund_in') ins+=+x.amount||0; if(x.type==='withdraw') outs+=+x.amount||0; }); inv.balance=ins-outs; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','investorTx',t.id,inv.name); renderDetails(id); }
+    
+    wrap.querySelector('#i_body').addEventListener('click',(ev)=>{ 
+      const b=ev.target.closest('button'); 
+      if(!b) return; 
+      const t=(inv.tx||[]).find(x=>x.id===b.dataset.id);
+      if(b.dataset.act==='edit'){ 
+        if(!canAction('edit')) return alert('No permission'); 
+        editTxId=t.id; 
+        wrap.querySelector('#i_date').value=t.date; 
+        wrap.querySelector('#i_type').value=t.type; 
+        wrap.querySelector('#i_method').value=t.method||'bank'; 
+        wrap.querySelector('#i_amt').value=t.amount||0; 
+        wrap.querySelector('#i_note').value=t.note||''; 
+      }
+      else if(b.dataset.act==='del'){ 
+        if(!canAction('del')) return alert('No permission'); 
+        if(!confirm('Delete?')) return; 
+        inv.tx=inv.tx.filter(x=>x.id!==t.id); 
+        let ins=0,outs=0; 
+        (inv.tx||[]).forEach(x=>{ 
+          if(x.type==='fund_in') ins+=+x.amount||0; 
+          if(x.type==='withdraw') outs+=+x.amount||0; 
+        }); 
+        inv.balance=ins-outs; 
+        saveDB(); 
+        try{renderAlertBell();}catch(e){}; 
+        addAudit('delete','investorTx',t.id,inv.name); 
+        renderDetails(id); 
+      }
     });
   }
-  wrap.querySelector('#i_sel').onchange=(e)=>renderDetails(e.target.value); return wrap;
+  
+  wrap.querySelector('#i_sel').onchange=(e)=>renderDetails(e.target.value); 
+  return wrap;
 }
 
 /* ========= Invoice / Proforma printing ========= */
@@ -1313,12 +1781,13 @@ function viewReports(){
       const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,x)=>t+Number(x.amount||0),0);
       const gross=Number(s.salePrice||0)-Number(v.purchase||0)-vexp;
       const isInvestor=(v.ownerType==='investor' && v.investor);
+      // MODIFIED: Only apply mgmt fees if the car made a profit (gross > 0)
       const mgmtFlat = (isInvestor && gross > 0) ? 175 : 0;
-const investorShare = (isInvestor && (gross - mgmtFlat) > 0)
-  ? (0.20 * (gross - mgmtFlat))
-  : 0;
-const afterInvestor = Math.max(0, gross - mgmtFlat - investorShare);
-const mgmtPct = 0; // no longer used, keep for compatibility
+      const investorShare = (isInvestor && gross > 0) 
+        ? (0.30 * (gross - mgmtFlat))
+        : 0;
+      const afterInvestor = Math.max(0, gross - mgmtFlat - investorShare);
+      const mgmtPct = (isInvestor && gross > 0) ? (0.20 * gross) : 0;
       return {s,v,gross,mgmtFlat,mgmtPct,investorShare,afterInvestor,isInvestor,investorName:v.investor||'' };
     });
     const totalGross=items.reduce((t,x)=>t+x.gross,0);
@@ -1400,19 +1869,19 @@ function alreadyPosted(k){
     if(alreadyPosted(k)) { if(!confirm('This month was already posted. Recalculate and re-post?')) return; purgeMonthClose(k); }
     const c=calcMonthClose(k);
 
-    // 1) Post mgmt fees to Showroom Expenses (175 + 20% for investor cars)
+    // 1) Post mgmt fees to Showroom Expenses (175 + 20% for PROFITABLE investor cars only)
     c.items.forEach(x=>{
-      if(x.isInvestor){
+      if(x.isInvestor && x.gross > 0){  // Only if car made profit
         db.showroomExpenses.unshift({id:uid(),date:k+'-01',type:'Mgmt flat £175',method:'bank',amount:-175,note:(x.v.reg||'')});
         const pct=+(x.mgmtPct||0);
         if(pct>0) db.showroomExpenses.unshift({id:uid(),date:k+'-01',type:'Mgmt 20% (investor car)',method:'bank',amount:-pct,note:(x.v.reg||'')});
       }
     });
 
-    // 2) Post investor 30% total aggregated by investor
+    // 2) Post investor 30% total aggregated by investor (only for profitable cars)
     const byInvestor={};
     c.items.forEach(x=>{
-      if(x.isInvestor && x.investorShare>0){
+      if(x.isInvestor && x.investorShare>0 && x.gross > 0){  // Only if car made profit
         byInvestor[x.investorName]=(byInvestor[x.investorName]||0)+x.investorShare;
       }
     });
@@ -1554,21 +2023,60 @@ function viewSettings(){ if(!canTab('Settings')||!canSettings()){ const w=docume
       db.company.dvsaProxy=document.getElementById('c_dvsaProxy')?.value||'';
 db.company.dvlaKey=document.getElementById('c_dvlaKey')?.value||'';
     db.company.dvsaKey=document.getElementById('c_dvsaKey')?.value||'';
-// NEW
-    db.company.invoiceFontPx=Number(document.getElementById('c_invFont').value||12); // NEW
-    db.company.termsFontPx=Number(document.getElementById('c_termsFont').value||10); // NEW
-    db.company.logoMaxW=Number(document.getElementById('c_logoW').value||140);      // NEW
-    db.company.logoMaxH=Number(document.getElementById('c_logoH').value||80);       // NEW
+    db.company.invoiceFontPx=Number(document.getElementById('c_invFont').value||12);
+    db.company.termsFontPx=Number(document.getElementById('c_termsFont').value||10);
+    db.company.logoMaxW=Number(document.getElementById('c_logoW').value||140);
+    db.company.logoMaxH=Number(document.getElementById('#c_logoH').value||80);
     saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','company','company','Updated company profile'); refreshLogoBox(); alert('Saved');
   };
   wrap.querySelector('#c_isave').onclick=()=>{ db.company.dvlaProxy=document.getElementById('c_dvlaProxy').value; db.company.dvlaKey=document.getElementById('c_dvlaKey').value;
   db.company.dvsaProxy=document.getElementById('c_dvsaProxy').value; db.company.dvsaKey=document.getElementById('c_dvsaKey').value; db.company.gistId=document.getElementById('c_gistId').value.trim(); setGhToken(document.getElementById('c_ghToken').value.trim()); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','integrations','integrations','Updated DVLA & Gist'); alert('Saved integrations'); };
   wrap.querySelector('#c_pull').onclick=()=>syncPull(); wrap.querySelector('#c_push').onclick=()=>syncPush();
-  wrap.querySelector('#c_dvlaTest').onclick=async()=>{ const url=(document.getElementById('c_dvlaProxy').value||'').trim(); const key=(document.getElementById('c_dvlaKey').value||'').trim(); const reg=(document.getElementById('c_testReg').value||'').trim().toUpperCase(); if(!url||!reg) return alert('Enter Proxy URL and a TEST REG');
-    try{ const rsp=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({registrationNumber:reg, apiKey:key})}); const txt=await rsp.text(); if(!rsp.ok) return alert('DVLA proxy error '+rsp.status+': '+txt); alert('DVLA OK: '+txt.slice(0,240)+'...'); }catch(e){ alert('Test failed: '+e.message); } };
+  
+  // Fixed DVLA Test function
+  wrap.querySelector('#c_dvlaTest').onclick = async () => { 
+    const url = (document.getElementById('c_dvlaProxy').value || '').trim(); 
+    const key = (document.getElementById('c_dvlaKey').value || '').trim(); 
+    const reg = (document.getElementById('c_testReg').value || '').trim().toUpperCase(); 
+    
+    if (!url) return alert('Enter Proxy URL');
+    if (!reg) return alert('Enter a test REG');
+    
+    const btn = wrap.querySelector('#c_dvlaTest');
+    const originalText = btn.textContent;
+    btn.textContent = 'Testing...';
+    btn.disabled = true;
+    
+    try { 
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({reg: reg, apiKey: key})
+      }); 
+      
+      const result = await response.text();
+      
+      if (!response.ok) {
+        alert('DVLA Test Failed: ' + response.status + ' - ' + result);
+      } else {
+        try {
+          const data = JSON.parse(result);
+          alert('DVLA Test Successful!\n\nResponse: ' + JSON.stringify(data, null, 2).substring(0, 500));
+        } catch (e) {
+          alert('DVLA Test Successful!\n\nResponse: ' + result.substring(0, 500));
+        }
+      }
+    } catch (e) { 
+      alert('DVLA Test Failed: ' + e.message); 
+    } finally {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }
+  };
+  
   // Logo upload to data-URL (unchanged core)
   wrap.querySelector('#c_logoUpload').addEventListener('change', (e)=>{
-    const f=e.target.files&&e.target.files[0]; if(!f) return;
+    const f=e.target.files&&e.files[0]; if(!f) return;
     const r=new FileReader(); r.onload=()=>{ db.company.logo=r.result; document.getElementById('c_logo').value=r.result; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','company','logo','Uploaded logo'); refreshLogoBox(); alert('Logo updated.'); };
     r.readAsDataURL(f);
   });
@@ -1579,4 +2087,3 @@ render();
 </script>
 </body>
 </html>
-[file content end]
