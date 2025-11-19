@@ -179,7 +179,7 @@ kbd{background:#0b1230;border:1px solid #22325e;border-radius:6px;padding:1px 6p
       <div class="small">Dealer Backoffice — v48 upgraded</div>
     </div>
   </div>
-  <div class="hdr-actions">
+  <div class.hdr-actions>
     <span id="who" class="small"></span>
     <button onclick="switchUser()">Switch User</button>
     <button onclick="changeMyPass()">Change Password</button>
@@ -1975,10 +1975,24 @@ const body=wrap.querySelector('#u_body'); (db.users||[]).forEach(u=>{ const p=no
   renderTable(); return wrap;
 }
 
-// --- Settings (added Finance Terms + print sizing controls) ---
-function viewSettings(){ if(!canTab('Settings')||!canSettings()){ const w=document.createElement('div'); w.className='card'; w.innerHTML='<div class="small">No permission to edit settings. Ask admin.</div>'; return w; } const wrap=document.createElement('div'); wrap.className='card'; const tokenCurrent=getGhToken();
+/* ========= Settings (added Finance Terms + print sizing controls) --- */
+function viewSettings(){ 
+  // Check if user has permission to access settings at all
+  if(!canTab('Settings') || !canSettings()){ 
+    const w=document.createElement('div'); 
+    w.className='card'; 
+    w.innerHTML='<div class="small">No permission to edit settings. Ask admin.</div>'; 
+    return w; 
+  } 
+  
+  const wrap=document.createElement('div'); 
+  wrap.className='card'; 
+  const tokenCurrent=getGhToken();
+  const currentUserObj = currentUser();
+  const isAdmin = currentUserObj && currentUserObj.role === 'admin';
+  
   wrap.innerHTML=`<h2>Settings</h2><div class="grid2">
-  <div class="card"><h3>Company</h3>
+  <div class="card" ${!isAdmin ? 'style="display:none"' : ''}><h3>Company</h3>
     <div class="row"><input id="c_name" placeholder="Company name" value="${db.company.name||''}"></div>
     <div class="row"><input id="c_addr" placeholder="Address" value="${db.company.address||''}" style="min-width:420px"></div>
     <div class="row"><input id="c_phone" placeholder="Phone" value="${db.company.phone||''}"><input id="c_email" placeholder="Email" value="${db.company.email||''}"></div>
@@ -2008,32 +2022,54 @@ function viewSettings(){ if(!canTab('Settings')||!canSettings()){ const w=docume
     <div class="small">Token is stored only in your browser (LocalStorage), not inside backups.</div>
   </div></div>`;
   
-  wrap.querySelector('#c_save').onclick=()=>{
-    db.company.name=document.getElementById('c_name').value;
-    db.company.address=document.getElementById('c_addr').value;
-    db.company.phone=document.getElementById('c_phone').value;
-    db.company.email=document.getElementById('c_email').value;
-    db.company.vatNumber=document.getElementById('c_vat').value;
-    db.company.companyNumber=document.getElementById('c_co').value;
-    db.company.logo=document.getElementById('c_logo').value;
-    db.company.openingBank=Number(document.getElementById('c_bank').value||0);
-    db.company.openingCash=Number(document.getElementById('c_cash').value||0);
-    db.company.terms=document.getElementById('c_terms').value;
-    db.company.financeTerms=document.getElementById('c_finTerms').value;       db.company.dvlaProxy=document.getElementById('c_dvlaProxy')?.value||'';
+  // Only show save button for company settings if user is admin
+  if (isAdmin) {
+    wrap.querySelector('#c_save').onclick=()=>{
+      db.company.name=document.getElementById('c_name').value;
+      db.company.address=document.getElementById('c_addr').value;
+      db.company.phone=document.getElementById('c_phone').value;
+      db.company.email=document.getElementById('c_email').value;
+      db.company.vatNumber=document.getElementById('c_vat').value;
+      db.company.companyNumber=document.getElementById('c_co').value;
+      db.company.logo=document.getElementById('c_logo').value;
+      db.company.openingBank=Number(document.getElementById('c_bank').value||0);
+      db.company.openingCash=Number(document.getElementById('c_cash').value||0);
+      db.company.terms=document.getElementById('c_terms').value;
+      db.company.financeTerms=document.getElementById('c_finTerms').value;       
+      db.company.dvlaProxy=document.getElementById('c_dvlaProxy')?.value||'';
       db.company.dvsaProxy=document.getElementById('c_dvsaProxy')?.value||'';
-db.company.dvlaKey=document.getElementById('c_dvlaKey')?.value||'';
-    db.company.dvsaKey=document.getElementById('c_dvsaKey')?.value||'';
-    db.company.invoiceFontPx=Number(document.getElementById('c_invFont').value||12);
-    db.company.termsFontPx=Number(document.getElementById('c_termsFont').value||10);
-    db.company.logoMaxW=Number(document.getElementById('c_logoW').value||140);
-    db.company.logoMaxH=Number(document.getElementById('#c_logoH').value||80);
-    saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','company','company','Updated company profile'); refreshLogoBox(); alert('Saved');
-  };
-  wrap.querySelector('#c_isave').onclick=()=>{ db.company.dvlaProxy=document.getElementById('c_dvlaProxy').value; db.company.dvlaKey=document.getElementById('c_dvlaKey').value;
-  db.company.dvsaProxy=document.getElementById('c_dvsaProxy').value; db.company.dvsaKey=document.getElementById('c_dvsaKey').value; db.company.gistId=document.getElementById('c_gistId').value.trim(); setGhToken(document.getElementById('c_ghToken').value.trim()); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','integrations','integrations','Updated DVLA & Gist'); alert('Saved integrations'); };
-  wrap.querySelector('#c_pull').onclick=()=>syncPull(); wrap.querySelector('#c_push').onclick=()=>syncPush();
+      db.company.dvlaKey=document.getElementById('c_dvlaKey')?.value||'';
+      db.company.dvsaKey=document.getElementById('c_dvsaKey')?.value||'';
+      db.company.invoiceFontPx=Number(document.getElementById('c_invFont').value||12);
+      db.company.termsFontPx=Number(document.getElementById('c_termsFont').value||10);
+      db.company.logoMaxW=Number(document.getElementById('c_logoW').value||140);
+      db.company.logoMaxH=Number(document.getElementById('c_logoH').value||80);
+      saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','company','company','Updated company profile'); refreshLogoBox(); alert('Saved');
+    };
+  } else {
+    // Hide company save button for non-admin users with settings permission
+    const saveBtn = wrap.querySelector('#c_save');
+    if (saveBtn) saveBtn.style.display = 'none';
+  }
   
-  // Fixed DVLA Test function
+  // Integration settings are available for all users with settings permission
+  wrap.querySelector('#c_isave').onclick=()=>{ 
+    db.company.dvlaProxy=document.getElementById('c_dvlaProxy').value; 
+    db.company.dvlaKey=document.getElementById('c_dvlaKey').value;
+    db.company.dvsaProxy=document.getElementById('c_dvsaProxy').value; 
+    db.company.dvsaKey=document.getElementById('c_dvsaKey').value; 
+    db.company.gistId=document.getElementById('c_gistId').value.trim(); 
+    setGhToken(document.getElementById('c_ghToken').value.trim()); 
+    saveDB(); 
+    try{renderAlertBell();}catch(e){}; 
+    addAudit('update','integrations','integrations','Updated DVLA & Gist'); 
+    alert('Saved integrations'); 
+  };
+  
+  wrap.querySelector('#c_pull').onclick=()=>syncPull(); 
+  wrap.querySelector('#c_push').onclick=()=>syncPush();
+  
+  // Fixed DVLA Test function - available for all users with settings permission
   wrap.querySelector('#c_dvlaTest').onclick = async () => { 
     const url = (document.getElementById('c_dvlaProxy').value || '').trim(); 
     const key = (document.getElementById('c_dvlaKey').value || '').trim(); 
@@ -2074,12 +2110,21 @@ db.company.dvlaKey=document.getElementById('c_dvlaKey')?.value||'';
     }
   };
   
-  // Logo upload to data-URL (unchanged core)
-  wrap.querySelector('#c_logoUpload').addEventListener('change', (e)=>{
-    const f=e.target.files&&e.files[0]; if(!f) return;
-    const r=new FileReader(); r.onload=()=>{ db.company.logo=r.result; document.getElementById('c_logo').value=r.result; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','company','logo','Uploaded logo'); refreshLogoBox(); alert('Logo updated.'); };
-    r.readAsDataURL(f);
-  });
+  // Logo upload to data-URL - only for admin users
+  if (isAdmin) {
+    wrap.querySelector('#c_logoUpload').addEventListener('change', (e)=>{
+      const f=e.target.files&&e.target.files[0]; if(!f) return;
+      const r=new FileReader(); r.onload=()=>{ db.company.logo=r.result; document.getElementById('c_logo').value=r.result; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','company','logo','Uploaded logo'); refreshLogoBox(); alert('Logo updated.'); };
+      r.readAsDataURL(f);
+    });
+  } else {
+    // Hide logo upload for non-admin users
+    const logoUpload = wrap.querySelector('#c_logoUpload');
+    if (logoUpload) {
+      logoUpload.parentNode.parentNode.style.display = 'none';
+    }
+  }
+  
   return wrap;
 }
 
