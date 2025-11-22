@@ -88,43 +88,102 @@ kbd{background:#0b1230;border:1px solid #22325e;border-radius:6px;padding:1px 6p
     }catch(e){ alert("Backup failed: " + (e.message||e)); }
   };
 
-  // Merge-from-backup
-  window.restoreJSONMerge = function(){
-    const i = document.createElement("input"); i.type = "file"; i.accept = ".json,application/json";
-    i.onchange = () => {
-      const f = i.files && i.files[0]; if(!f) return;
-      const fr = new FileReader();
-      fr.onload = () => {
-        try{
-          const incoming = JSON.parse(fr.result || "{}");
-          const db = (window.db = window.db || {});
-          for (const k of Object.keys(incoming)){
-            if (k === "audit"){
-              db.audit = Array.isArray(incoming.audit) ? incoming.audit.slice() : (db.audit||[]);
-            } else if (k === "users"){
-              db.users = Array.isArray(incoming.users) ? incoming.users.slice() : (db.users||[]);
-              if (typeof window.normalizePerms === "function"){
-                db.users = (db.users||[]).map(u => { u.perms = window.normalizePerms(u.perms); return u; });
-              }
-            } else if (Array.isArray(incoming[k])){
-              db[k] = incoming[k].slice();
-            } else if (incoming[k] && typeof incoming[k] === "object"){
-              db[k] = Object.assign({}, db[k]||{}, incoming[k]);
-            } else {
-              db[k] = incoming[k];
-            }
+// Merge-from-backup with id-based merge for ALL arrays
+window.restoreJSONMerge = function () {
+  const i = document.createElement('input');
+  i.type = 'file';
+  i.accept = '.json,application/json';
+
+  i.onchange = () => {
+    const f = i.files && i.files[0];
+    if (!f) return;
+
+    const fr = new FileReader();
+    fr.onload = () => {
+      try {
+        const incoming = JSON.parse(fr.result || '{}');
+        const db = (window.db = window.db || {});
+
+        for (const k of Object.keys(incoming)) {
+          const val = incoming[k];
+
+          if (k === 'audit') {
+            // Replace audit log
+            db.audit = Array.isArray(val) ? val.slice() : (db.audit || []);
+            continue;
           }
-          window.saveDB && window.saveDB();
-          try{ window.renderAlertBell && window.renderAlertBell(); }catch(_){}
-          if (typeof window.addAudit === "function") window.addAudit("import","backup","","Merged JSON backup");
-          alert("Merged from backup");
-          window.render && window.render();
-        }catch(e){ alert("Bad JSON: " + (e.message||e)); }
-      };
-      fr.readAsText(f);
+
+          if (Array.isArray(val)) {
+            // 🔁 Same id-merge logic as Gist pull – works for:
+            // vehicles, vehicleExpenses, showroomExpenses, sales, credits,
+            // partners (directors), investors, users, todo, etc.
+            const localArr = Array.isArray(db[k]) ? db[k] : [];
+            const byId = Object.create(null);
+            const noId = [];
+
+            for (const item of localArr) {
+              if (item && item.id) {
+                byId[item.id] = item;
+              } else {
+                noId.push(item);
+              }
+            }
+
+            for (const item of val) {
+              if (item && item.id) {
+                byId[item.id] = item; // backup wins
+              } else {
+                noId.push(item);
+              }
+            }
+
+            db[k] = [...noId, ...Object.values(byId)];
+
+            // Fix users & directors special rules
+            if (k === 'users' && typeof window.normalizePerms === 'function') {
+              db.users = (db.users || []).map(u => {
+                u.perms = window.normalizePerms(u.perms);
+                return u;
+              });
+            }
+
+            if (k === 'partners') {
+              db.partners = (db.partners || []).filter((p, i, arr) =>
+                arr.findIndex(pp =>
+                  String(pp.name || '').trim().toLowerCase() ===
+                  String(p.name || '').trim().toLowerCase()
+                ) === i
+              );
+            }
+
+            continue;
+          }
+
+          if (val && typeof val === 'object') {
+            db[k] = Object.assign({}, db[k] || {}, val);
+          } else {
+            db[k] = val;
+          }
+        }
+
+        if (typeof window.saveDB === 'function') window.saveDB();
+        try {
+          if (typeof window.renderAlertBell === 'function') window.renderAlertBell();
+        } catch (_) {}
+        if (typeof window.addAudit === 'function') {
+          window.addAudit('import', 'backup', '', 'Merged JSON backup (id-merge)');
+        }
+        alert('Merged from backup');
+        if (typeof window.render === 'function') window.render();
+      } catch (e) {
+        alert('Bad JSON: ' + (e.message || e));
+      }
     };
-    i.click();
+    fr.readAsText(f);
   };
+
+  i.click();
+};
 
   // Replace-from-backup
   window.restoreJSONReplace = function(){
@@ -179,7 +238,7 @@ kbd{background:#0b1230;border:1px solid #22325e;border-radius:6px;padding:1px 6p
       <div class="small">Dealer Backoffice — v48 upgraded</div>
     </div>
   </div>
-  <div class.hdr-actions>
+  <div class="hdr-actions">
     <span id="who" class="small"></span>
     <button onclick="switchUser()">Switch User</button>
     <button onclick="changeMyPass()">Change Password</button>
@@ -348,13 +407,158 @@ function backupJSON(){
 /* ========= Gist sync ========= */
 function getGhToken(){ return localStorage.getItem(GHTOKENKEY)||''; }
 function setGhToken(t){ if(t) localStorage.setItem(GHTOKENKEY,t); else localStorage.removeItem(GHTOKENKEY); }
-async function syncPull(){ try{ const gistId=(db.company.gistId||'').trim(); if(!gistId) return alert('Enter Gist ID in Settings');
-  const r=await fetch(`https://api.github.com/gists/${gistId}`); const txt=await r.text(); if(!r.ok) return alert('Gist fetch failed '+r.status+': '+txt);
-  const j=JSON.parse(txt); const file=j.files&&(j.files['starcars.json']||Object.values(j.files)[0]); if(!file||!file.content) return alert('No starcars.json in that Gist');
-  const incoming=JSON.parse(file.content);
-  Object.keys(incoming).forEach(k=>{ if(Array.isArray(incoming[k])){ const ids=new Set((db[k]||[]).map(x=>x.id)); (incoming[k]||[]).forEach(x=>{ if(!ids.has(x.id)) (db[k]=db[k]||[]).push(x); }); } else if(typeof incoming[k]==='object'){ db[k]=Object.assign(db[k]||{}, incoming[k]); } else db[k]=incoming[k]; });
-  db.users=(db.users||[]).map(u=>{u.perms=normalizePerms(u.perms);return u;}); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('sync','pull',gistId,'Pulled from Gist'); alert('Pulled & merged from Gist'); render();
-}catch(e){ alert('Pull failed: '+e.message); } }
+async function syncPull() {
+  try {
+    const gistId = (db.company.gistId || '').trim();
+    if (!gistId) return alert('Enter Gist ID in Settings');
+
+    const r = await fetch(`https://api.github.com/gists/${gistId}`);
+    const txt = await r.text();
+    if (!r.ok) {
+      return alert('Gist fetch failed ' + r.status + ': ' + txt);
+    }
+
+    const j = JSON.parse(txt || '{}');
+    const file = j.files && (j.files['starcars.json'] || Object.values(j.files)[0]);
+    if (!file || !file.content) return alert('No starcars.json in that Gist');
+
+    const incoming = JSON.parse(file.content || '{}');
+
+    Object.keys(incoming).forEach(k => {
+      const val = incoming[k];
+
+      if (k === 'audit') {
+        // Replace audit completely
+        db.audit = Array.isArray(val) ? val.slice() : (db.audit || []);
+        return;
+      }
+
+      if (Array.isArray(val)) {
+        // 🔁 Merge ANY array by id: vehicles, expenses, showroom, users, directors, investors, etc.
+        const localArr = Array.isArray(db[k]) ? db[k] : [];
+        const byId = Object.create(null);
+        const noId = [];
+
+        // Start from local
+        for (const item of localArr) {
+          if (item && item.id) {
+            byId[item.id] = item;
+          } else {
+            noId.push(item);
+          }
+        }
+
+        // Apply incoming: overwrite same-id items, add new ones
+        for (const item of val) {
+          if (item && item.id) {
+            byId[item.id] = item; // remote (Gist) wins
+          } else {
+            noId.push(item);
+          }
+        }
+
+        db[k] = [...noId, ...Object.values(byId)];
+
+        // Users: normalise permissions
+        if (k === 'users' && typeof normalizePerms === 'function') {
+          db.users = (db.users || []).map(u => {
+            u.perms = normalizePerms(u.perms);
+            return u;
+          });
+        }
+
+        // Directors: make sure partners are unique by name (your existing rule)
+        if (k === 'partners') {
+          db.partners = (db.partners || []).filter((p, i, arr) =>
+            arr.findIndex(pp =>
+              String(pp.name || '').trim().toLowerCase() ===
+              String(p.name || '').trim().toLowerCase()
+            ) === i
+          );
+        }
+
+        return;
+      }
+
+      if (val && typeof val === 'object') {
+        // Shallow-merge plain objects (company, settings etc.)
+        db[k] = Object.assign({}, db[k] || {}, val);
+      } else {
+        // Simple values
+        db[k] = val;
+      }
+    });
+
+    // Normalise users again just in case
+    if (typeof normalizePerms === 'function') {
+      db.users = (db.users || []).map(u => {
+        u.perms = normalizePerms(u.perms);
+        return u;
+      });
+    }
+
+    saveDB();
+    try { renderAlertBell(); } catch (_) {}
+    addAudit('sync', 'pull', db.company.gistId || '', 'Pulled from Gist (id-merge)');
+    alert('Pulled & merged from Gist (arrays merged by id)');
+    render();
+  } catch (e) {
+    alert('Pull failed: ' + e.message);
+  }
+}
+
+async function syncPullHard() {
+  try {
+    const gistId = (db.company.gistId || '').trim();
+    if (!gistId) return alert('Enter Gist ID in Settings');
+
+    const r = await fetch(`https://api.github.com/gists/${gistId}`);
+    const txt = await r.text();
+    if (!r.ok) {
+      return alert('Gist fetch failed ' + r.status + ': ' + txt);
+    }
+
+    const j = JSON.parse(txt || '{}');
+    const file =
+      j.files && (j.files['starcars.json'] || Object.values(j.files)[0]);
+    if (!file || !file.content) {
+      return alert('No starcars.json in that Gist');
+    }
+
+    const incoming = JSON.parse(file.content || '{}');
+
+    // Replace whole DB with incoming
+    db = incoming || {};
+
+    // Safety defaults
+    db.company = db.company || {};
+    db.vehicles = db.vehicles || [];
+    db.sales = db.sales || [];
+    db.expenses = db.expenses || [];
+    db.investors = db.investors || [];
+    db.investorPayments = db.investorPayments || [];
+    db.warrantySales = db.warrantySales || [];
+    db.audit = db.audit || [];
+    db.users = db.users || [];
+
+    // Normalise user permissions if helper exists
+    if (typeof normalizePerms === 'function') {
+      db.users = (db.users || []).map(u => {
+        u.perms = normalizePerms(u.perms);
+        return u;
+      });
+    }
+
+    saveDB();
+    try { renderAlertBell(); } catch (_) {}
+    addAudit('sync', 'pull-hard', gistId, 'HARD pull from Gist (full replace)');
+    alert('HARD Pull complete: local data replaced with Gist data.');
+    render();
+  } catch (e) {
+    alert('Hard Pull failed: ' + e.message);
+  }
+}
+
 async function syncPush(){ try{ const gistId=(db.company.gistId||'').trim(); if(!gistId) return alert('Enter Gist ID in Settings');
   const token=(getGhToken()||'').trim(); if(!token) return alert('Enter GitHub token and Save');
   const payload={files:{'starcars.json':{content:JSON.stringify(db,null,2)}}};
@@ -379,7 +583,10 @@ function render(){
 
 function validateSaleEdit(obj){
   const reg = (obj.reg||'').toUpperCase().trim();
-  if(!reg || reg.length<5 || /[^A-Z0-9]/i.test(reg)){ alert('Please enter a valid REG (letters/numbers only).'); return false; }
+  if(!reg || reg.length<5 || /[^A-Z0-9]/i.test(reg)){ 
+    alert('Please enter a valid REG (letters/numbers only).'); 
+    return false; 
+  }
   return true;
 }
 
@@ -461,7 +668,7 @@ function viewVehicles(){
   if(!canTab('Vehicles')) return document.createElement('div'); const wrap=document.createElement('div'); wrap.className='card';
   wrap.innerHTML=`<h2>Vehicles</h2>
   <div class="row">
-    <label>REG *<input id="v_reg" placeholder="AB12CDE"><button id="v_dvla" type="button">DVLA Lookup</button></label>
+    <label>REG *<input id="v_reg" placeholder="AB12CDE"><button id="v_dvla" type="button">DVLA Lookup</button><button id="v_mot" type="button">DVSA Lookup</button></label>
     <label>Make<input id="v_make"></label>
     <label>Model<input id="v_model"></label>
     <label>Colour<input id="v_colour"></label>
@@ -470,7 +677,11 @@ function viewVehicles(){
     <label>Purchase £<input id="v_purchase" type="number" placeholder="0"></label>
     <label>Date of First Reg<input id="v_firstReg" type="date"></label>
     <label>Owner Type<select id="v_ownerType"><option value="owned">owned</option><option value="investor">investor</option></select></label>
-    <label>Investor<input id="v_investor" placeholder="Investor name (if any)"></label>
+    <label>Investor
+  <select id="v_investor">
+    <option value="">-- Select investor (if any) --</option>
+  </select>
+</label>
     <label>Supplier Invoice #<input id="v_supplier" placeholder="INV-001"></label>
     <label>VIN (optional)<input id="v_vin"></label>
     <label>Status<select id="v_status"><option value="for sale">for sale</option><option value="sold">sold</option></select></label>
@@ -495,6 +706,16 @@ function viewVehicles(){
   </div>
   <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Type</th><th>Investor</th><th>Purchase</th><th>Status</th><th>Supplier #</th><th>Media</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
+// Populate investor dropdown from db.investors
+  const invSel = wrap.querySelector('#v_investor');
+  if (invSel) {
+    invSel.innerHTML =
+      '<option value="">-- Select investor (if any) --</option>' +
+      (db.investors || [])
+        .map(i => `<option value="${i.id}">${i.name}</option>`)
+        .join('');
+  }
+
   let editId=null; const body=wrap.querySelector('#vehBody');
 
   function renderPreview(arr){ const pv=wrap.querySelector('#v_mediaPreview'); pv.innerHTML=(arr||[]).map(u=>`<img src="${u}">`).join(''); }
@@ -546,29 +767,46 @@ function viewVehicles(){
 
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
     if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const v=db.vehicles.find(x=>x.id===id); editId=id;
-      ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_firstReg','v_ownerType','v_investor','v_supplier','v_status','v_vin','v_video'].forEach(k=>{ const el=wrap.querySelector('#'+k); if(!el)return; const key=k.replace(/^v_/,''); el.value=(v[key]??''); });
+      ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase',
+   'v_firstReg','v_ownerType','v_supplier','v_status','v_vin','v_video']
+  .forEach(k => {
+    const el = wrap.querySelector('#' + k);
+    if (!el) return;
+    const key = k.replace(/^v_/,'');
+    el.value = (v[key] ?? '');
+  });
+
+  // Set investor dropdown from investorId (fallback to name)
+  const invSel2 = wrap.querySelector('#v_investor');
+  if (invSel2) {
+    let invId = v.investorId || '';
+    if (!invId && v.investor) {
+      const found = (db.investors || []).find(i => (i.name || '') === v.investor);
+      if (found) invId = found.id;
+    }
+    invSel2.value = invId || '';
+  }
       wrap.querySelector('#v_mediaUrls').value=(v.media||[]).filter(u=>!u.startsWith('data:')).join(', ');
       wrap.querySelector('#v_mediaPreview').dataset.urls=JSON.stringify((v.media||[]));
       renderPreview(v.media||[]);
     }else if(act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete vehicle?')) return; const delV=db.vehicles.find(x=>x.id===id); db.vehicles=db.vehicles.filter(x=>x.id!==id); db.vehicleExpenses=db.vehicleExpenses.filter(e=>e.vehicleId!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','vehicle',id,delV?delV.reg:''); rows(); }
   });
 
-  // Fixed DVLA Lookup with Date of First Registration
+  // DVLA Lookup for Vehicles tab
   wrap.querySelector('#v_dvla').onclick = async () => {
     const reg = (wrap.querySelector('#v_reg').value || '').trim().toUpperCase();
     if (!reg) return alert('Enter REG first');
     
     const url = db.company.dvlaProxy || '';
-    if (!url) return alert('Add DVLA Proxy URL in Settings.');
+    if (!url) return alert('Add DVLA Proxy URL in Settings first.');
     
-    // Save original button text and disable during lookup
     const btn = wrap.querySelector('#v_dvla');
     const originalText = btn.textContent;
-    btn.textContent = 'Looking up...';
+    btn.textContent = 'Checking DVLA...';
     btn.disabled = true;
     
     try {
-      const response = await fetch(url, {
+      const rsp = await fetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -577,53 +815,107 @@ function viewVehicles(){
         })
       });
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      const txt = await rsp.text();
+      if (!rsp.ok) {
+        alert('DVLA error ' + rsp.status + ': ' + txt);
+        return;
       }
       
-      const data = await response.json();
+      const j = JSON.parse(txt || '{}');
       
-      // Enhanced field mapping with fallbacks
-      const make = data.make || data.raw?.make || '';
-      const model = data.model || data.raw?.model || '';
-      const colour = data.colour || data.raw?.colour || '';
-      const fuelType = (data.fuel || data.raw?.fuelType || '').toString().toUpperCase();
-      const vin = data.vin || data.raw?.vin || '';
-      const yearOfManufacture = data.yearOfManufacture || data.raw?.yearOfManufacture || '';
+      // Validate the response
+      const validation = validateDVLAResponse(j);
       
-      // Populate fields
-      if (make) wrap.querySelector('#v_make').value = make;
-      if (model) wrap.querySelector('#v_model').value = model;
-      if (colour) wrap.querySelector('#v_colour').value = colour;
-      if (fuelType) wrap.querySelector('#v_fuel').value = fuelType;
-      if (vin) wrap.querySelector('#v_vin').value = vin;
-      
-      // Populate Date of First Registration if year is available
-      if (yearOfManufacture) {
-        // Set to first day of the year (YYYY-01-01) as we don't have exact date
-        const firstRegDate = `${yearOfManufacture}-01-01`;
-        wrap.querySelector('#v_firstReg').value = firstRegDate;
+      if (!validation.isValid) {
+        alert('DVLA lookup failed: No valid vehicle data found');
+        return;
       }
       
-      // Show success message with details
-      const foundFields = [make && 'Make', model && 'Model', colour && 'Colour', 
-                          fuelType && 'Fuel', vin && 'VIN', yearOfManufacture && 'First Reg Year'].filter(Boolean);
-      const message = foundFields.length > 0 
-        ? `DVLA lookup successful! Found: ${foundFields.join(', ')}`
-        : 'DVLA lookup completed but no vehicle data found';
+      // Populate form fields with DVLA data
+      if (j.make || j.raw?.make) wrap.querySelector('#v_make').value = j.make || j.raw.make || '';
+      if (j.model) wrap.querySelector('#v_model').value = j.model || '';
+      if (j.colour || j.raw?.colour) wrap.querySelector('#v_colour').value = j.colour || j.raw.colour || '';
+      if (j.fuel || j.raw?.fuelType) wrap.querySelector('#v_fuel').value = (j.fuel || j.raw.fuelType || '').toString().toUpperCase();
+      if (j.vin || j.raw?.vin) wrap.querySelector('#v_vin').value = j.vin || j.raw.vin || '';
       
-      alert(message);
+      alert('DVLA lookup completed. Vehicle details filled.\n\nFields found: ' + 
+        Object.keys(validation.fieldsFound).filter(k => validation.fieldsFound[k]).join(', '));
       
     } catch (err) {
-      console.error('DVLA lookup failed:', err);
-      alert('DVLA lookup failed: ' + (err.message || 'Unknown error'));
+      alert('DVLA lookup failed: ' + err.message);
     } finally {
-      // Restore button state
       btn.textContent = originalText;
       btn.disabled = false;
     }
   };
+
+  const motBtn = wrap.querySelector('#v_mot');
+if (motBtn) {
+  motBtn.onclick = async () => {
+    const reg = (wrap.querySelector('#v_reg').value || '').trim().toUpperCase();
+    if (!reg) return alert('Enter REG first');
+
+    // FIXED: only use DVSA proxy (not DVLA)
+    const url = db.company.dvsaProxy || '';
+    if (!url) return alert('Add DVSA / MOT Proxy URL in Settings first.');
+
+    const btn = motBtn;
+    const originalText = btn.textContent;
+    btn.textContent = 'Checking MOT...';
+    btn.disabled = true;
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reg })
+      });
+
+      const text = await res.text();
+      if (!res.ok) throw new Error('DVSA error ' + res.status + ': ' + text);
+
+      const data = JSON.parse(text);
+
+      if (!Array.isArray(data) || !data.length) {
+        alert('No MOT data found for this registration.');
+        return;
+      }
+
+      const vehicle = data[0];
+      const tests = vehicle.motTests || [];
+      const latest = tests[0];
+
+      let msg = `Reg: ${vehicle.registration}\nMake/Model: ${vehicle.make || ''} ${vehicle.model || ''}\n\n`;
+
+      if (latest) {
+        msg += `Last MOT: ${latest.completedDate}\n`;
+        msg += `Result: ${latest.testResult}\n`;
+        msg += `Expiry: ${latest.expiryDate}\n`;
+        msg += `Mileage: ${latest.odometerValue} ${latest.odometerUnit}\n`;
+      } else {
+        msg += 'No MOT tests found.\n';
+      }
+
+      alert(msg);
+
+      if (latest) {
+        const found = (db.vehicles || []).find(v => (v.reg || '').toUpperCase() === reg);
+        if (found) {
+          found.lastMotDate = latest.completedDate || '';
+          found.lastMotExpiry = latest.expiryDate || '';
+          found.lastMotMileage = latest.odometerValue || '';
+          saveDB();
+        }
+      }
+
+    } catch (e) {
+      alert('MOT lookup failed: ' + e.message);
+    } finally {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }
+  };
+}
 
   wrap.querySelector('#v_add').onclick=()=>{ if(!canAction('add')) return alert('No permission');
     const reg=(wrap.querySelector('#v_reg').value||'').toUpperCase().trim(); if(!reg){ alert('Reg is required'); return; }
@@ -641,8 +933,20 @@ function viewVehicles(){
       mileage:Number(wrap.querySelector('#v_mileage').value||0), 
       purchase:Number(wrap.querySelector('#v_purchase').value||0), 
       firstReg:wrap.querySelector('#v_firstReg').value,
-      ownerType:wrap.querySelector('#v_ownerType').value, 
-      investor:wrap.querySelector('#v_investor').value.trim(),
+       // NEW: investorId + investor name from dropdown
+    ...(() => {
+      const sel = wrap.querySelector('#v_investor');
+      const invId = (sel && sel.value) || '';
+      let invName = '';
+      if (invId) {
+        const inv = (db.investors || []).find(i => i.id === invId);
+        if (inv) invName = inv.name;
+      }
+      return {
+        investorId: invId || null,
+        investor: invName // keep name for display / backwards-compat
+      };
+    })(),
       supplier:wrap.querySelector('#v_supplier').value.trim(), 
       vin:wrap.querySelector('#v_vin').value.trim(), 
       status:wrap.querySelector('#v_status').value, 
@@ -801,9 +1105,6 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
   </div>
   <table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Reg</th><th>Customer</th><th class="right">Price</th><th>Breakdown</th>${canProfit()?'<th class="right">Profit</th>':''}<th>Actions</th></tr></thead><tbody id="sale_body"></tbody></table>`;
   let editId=null; const body=wrap.querySelector('#sale_body');
-  
-  // Update this function to find vehicles regardless of status
-  function findVehicleIdByReg(reg){ reg=(reg||'').toUpperCase().trim(); const v=(db.vehicles||[]).find(x=>(x.reg||'').toUpperCase()===reg); return v?v.id:null; }
   
   function rows(){ body.innerHTML=''; (db.sales||[]).forEach(s=>{ const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,x)=>t+Number(x.amount||0),0);
     const profit=Number(s.salePrice||0)-Number(v.purchase||0)-vexp; const br=`£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
@@ -1189,7 +1490,7 @@ function printCreditInvoice(creditId){
     <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''}</div>`;
 
   const html=`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
-  <style>@page{size:A4;margin:10mm 10mm}body{font-family:Arial;color:#111;font-size:${fontPx}px} .h{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:6px}
+  <style>@page{size:A4;margin:10mm 10mm}body{font-family:Arial;color:#111;font-size:${fontPx}px} .h{display:flex;justify-content:between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:6px}
   table{width:100%;border-collapse:collapse}th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}th{background:#f5f5f5;text-align:left}
   .terms{font-size:${Math.max(11,fontPx)}px;line-height:1.35} .tight td{padding:4px 6px} .negative{color:#d00;font-weight:bold}</style></head><body>
   <button class="no-print" onclick="window.print()" style="margin:8px 0">Print / Save as PDF</button>
@@ -1554,13 +1855,57 @@ function viewInvestors(){ if(!canTab('Investors')) return document.createElement
       const id = (sel && sel.value) || '';
       if(!id) return alert('Select an investor to delete');
       
-      const inv = (db.investors||[]).find(x => x.id === id || x.name === id);
+      const inv = (db.investors||[]).find(x => x.id === id);
       if(!inv) return alert('Investor not found');
       
       // Check for linked vehicles
-      const linked = (db.vehicles||[]).filter(v => 
-        v.ownerType === 'investor' && (v.investor||'') === inv.name
-      );
+      const linked = (db.vehicles || []).filter(v => {
+        const byId   = v.investorId && v.investorId === inv.id;
+        const byName = (v.investor || '') === inv.name;
+        return byId || byName;
+      });
+
+      if (linked.length > 0) {
+        const others = (db.investors || []).filter(x => x !== inv);
+        let choice = 'dealer';
+
+        if (others.length > 0) {
+          const names = others.map(o => o.name).join(', ');
+          const ans = prompt(
+            'Investor "' + inv.name + '" has ' + linked.length + ' vehicle(s).\n' +
+            'Type a new investor name to reassign (' + names + '), or leave blank for DEALER:',
+            ''
+          );
+          if (ans && ans.trim()) {
+            choice = ans.trim();
+          }
+        }
+
+        // Reassign vehicles
+        linked.forEach(v => {
+          if (choice === 'dealer') {
+            v.ownerType = 'owned';
+            v.investor = '';
+            v.investorId = null;
+          } else {
+            const newInv = (db.investors || []).find(x => x.name === choice);
+            v.ownerType = 'investor';
+            v.investor = choice;
+            v.investorId = newInv ? newInv.id : null;
+          }
+        });
+      }
+
+    const soldIds = new Set((db.sales || []).map(s => s.vehicleId));
+    const live = linked.filter(v => !soldIds.has(v.id));
+
+    assigned = live.reduce((t, v) => {
+      const vx = (db.vehicleExpenses || [])
+        .filter(e => e.vehicleId === v.id)
+        .reduce((u, e) => u + Number(e.amount || 0), 0);
+      return t + Number(v.purchase || 0) + vx;
+    }, 0);
+    unassigned = Number(inv.balance || 0) - assigned;
       
       if(linked.length > 0){
         const others = (db.investors||[]).filter(x => x !== inv);
@@ -1779,17 +2124,34 @@ function viewReports(){
     const items=sold.map(s=>{
       const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
       const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,x)=>t+Number(x.amount||0),0);
-      const gross=Number(s.salePrice||0)-Number(v.purchase||0)-vexp;
-      const isInvestor=(v.ownerType==='investor' && v.investor);
-      // MODIFIED: Only apply mgmt fees if the car made a profit (gross > 0)
+      const gross = Number(s.salePrice || 0) - Number(v.purchase || 0) - vexp;
+      const isInvestor = (v.ownerType === 'investor' && v.investor);
+
+      // Mgmt fees only if car made a profit
       const mgmtFlat = (isInvestor && gross > 0) ? 175 : 0;
-      const investorShare = (isInvestor && gross > 0) 
-        ? (0.30 * (gross - mgmtFlat))
-        : 0;
-      const afterInvestor = Math.max(0, gross - mgmtFlat - investorShare);
-      const mgmtPct = (isInvestor && gross > 0) ? (0.20 * gross) : 0;
-      return {s,v,gross,mgmtFlat,mgmtPct,investorShare,afterInvestor,isInvestor,investorName:v.investor||'' };
+      const mgmtPct  = (isInvestor && gross > 0) ? (0.20 * gross) : 0;
+
+      let investorShare = 0;
+      let afterInvestor = gross;
+
+      if (isInvestor && gross > 0) {
+        // Step 1: gross - £175 - 20%
+        const base = Math.max(0, gross - mgmtFlat - mgmtPct);
+
+        // Step 2: investor gets 30% of what's left
+        investorShare = 0.30 * base;
+
+        // Step 3: remainder for directors pot from this car
+        afterInvestor = Math.max(0, base - investorShare);
+        // equivalent: gross - mgmtFlat - mgmtPct - investorShare
+      } else {
+        // Dealer-owned car: all gross goes to directors pot (before showroom / post-expenses)
+        afterInvestor = gross;
+      }
+
+      return { s, v, gross, mgmtFlat, mgmtPct, investorShare, afterInvestor, isInvestor, investorName: v.investor || '' };
     });
+
     const totalGross=items.reduce((t,x)=>t+x.gross,0);
     const totalFlat=items.reduce((t,x)=>t+x.mgmtFlat,0);
     const totalPct=items.reduce((t,x)=>t+x.mgmtPct,0);
@@ -2018,7 +2380,7 @@ function viewSettings(){
     <div class="row"><input id="c_testReg" placeholder="Test REG (e.g. KR21UYL)" style="min-width:220px"><button id="c_dvlaTest">DVLA Test</button></div><hr style="width:100%;border:0;border-top:1px solid var(--line)">
     <div class="row"><input id="c_gistId" placeholder="GitHub Gist ID (where starcars.json lives)" value="${db.company.gistId||''}" style="min-width:420px"></div>
     <div class="row"><input id="c_ghToken" placeholder="GitHub Token (gist scope)" value="${tokenCurrent||''}" type="password" style="min-width:420px"></div>
-    <div class="row"><button id="c_isave" class="primary">Save Integrations</button><button id="c_pull">Pull (Gist → App)</button><button id="c_push">Push (App → Gist)</button></div>
+    <div class="row"><button id="c_isave" class="primary">Save Integrations</button><button id="c_pull">Pull (Gist → App)</button><button id="syncPullHard">Pull (REPLACE ALL from Gist)</button><button id="c_push">Push (App → Gist)</button></div>
     <div class="small">Token is stored only in your browser (LocalStorage), not inside backups.</div>
   </div></div>`;
   
@@ -2043,7 +2405,7 @@ function viewSettings(){
       db.company.invoiceFontPx=Number(document.getElementById('c_invFont').value||12);
       db.company.termsFontPx=Number(document.getElementById('c_termsFont').value||10);
       db.company.logoMaxW=Number(document.getElementById('c_logoW').value||140);
-      db.company.logoMaxH=Number(document.getElementById('c_logoH').value||80);
+      db.company.logoMaxH=Number(document.getElementById('#c_logoH').value||80);
       saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','company','company','Updated company profile'); refreshLogoBox(); alert('Saved');
     };
   } else {
@@ -2066,8 +2428,17 @@ function viewSettings(){
     alert('Saved integrations'); 
   };
   
-  wrap.querySelector('#c_pull').onclick=()=>syncPull(); 
+  wrap.querySelector('#c_pull').onclick=()=>syncPull();
   wrap.querySelector('#c_push').onclick=()=>syncPush();
+
+  const hardBtn = wrap.querySelector('#syncPullHard');
+if (hardBtn) {
+  hardBtn.onclick = () => {
+    if (confirm('This will REPLACE ALL local data with the Gist version. Unsynced changes on this PC will be LOST. Are you sure?')) {
+      syncPullHard();
+    }
+  };
+}
   
   // Fixed DVLA Test function - available for all users with settings permission
   wrap.querySelector('#c_dvlaTest').onclick = async () => { 
@@ -2126,6 +2497,13 @@ function viewSettings(){
   }
   
   return wrap;
+}
+
+// Add missing renderAlertBell function
+function renderAlertBell() {
+  // This function is referenced but not defined
+  // Add a basic implementation or remove references if not needed
+  console.log('Alert bell rendered');
 }
 
 render();
