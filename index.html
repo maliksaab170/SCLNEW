@@ -618,20 +618,39 @@ function viewDashboard(){
   const vExp=(db.vehicleExpenses||[]).reduce((t,e)=>t+Number(e.amount||0),0);
   const sExp=(db.showroomExpenses||[]).reduce((t,e)=>t+Number(e.amount||0),0);
   const bal=calcBalances();
-  const totalVehicles=(db.vehicles||[]).length;
-  const inStock=(db.vehicles||[]).filter(v=>v.status!=='sold').length;
+  const inStockVehicles = (db.vehicles || []).filter(v => v.status !== 'sold');
+  const inStock = inStockVehicles.length;
+  const inStockIds = new Set(inStockVehicles.map(v => v.id));
+
+  const stockPurchase = inStockVehicles
+  .reduce((t, v) => t + Number(v.purchase || 0), 0);
+
+  const stockVehExpTotal = (db.vehicleExpenses || [])
+  .filter(e => inStockIds.has(e.vehicleId))
+  .reduce((t, e) => t + Number(e.amount || 0), 0);
+
+  const stockValue = stockPurchase + stockVehExpTotal;
 
   card.innerHTML=`<h2>Dashboard</h2>
   <div class="grid4">
     <div class="card"><div class="small">Directors Invested (balance)</div><div class="stat">${fmtMoney(dirTotal)}</div></div>
     <div class="card"><div class="small">Investors Funds (balance)</div><div class="stat">${fmtMoney(invTotal)}</div></div>
-    <div class="card"><div class="small">Vehicles In Stock</div><div class="stat">${inStock} / ${totalVehicles}</div></div>
+    <div class="card"><div class="small">Vehicles In Stock</div><div class="stat">${inStock}</div></div>
     <div class="card"><div class="small">Estimated Bank / Cash</div><div class="stat">${fmtMoney(bal.bank)} &nbsp;|&nbsp; ${fmtMoney(bal.cash)}</div></div>
   </div>
   <div class="grid3">
-    <div class="card"><div class="small">Vehicle Purchases (all time)</div><div class="stat">${fmtMoney(vehSpend)}</div></div>
-    <div class="card"><div class="small">Vehicle Expenses (all)</div><div class="stat">${fmtMoney(vExp)}</div></div>
-    <div class="card"><div class="small">Showroom Expenses (all)</div><div class="stat">${fmtMoney(sExp)}</div></div>
+    <div class="card">
+    <div class="small">Current Stock Purchase (in-stock vehicles)</div>
+    <div class="stat">${fmtMoney(stockPurchase)}</div>
+  </div>
+  <div class="card">
+    <div class="small">Current Stock Vehicle Expenses</div>
+    <div class="stat">${fmtMoney(stockVehExpTotal)}</div>
+  </div>
+  <div class="card">
+    <div class="small">Current Stock Value (purchase + expenses)</div>
+    <div class="stat">${fmtMoney(stockValue)}</div>
+  </div>
   </div>
   <div class="row">
     <input id="dash_reg" list="reglist" placeholder="Type REG… (e.g., AB12CDE)" style="min-width:220px">
@@ -675,6 +694,7 @@ function viewVehicles(){
     <label>Fuel<input id="v_fuel" placeholder="PETROL/DIESEL/EV"></label>
     <label>Mileage<input id="v_mileage" type="number" placeholder="0"></label>
     <label>Purchase £<input id="v_purchase" type="number" placeholder="0"></label>
+    <label>Purchase Date<input id="v_purchaseDate" type="date"></label>
     <label>Date of First Reg<input id="v_firstReg" type="date"></label>
     <label>Owner Type<select id="v_ownerType"><option value="owned">owned</option><option value="investor">investor</option></select></label>
     <label>Investor
@@ -703,8 +723,9 @@ function viewVehicles(){
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_instock" checked> In stock only</label>
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_soldonly"> Sold only</label>
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_investoronly"> Investor stock</label>
+    <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_pxonly"> Part-ex only</label>
   </div>
-  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Type</th><th>Investor</th><th>Purchase</th><th>Status</th><th>Supplier #</th><th>Media</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
+  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>Status</th><th>Supplier #</th><th>Media</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
 // Populate investor dropdown from db.investors
   const invSel = wrap.querySelector('#v_investor');
@@ -740,14 +761,30 @@ function viewVehicles(){
       const investorOnly = wrap.querySelector('#veh_investoronly').checked;
       if(investorOnly && v.ownerType !== 'investor') return;
       
+      // Apply part-ex filter
+      const pxonly = wrap.querySelector('#veh_pxonly').checked;
+      if(pxonly && v.supplier !== 'PART-EX') return;
+      
       const hay = ((v.reg||'')+' '+(v.make||'')+' '+(v.model||'')).toLowerCase();
       if(q && !hay.includes(q)) return;
       
       const tr=document.createElement('tr');
       const mcount=(v.media||[]).length + ((v.video&&1)||0);
-      tr.innerHTML=`<td>${v.reg||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${v.colour||''}</td><td>${v.mileage||''}</td><td>${v.fuel||''}</td><td>${ddmmyyyy(v.firstReg||'')}</td><td>${v.ownerType||'owned'}</td><td>${v.investor||''}</td><td class="right">${fmtMoney(v.purchase||0)}</td><td>${v.status||''}</td><td>${v.supplier||''}</td>
-      <td>${mcount?mcount+' item(s)':''}</td>
-      <td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''}</td>`;
+      tr.innerHTML=`<td>${v.reg||''}</td>
+<td>${v.make||''}</td>
+<td>${v.model||''}</td>
+<td>${v.colour||''}</td>
+<td>${v.mileage||''}</td>
+<td>${v.fuel||''}</td>
+<td>${ddmmyyyy(v.firstReg||'')}</td>
+<td>${ddmmyyyy(v.purchaseDate||'')}</td>
+<td>${v.ownerType||'owned'}</td>
+<td>${v.investor||''}</td>
+<td class="right">${fmtMoney(v.purchase||0)}</td>
+<td>${v.status||''}</td>
+<td>${v.supplier||''}${v.supplierNote ? '<br><small style="color:#53a8ff;">' + v.supplierNote + '</small>' : ''}</td>
+<td>${mcount?mcount+' item(s)':''}</td>
+<td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''} ${v.originalSaleId?`<button data-act="viewSale" data-id="${v.originalSaleId}" title="View original sale" style="margin-left:4px;">📋</button>`:''}</td>`;
       body.appendChild(tr);
     });
   };
@@ -761,14 +798,15 @@ function viewVehicles(){
   }
   
   const SRCH=wrap.querySelector('#veh_search'); if(SRCH) SRCH.addEventListener('input', applyVehFilter);
-  const CHK_IN=wrap.querySelector('#veh_instock'); if(CHK_IN) CHK_IN.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_soldonly'); if(s) s.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; } applyVehFilter(); });
-  const CHK_SOLD=wrap.querySelector('#veh_soldonly'); if(CHK_SOLD) CHK_SOLD.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; } applyVehFilter(); });
-  const CHK_INVESTOR=wrap.querySelector('#veh_investoronly'); if(CHK_INVESTOR) CHK_INVESTOR.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const sold=wrap.querySelector('#veh_soldonly'); if(sold) sold.checked=false; } applyVehFilter(); });
+  const CHK_IN=wrap.querySelector('#veh_instock'); if(CHK_IN) CHK_IN.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_soldonly'); if(s) s.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; const px=wrap.querySelector('#veh_pxonly'); if(px) px.checked=false; } applyVehFilter(); });
+  const CHK_SOLD=wrap.querySelector('#veh_soldonly'); if(CHK_SOLD) CHK_SOLD.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; const px=wrap.querySelector('#veh_pxonly'); if(px) px.checked=false; } applyVehFilter(); });
+  const CHK_INVESTOR=wrap.querySelector('#veh_investoronly'); if(CHK_INVESTOR) CHK_INVESTOR.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const sold=wrap.querySelector('#veh_soldonly'); if(sold) sold.checked=false; const px=wrap.querySelector('#veh_pxonly'); if(px) px.checked=false; } applyVehFilter(); });
+  const CHK_PX=wrap.querySelector('#veh_pxonly'); if(CHK_PX) CHK_PX.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const sold=wrap.querySelector('#veh_soldonly'); if(sold) sold.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; } applyVehFilter(); });
 
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
     if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const v=db.vehicles.find(x=>x.id===id); editId=id;
       ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase',
-   'v_firstReg','v_ownerType','v_supplier','v_status','v_vin','v_video']
+   'v_purchaseDate','v_firstReg','v_ownerType','v_supplier','v_status','v_vin','v_video']
   .forEach(k => {
     const el = wrap.querySelector('#' + k);
     if (!el) return;
@@ -790,6 +828,16 @@ function viewVehicles(){
       wrap.querySelector('#v_mediaPreview').dataset.urls=JSON.stringify((v.media||[]));
       renderPreview(v.media||[]);
     }else if(act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete vehicle?')) return; const delV=db.vehicles.find(x=>x.id===id); db.vehicles=db.vehicles.filter(x=>x.id!==id); db.vehicleExpenses=db.vehicleExpenses.filter(e=>e.vehicleId!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','vehicle',id,delV?delV.reg:''); rows(); }
+    else if(act==='viewSale'){
+      const sale = db.sales.find(x => x.id === id);
+      if(sale) {
+        const originalVehicle = db.vehicles.find(x => x.id === sale.vehicleId);
+        const buyer = sale.buyer || 'Unknown';
+        const saleDate = ddmmyyyy(sale.date);
+        const price = fmtMoney(sale.salePrice);
+        alert(`Part-ex Source Details:\n\nSold to: ${buyer}\nDate: ${saleDate}\nPrice: ${price}\nVehicle: ${originalVehicle?.reg || ''} ${originalVehicle?.make || ''} ${originalVehicle?.model || ''}\nInvoice #: ${sale.invNo || ''}\nPart-ex Allowance: ${fmtMoney(sale.pxAllowance || 0)}`);
+      }
+    }
   });
 
   // DVLA Lookup for Vehicles tab
@@ -932,6 +980,7 @@ if (motBtn) {
       fuel:wrap.querySelector('#v_fuel').value.trim(),
       mileage:Number(wrap.querySelector('#v_mileage').value||0), 
       purchase:Number(wrap.querySelector('#v_purchase').value||0), 
+      purchaseDate:wrap.querySelector('#v_purchaseDate').value,
       firstReg:wrap.querySelector('#v_firstReg').value,
        // NEW: investorId + investor name from dropdown
     ...(() => {
@@ -956,7 +1005,7 @@ if (motBtn) {
     };
     if(editId){ const i=db.vehicles.findIndex(x=>x.id===editId); db.vehicles[i]=v; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); editId=null; }
     else { db.vehicles.unshift(v); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); }
-    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_firstReg','v_investor','v_supplier','v_vin','v_mediaUrls','v_video'].forEach(k=>document.getElementById(k).value=''); wrap.querySelector('#v_mediaPreview').dataset.urls='[]'; renderPreview([]);
+    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_vin','v_mediaUrls','v_video'].forEach(k=>document.getElementById(k).value=''); wrap.querySelector('#v_mediaPreview').dataset.urls='[]'; renderPreview([]);
   };
   return wrap;
 }
@@ -1073,6 +1122,25 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
   // Remove the filter that excludes sold vehicles from the REG dropdown
   const regOptions=(db.vehicles||[]).map(v=>`<option value="${(v.reg||'').toUpperCase()}">`).join('');
   wrap.innerHTML=`<h2>Sales</h2>
+  <!-- Search and Filter Section -->
+  <div class="row" style="margin-bottom: 16px; padding: 10px; background: rgba(19, 26, 43, 0.5); border-radius: 10px;">
+    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; width: 100%;">
+      <div style="flex: 1; min-width: 200px;">
+        <label class="small">Search by REG, Customer, or Invoice #</label>
+        <input id="sales_search" placeholder="Type to search..." style="width: 100%;">
+      </div>
+      <div style="flex: 1; min-width: 200px;">
+        <label class="small">Filter by Month</label>
+        <input id="sales_month" type="month" style="width: 100%;">
+      </div>
+      <div style="display: flex; gap: 8px; align-items: flex-end;">
+        <button id="sales_clear_search" style="margin-top: 20px;">Clear Search</button>
+        <button id="sales_clear_month" style="margin-top: 20px;">Show All Time</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Sale Entry Form -->
   <div class="row">
     <label>Vehicle REG<datalist id="sale_reg_list">${regOptions}</datalist><input id="sale_reg" list="sale_reg_list" placeholder="Type REG to select vehicle"></label>
     <label>Sale Date<input id="sale_date" type="date"></label>
@@ -1108,14 +1176,117 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
     <button id="sale_add" class="primary">Record / Update</button>
   </div>
 
-  <table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Reg</th><th>Customer</th><th class="right">Price</th><th>Breakdown</th>${canProfit()?'<th class="right">Profit</th>':''}<th>Actions</th></tr></thead><tbody id="sale_body"></tbody></table>`;
-  let editId=null; const body=wrap.querySelector('#sale_body');
+  <table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Reg</th><th>Customer</th><th class="right">Price</th><th>Breakdown</th>${canProfit()?'<th class="right">Profit</th>':''}<th>Actions</th></tr></thead><tbody id="sale_body"></tbody></table>
+  <div id="sales_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>`;
   
-  function rows(){ body.innerHTML=''; (db.sales||[]).forEach(s=>{ const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,x)=>t+Number(x.amount||0),0);
-    const profit=Number(s.salePrice||0)-Number(v.purchase||0)-vexp; const br=`£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
-    const tr=document.createElement('tr'); tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td><td>${v.reg||''}</td><td>${s.buyer||''}</td><td class="right">${fmtMoney(s.salePrice)}</td><td>${br}</td>${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
-    <td><button data-act="inv" data-id="${s.id}">Invoice</button><button data-act="proforma" data-id="${s.id}">Finance Proforma</button>${canAction('edit')?`<button data-act="edit" data-id="${s.id}">Edit</button>`:''}${canAction('del')?` <button class="danger" data-act="del" data-id="${s.id}">Delete</button>`:''}</td>`; body.appendChild(tr); }); }
-  rows();
+  let editId=null; const body=wrap.querySelector('#sale_body');
+  let currentFilter = {
+    search: '',
+    month: '' // CHANGED: Empty by default instead of current month
+  };
+  
+  // Set default month to empty (show all time)
+  wrap.querySelector('#sales_month').value = currentFilter.month; // CHANGED
+  
+  function getFilteredSales() {
+    let sales = db.sales || [];
+    
+    // Apply month filter if specified
+    if (currentFilter.month) {
+      sales = sales.filter(s => ymStr(s.date) === currentFilter.month);
+    }
+    
+    // Apply search filter if specified
+    if (currentFilter.search) {
+      const searchTerm = currentFilter.search.toLowerCase();
+      sales = sales.filter(s => {
+        const v = db.vehicles.find(x => x.id === s.vehicleId) || {};
+        return (
+          (v.reg || '').toLowerCase().includes(searchTerm) ||
+          (s.buyer || '').toLowerCase().includes(searchTerm) ||
+          (s.invNo || '').toLowerCase().includes(searchTerm) ||
+          (s.phone || '').toLowerCase().includes(searchTerm) ||
+          (s.email || '').toLowerCase().includes(searchTerm)
+        );
+      });
+    }
+    
+    return sales;
+  }
+  
+  function rows(){ 
+    const filteredSales = getFilteredSales();
+    body.innerHTML=''; 
+    
+    if (filteredSales.length === 0) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="${canProfit() ? 7 : 6}" class="small" style="text-align: center; padding: 20px;">No sales found${currentFilter.search ? ' for "' + currentFilter.search + '"' : ''}${currentFilter.month ? ' in ' + currentFilter.month : ''}</td>`;
+      body.appendChild(tr);
+    } else {
+      filteredSales.forEach(s => { 
+        const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; 
+        const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,x)=>t+Number(x.amount||0),0);
+        const profit=Number(s.salePrice||0)-Number(v.purchase||0)-vexp; 
+        const br=`£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
+        const partexVehicle = (db.vehicles||[]).find(v => v.originalSaleId === s.id);
+        const partexInfo = partexVehicle ? `<br><small style="color:#53a8ff;">PX: ${partexVehicle.reg} (in stock)</small>` : '';
+        const tr=document.createElement('tr'); 
+        tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td>
+<td>${v.reg||''}</td>
+<td>${s.buyer||''}</td>
+<td class="right">${fmtMoney(s.salePrice)}</td>
+<td>${br}${partexInfo}</td>
+${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
+<td><button data-act="inv" data-id="${s.id}">Invoice</button><button data-act="proforma" data-id="${s.id}">Finance Proforma</button>${canAction('edit')?`<button data-act="edit" data-id="${s.id}">Edit</button>`:''}${canAction('del')?` <button class="danger" data-act="del" data-id="${s.id}">Delete</button>`:''}</td>`; 
+        body.appendChild(tr); 
+      });
+    }
+    
+    // Update summary
+    updateSummary();
+  }
+  
+  function updateSummary() {
+    const filteredSales = getFilteredSales();
+    const totalSales = filteredSales.reduce((sum, s) => sum + Number(s.salePrice || 0), 0);
+    const summary = wrap.querySelector('#sales_summary');
+    
+    let summaryText = `Showing ${filteredSales.length} sale${filteredSales.length !== 1 ? 's' : ''}`;
+    if (currentFilter.month) {
+      summaryText += ` for ${currentFilter.month}`;
+    } else {
+      summaryText += ` (all time)`; // CHANGED: Added indication when showing all time
+    }
+    if (currentFilter.search) {
+      summaryText += ` matching "${currentFilter.search}"`;
+    }
+    summaryText += ` | Total: ${fmtMoney(totalSales)}`;
+    
+    summary.textContent = summaryText;
+  }
+  
+  // Event listeners for search and filter
+  wrap.querySelector('#sales_search').addEventListener('input', function(e) {
+    currentFilter.search = e.target.value.trim();
+    rows();
+  });
+  
+  wrap.querySelector('#sales_month').addEventListener('change', function(e) {
+    currentFilter.month = e.target.value || '';
+    rows();
+  });
+  
+  wrap.querySelector('#sales_clear_search').onclick = function() {
+    wrap.querySelector('#sales_search').value = '';
+    currentFilter.search = '';
+    rows();
+  };
+  
+  wrap.querySelector('#sales_clear_month').onclick = function() {
+    wrap.querySelector('#sales_month').value = '';
+    currentFilter.month = '';
+    rows();
+  };
 
   function getNums(){ return { price:Number(wrap.querySelector('#sale_price').value||0), dep:Number(wrap.querySelector('#sale_dep').value||0), cash:Number(wrap.querySelector('#sale_cash').value||0), card:Number(wrap.querySelector('#sale_card').value||0), bank:Number(wrap.querySelector('#sale_bank').value||0), fin:Number(wrap.querySelector('#sale_fin').value||0), px:Number(wrap.querySelector('#sale_pxAllowance').value||0) }; }
   function updateWarn(){ const {price,dep,cash,card,bank,fin,px}=getNums(); const sum=dep+cash+card+bank+fin+px; const w=wrap.querySelector('#sale_warn'); if(sum===price){ w.textContent='OK: payments + PX match price'; w.style.color=''; } else { const diff=price-sum; w.textContent='Remaining difference: '+fmtMoney(diff); w.style.color=diff===0?'':(diff<0?'#ffb3b3':''); } }
@@ -1123,7 +1294,22 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
   wrap.querySelector('#auto_balance').onclick=()=>{ const {price,dep,cash,card,bank,px}=getNums(); const paid=dep+cash+card+bank+px; const fin=Math.max(0,price-paid); wrap.querySelector('#sale_fin').value=fin; updateWarn(); };
 
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b)return; const s=db.sales.find(x=>x.id===b.dataset.id);
-    if(b.dataset.act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete sale? Vehicle will go back to stock.')) return; if(s){ const v=db.vehicles.find(x=>x.id===s.vehicleId); if(v) v.status='for sale'; db.sales=db.sales.filter(x=>x.id!==s.id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','sale',s.id,(v?v.reg:'')+' inv '+(s.invNo||'')); rows(); } }
+    if(b.dataset.act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete sale? Vehicle will go back to stock.')) return; if(s){ 
+      // Also delete any associated part-ex vehicle
+      const pxVehicle = (db.vehicles||[]).find(v => v.originalSaleId === s.id);
+      if(pxVehicle) {
+        db.vehicles = db.vehicles.filter(v => v.id !== pxVehicle.id);
+        db.vehicleExpenses = db.vehicleExpenses.filter(e => e.vehicleId !== pxVehicle.id);
+      }
+      
+      const v=db.vehicles.find(x=>x.id===s.vehicleId); 
+      if(v) v.status='for sale'; 
+      db.sales=db.sales.filter(x=>x.id!==s.id); 
+      saveDB(); 
+      try{renderAlertBell();}catch(e){}; 
+      addAudit('delete','sale',s.id,(v?v.reg:'')+' inv '+(s.invNo||'') + (pxVehicle ? ' and PX ' + pxVehicle.reg : '')); 
+      rows(); 
+    } }
     else if(b.dataset.act==='edit'){ if(!canAction('edit')) return alert('No permission'); editId=s.id; const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
       wrap.querySelector('#sale_reg').value=(v.reg||'').toUpperCase(); wrap.querySelector('#sale_date').value=s.date; wrap.querySelector('#sale_buyer').value=s.buyer||''; wrap.querySelector('#sale_addr').value=s.address||'';
       wrap.querySelector('#sale_phone').value=s.phone||''; wrap.querySelector('#sale_email').value=s.email||''; wrap.querySelector('#sale_mileage').value=s.mileage||0; wrap.querySelector('#sale_firstReg').value=s.firstReg||'';
@@ -1179,13 +1365,35 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
         vStat.mileage=s.mileage||vStat.mileage; 
       } 
       if(s.pxReg&&s.pxAllowance>0){ 
-        const px={id:uid(),reg:s.pxReg,make:s.pxMake,model:s.pxModel,colour:'',fuel:'',mileage:0,purchase:s.pxAllowance,ownerType:'owned',investor:'',supplier:'PART-EX',vin:'',status:'for sale',createdAt:new Date().toISOString(),media:[],video:''}; 
+        const px={
+          id:uid(),
+          reg:s.pxReg,
+          make:s.pxMake,
+          model:s.pxModel,
+          colour:'',
+          fuel:'',
+          mileage:0,
+          purchase:s.pxAllowance,
+          ownerType:'owned',
+          investor:'',
+          supplier:'PART-EX',
+          supplierNote: `PX from sale ${s.invNo} (${vStat?.reg || 'Unknown'})`,
+          originalSaleId: s.id,
+          vin:'',
+          status:'for sale',
+          createdAt:new Date().toISOString(),
+          media:[],
+          video:''
+        }; 
         db.vehicles.unshift(px); 
-        addAudit('add','vehicle',px.id,'PX '+px.reg+' '+(px.make||'')+' '+(px.model||'')); 
+        addAudit('add','vehicle',px.id,'PX '+px.reg+' '+(px.make||'')+' '+(px.model||'')+' from sale '+s.invNo+' ('+(vStat?.reg || 'Unknown')+')'); 
       } 
     }
-    saveDB(); try{renderAlertBell();}catch(e){}; render();
+    saveDB(); try{renderAlertBell();}catch(e){}; rows();
   };
+  
+  // Initial render
+  rows();
   return wrap;
 }
 
@@ -1199,7 +1407,7 @@ function viewSold(){
     <button id="sold_export">Export CSV</button>
   </div>
   <table class="table" style="margin-top:10px"><thead><tr>
-    <th>Date</th><th>Reg</th><th>Make</th><th>Model</th><th>Customer</th><th>Postcode</th><th>Phone</th><th>Email</th><th class="right">Price</th>
+    <th>Date</th><th>Reg</th><th>Make</th><th>Model</th><th>Customer</th><th>Address</th><th>Postcode</th><th>Phone</th><th>Email</th><th class="right">Price</th>
   </tr></thead><tbody id="sold_body"></tbody></table>`;
   const body=wrap.querySelector('#sold_body');
   function postcodeFrom(addr){ const m=(addr||'').match(/([A-Z]{1,2}\d{1,2}[A-Z]?)\s*\d[A-Z]{2}/i); return m?m[0].toUpperCase():''; }
@@ -1208,7 +1416,7 @@ function viewSold(){
     body.innerHTML=''; (db.sales||[]).forEach(s=>{
       if(k && ymStr(s.date)!==k) return;
       const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
-      const tr=document.createElement('tr'); tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td><td>${v.reg||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${s.buyer||''}</td><td>${postcodeFrom(s.address)}</td><td>${s.phone||''}</td><td>${s.email||''}</td><td class="right">${fmtMoney(s.salePrice||0)}</td>`; body.appendChild(tr);
+      const tr=document.createElement('tr'); tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td><td>${v.reg||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${s.buyer||''}</td><td>${s.address || ''}</td><td>${postcodeFrom(s.address)}</td><td>${s.phone||''}</td><td>${s.email||''}</td><td class="right">${fmtMoney(s.salePrice||0)}</td>`; body.appendChild(tr);
     });
   }
   rows();
@@ -2133,6 +2341,7 @@ function viewReports(){
   <div class="card"><h3>Month Close (Directors & Investors)</h3>
     <div class="row"><input id="mc_month" type="month" value="${new Date().toISOString().slice(0,7)}"> <button id="mc_prev">Preview</button><button id="mc_post" class="primary">Post</button><button id="mc_export">Export PDF</button><span id="mc_warn" class="small" style="margin-left:8px;color:#ffb3b3"></span></div><div id="mc_box" class="small"></div>
   </div>`;
+  
   /* Audit Log */
   const body=wrap.querySelector('#r_body'); const out=wrap.querySelector('#r_out');
   function run(){ const f=wrap.querySelector('#r_from').value; const t=wrap.querySelector('#r_to').value; const user=wrap.querySelector('#r_user').value; const ent=wrap.querySelector('#r_entity').value;
@@ -2141,21 +2350,45 @@ function viewReports(){
   wrap.querySelector('#r_run').onclick=run; run();
   wrap.querySelector('#r_export').onclick=()=>{ const rows=[["When","User","Action","Entity","Details"]].concat((db.audit||[]).map(a=>[a.ts,a.user,a.action,a.entity,(a.details||'')])); const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='audit.csv'; a.click(); };
 
-  /* Monthly Summary */
-  wrap.querySelector('#rm_go').onclick=()=>{ const k=(wrap.querySelector('#rm_month').value||'').slice(0,7); let purchases=0,vehExp=0,showExp=0,sales=0,buyCount=0,sellCount=0;
-    (db.vehicles||[]).forEach(v=>{ if((v.createdAt||'').slice(0,7)===k){ purchases+=Number(v.purchase||0); buyCount++; }});
+  /* Monthly Summary - UPDATED to use purchaseDate instead of createdAt */
+  wrap.querySelector('#rm_go').onclick=()=>{ 
+    const k=(wrap.querySelector('#rm_month').value||'').slice(0,7); 
+    let purchases=0,vehExp=0,showExp=0,sales=0,buyCount=0,sellCount=0;
+    
+    // Count vehicles purchased in this month - using purchaseDate or dateAdded field
+    (db.vehicles||[]).forEach(v=>{ 
+      // Try purchaseDate first, then dateAdded, then createdAt as fallback
+      const purchaseDate = v.purchaseDate || v.dateAdded || v.createdAt || '';
+      if(purchaseDate.slice(0,7)===k){ 
+        purchases+=Number(v.purchase||0); 
+        buyCount++; 
+      }
+    });
+    
     (db.vehicleExpenses||[]).forEach(e=>{ if((e.date||'').slice(0,7)===k) vehExp+=Number(e.amount||0); });
     (db.showroomExpenses||[]).forEach(e=>{ if((e.date||'').slice(0,7)===k) showExp+=Number(e.amount||0); });
-    (db.sales||[]).forEach(s=>{ if((s.date||'').slice(0,7)===k){ sales+=Number(s.salePrice||0); sellCount++; }});
-    const cover = wrap.querySelector('#rm_cover').checked; const showExpShown = cover ? 0 : showExp; const net = sales - purchases - vehExp - showExpShown;
-    const box=wrap.querySelector('#rm_box'); box.innerHTML='<table class="table"><tbody>'
+    
+    // Count vehicles sold in this month
+    (db.sales||[]).forEach(s=>{ 
+      if((s.date||'').slice(0,7)===k){ 
+        sales+=Number(s.salePrice||0); 
+        sellCount++; 
+      }
+    });
+    
+    const cover = wrap.querySelector('#rm_cover').checked; 
+    const showExpShown = cover ? 0 : showExp; 
+    const net = sales - purchases - vehExp - showExpShown;
+    
+    const box=wrap.querySelector('#rm_box'); 
+    box.innerHTML='<table class="table"><tbody>'
       +'<tr><th>Sold (count)</th><td class="right">'+sellCount+'</td></tr>'
-      +'<tr><th>Bought (count)</th><td class="right">'+buyCount+'</td></tr>'
+      +'<tr><th>Purchased (count)</th><td class="right">'+buyCount+'</td></tr>'
       +'<tr><th>Total Sales</th><td class="right">'+fmtMoney(sales)+'</td></tr>'
-      +'<tr><th>Total Vehicle Purchases (created this month)</th><td class="right">'+fmtMoney(purchases)+'</td></tr>'
-      +'<tr><th>Vehicle Expenses</th><td class="right">'+fmtMoney(vehExp)+'</td></tr>'
+      +'<tr><th>Total Vehicle Purchases (purchased this month)</th><td class="right">'+fmtMoney(purchases)+'</td></tr>'
+      +'<tr><th>Vehicle Expenses (this month)</th><td class="right">'+fmtMoney(vehExp)+'</td></tr>'
       +'<tr><th>Showroom Expenses '+(cover?'(covered by profit, shown as £0)':'')+'</th><td class="right">'+fmtMoney(showExpShown)+'</td></tr>'
-      +'<tr><th>Net</th><td class="right">'+fmtMoney(net)+'</td></tr>'
+      +'<tr><th>Net Profit/Loss</th><td class="right">'+fmtMoney(net)+'</td></tr>'
       +'</tbody></table>';
   };
 
