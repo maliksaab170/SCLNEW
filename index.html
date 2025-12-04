@@ -1224,9 +1224,14 @@ function hint(){ const bal=calcBalances(); wrap.querySelector('#s_totHint').text
 }
 
 /* ========= Sales ========= */
-function viewSales(){ if(!canTab('Sales')) return document.createElement('div'); const wrap=document.createElement('div'); wrap.className='card';
+function viewSales(){ 
+  if(!canTab('Sales')) return document.createElement('div'); 
+  const wrap=document.createElement('div'); 
+  wrap.className='card';
+  
   // Remove the filter that excludes sold vehicles from the REG dropdown
   const regOptions=(db.vehicles||[]).map(v=>`<option value="${(v.reg||'').toUpperCase()}">`).join('');
+  
   wrap.innerHTML=`<h2>Sales</h2>
   <!-- Search and Filter Section -->
   <div class="row" style="margin-bottom: 16px; padding: 10px; background: rgba(19, 26, 43, 0.5); border-radius: 10px;">
@@ -1285,14 +1290,15 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
   <table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Reg</th><th>Customer</th><th class="right">Price</th><th>Breakdown</th>${canProfit()?'<th class="right">Profit</th>':''}<th>Actions</th></tr></thead><tbody id="sale_body"></tbody></table>
   <div id="sales_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>`;
   
-  let editId=null; const body=wrap.querySelector('#sale_body');
+  let editId=null; 
+  const body=wrap.querySelector('#sale_body');
   let currentFilter = {
     search: '',
-    month: '' // CHANGED: Empty by default instead of current month
+    month: '' // Empty by default instead of current month
   };
   
   // Set default month to empty (show all time)
-  wrap.querySelector('#sales_month').value = currentFilter.month; // CHANGED
+  wrap.querySelector('#sales_month').value = currentFilter.month;
   
   function getFilteredSales() {
     let sales = db.sales || [];
@@ -1317,7 +1323,42 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
       });
     }
     
+    // Sort by date (newest first) - FIXED: This ensures latest date shows first
+    sales.sort((a, b) => {
+      // Handle missing dates by putting them at the end
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      
+      // Compare dates (ISO format works for string comparison)
+      return b.date.localeCompare(a.date);
+    });
+    
     return sales;
+  }
+
+  // Add function to clear the form
+  function clearSaleForm() {
+    const fields = [
+      '#sale_reg', '#sale_date', '#sale_buyer', '#sale_addr', '#sale_phone',
+      '#sale_email', '#sale_mileage', '#sale_firstReg', '#sale_price',
+      '#sale_dep', '#sale_cash', '#sale_card', '#sale_bank', '#sale_fin',
+      '#sale_pxAllowance', '#sale_partex', '#sale_pxReg', '#sale_pxMake',
+      '#sale_pxModel', '#sale_finCo', '#sale_agree', '#sale_deliver',
+      '#sale_keys', '#sale_mot', '#sale_sh'
+    ];
+    
+    fields.forEach(selector => {
+      const el = wrap.querySelector(selector);
+      if (el) el.value = '';
+    });
+    
+    // Clear warning message
+    const warnEl = wrap.querySelector('#sale_warn');
+    if (warnEl) warnEl.textContent = '';
+    
+    // Reset edit ID
+    editId = null;
   }
   
   function rows(){ 
@@ -1330,14 +1371,14 @@ function viewSales(){ if(!canTab('Sales')) return document.createElement('div');
       body.appendChild(tr);
     } else {
       filteredSales.forEach(s => { 
-        const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; 
-        const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,x)=>t+Number(x.amount||0),0);
-        const profit=Number(s.salePrice||0)-Number(v.purchase||0)-vexp; 
-        const br=`£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
+        const v = db.vehicles.find(x => x.id === s.vehicleId) || {}; 
+        const vexp = (db.vehicleExpenses||[]).filter(e => e.vehicleId === s.vehicleId).reduce((t,x) => t + Number(x.amount||0), 0);
+        const profit = Number(s.salePrice||0) - Number(v.purchase||0) - vexp; 
+        const br = `£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
         const partexVehicle = (db.vehicles||[]).find(v => v.originalSaleId === s.id);
         const partexInfo = partexVehicle ? `<br><small style="color:#53a8ff;">PX: ${partexVehicle.reg} (in stock)</small>` : '';
-        const tr=document.createElement('tr'); 
-        tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td>
+        const tr = document.createElement('tr'); 
+        tr.innerHTML = `<td>${ddmmyyyy(s.date)}</td>
 <td>${v.reg||''}</td>
 <td>${s.buyer||''}</td>
 <td class="right">${fmtMoney(s.salePrice)}</td>
@@ -1361,7 +1402,7 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
     if (currentFilter.month) {
       summaryText += ` for ${currentFilter.month}`;
     } else {
-      summaryText += ` (all time)`; // CHANGED: Added indication when showing all time
+      summaryText += ` (all time)`;
     }
     if (currentFilter.search) {
       summaryText += ` matching "${currentFilter.search}"`;
@@ -1511,6 +1552,9 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
       } 
     }
     saveDB(); try{renderAlertBell();}catch(e){}; rows();
+    
+    // Clear the form for the next entry
+    clearSaleForm();
   };
   
   // Initial render
@@ -2430,14 +2474,32 @@ function printInvoice(saleId){
   <p>Customer signature: _______________________ &nbsp;&nbsp; Dealer signature: _______________________</p></body></html>`;
   openPrintable(html);
 }
+
 function printFinanceProforma(saleId){
-  const s=db.sales.find(x=>x.id===saleId); if(!s) return; const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; const co=db.company||{}; const fontPx=Number(co.invoiceFontPx||12);
+  const s=db.sales.find(x=>x.id===saleId); if(!s) return; 
+  const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; 
+  const co=db.company||{}; 
+  const fontPx=Number(co.invoiceFontPx||12);
+  
+  const logo = (co.logo||'').trim()
+    ? `<img src="${co.logo}" style="max-width:${Number(co.logoMaxW||140)}px;max-height:${Number(co.logoMaxH||80)}px;object-fit:contain">`
+    : '';
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  
+  const headerHTML = `<div class="h"><div>${logo}</div>
+    <div style="text-align:right"><h2 style="margin:0">PROFORMA INVOICE — FINANCE</h2><div>Invoice #: ${s.invNo||''}</div><div>Date: ${ddmmyyyy(s.date||'')}</div><div>Time: ${timeStr}</div></div></div>
+    <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''}</div>`;
+  
   const html=`<!doctype html><html><head><meta charset="utf-8"><title>Finance Proforma</title>
   <style>@page{size:A4;margin:10mm 10mm}body{font-family:Arial;color:#111;font-size:${fontPx}px} .h{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:6px}
   table{width:100%;border-collapse:collapse}th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}th{background:#f5f5f5;text-align:left}
-  .terms{font-size:${Math.max(11,fontPx)}px;line-height:1.35} .tight td{padding:4px 6px}</style></head><body>
-  <button class="no-print" onclick="window.print()" style="margin:8px 0">Print / Save as PDF</button>
-  ${invoiceHeaderHTML('PROFORMA INVOICE — FINANCE', s.invNo, s.date)}
+  .terms{font-size:${Math.max(11,fontPx)}px;line-height:1.35} .tight td{padding:4px 6px}
+  .print-btn-proforma{margin:8px 0}
+  @media print{.print-btn-proforma{display:none !important}}
+  </style></head><body>
+  <button class="print-btn-proforma" onclick="window.print()" style="margin:8px 0">Print / Save as PDF</button>
+  ${headerHTML}
   <table class="tight"><tr><th>Finance Company</th><td>${s.financeCompany||''}<br>Agreement: ${s.agreement||''}</td></tr><tr><th>Deliver To</th><td>${(s.deliverTo||'').replace(/\n/g,'<br>')}</td></tr></table>
   <table class="tight"><tr><th>Customer</th><td>${s.buyer||''}<br>${s.address||''}<br>${s.phone||''} ${s.email||''}</td></tr>
   <tr><th>Vehicle</th><td><b>${v.make||''} ${v.model||''}</b><br>Colour: ${v.colour||''}<br>REG: ${v.reg||''} &nbsp; VIN: ${v.vin||''}<br>Mileage: ${(s.mileage||v.mileage||'')} &nbsp; First Reg: ${ddmmyyyy(s.firstReg||'')}</td></tr>
