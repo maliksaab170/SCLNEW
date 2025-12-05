@@ -317,7 +317,7 @@ function validateDVLAResponse(data) {
 
 /* ========= DB init ========= */
 let db=loadDB();
-const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Directors','Investors','Reports','To-Do','Users','Settings'];
+const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','To-Do','Users','Settings'];
 function defaultPerms(){ const tabs={}; DEFAULT_TABS.forEach(t=>tabs[t]=true); return {tabs,actions:{view:true,add:true,edit:true,del:true},profit:true,settings:true}; }
 function normalizePerms(perms){
   const base=defaultPerms(); const p=Object.assign({},base,perms||{});
@@ -341,7 +341,7 @@ db.company=db.company||{
   openingBank:0,openingCash:0,
   invoiceFontPx:12, logoMaxW:140, logoMaxH:80
 };
-db.vehicles=db.vehicles||[]; db.vehicleExpenses=db.vehicleExpenses||[]; db.showroomExpenses=db.showroomExpenses||[]; db.sales=db.sales||[]; db.credits=db.credits||[];
+db.vehicles=db.vehicles||[]; db.vehicleExpenses=db.vehicleExpenses||[]; db.showroomExpenses=db.showroomExpenses||[]; db.sales=db.sales||[]; db.credits=db.credits||[]; db.complaints = db.complaints || [];
 db.partners=db.partners||[{id:'p1',name:'Director A',balance:0,tx:[]},{id:'p2',name:'Director B',balance:0,tx:[]}];
 // Ensure partners are unique by name (fix duplicate directors from backup)
 db.partners = (db.partners||[]).filter((p,i,arr)=> arr.findIndex(q=>String(q.name||'').trim().toLowerCase()===String(p.name||'').trim().toLowerCase())===i);
@@ -567,7 +567,7 @@ async function syncPush(){ try{ const gistId=(db.company.gistId||'').trim(); if(
 }catch(e){ alert('Push failed: '+e.message); } }
 
 /* ========= Navigation & render ========= */
-const TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Directors','Investors','Reports','To-Do','Users','Settings']; let currentTab=TABS[0];
+const TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','To-Do','Users','Settings']; let currentTab=TABS[0];
 function setTab(t){ currentTab=t; render(); }
 function renderNav(){ const nav=document.getElementById('nav'); nav.innerHTML=''; TABS.forEach(t=>{ if(!canTab(t)) return; if(t==='Settings'&&!canSettings()) return; const b=document.createElement('button'); b.textContent=t; if(t===currentTab) b.classList.add('active'); b.onclick=()=>setTab(t); nav.appendChild(b); }); }
 
@@ -575,7 +575,7 @@ function render(){
   if(!session){ showLogin(true); return; }
   renderNav();
   const app=document.getElementById('app'); app.innerHTML=''; document.getElementById('who').textContent='Logged in: '+session.username+' ('+session.role+')';
-  const views={Dashboard:viewDashboard,Vehicles:viewVehicles,Expenses:viewExpenses,Showroom:viewShowroom,Sales:viewSales,Sold:viewSold,Credit:viewCredit,["Purchase Invoice"]:viewPurchaseInvoice,Directors:viewDirectors,Investors:viewInvestors,Reports:viewReports,["To-Do"]:viewTodo,Users:viewUsers,Settings:viewSettings};
+  const views={Dashboard:viewDashboard,Vehicles:viewVehicles,Expenses:viewExpenses,Showroom:viewShowroom,Sales:viewSales,Sold:viewSold,Credit:viewCredit,["Purchase Invoice"]:viewPurchaseInvoice,["Customer Complaints"]:viewComplaints,Directors:viewDirectors,Investors:viewInvestors,Reports:viewReports,["To-Do"]:viewTodo,Users:viewUsers,Settings:viewSettings};
   const f=views[currentTab]; if(f) app.appendChild(f()); else app.textContent='No view'; refreshLogoBox();
 }
 
@@ -2762,6 +2762,289 @@ function viewTodo(){ if(!canTab('To-Do')) return document.createElement('div'); 
   wrap.querySelector('#t_add').onclick=()=>{ if(!canAction('add')) return alert('No permission'); const t={id:uid(),date:document.getElementById('t_date').value,text:document.getElementById('t_text').value.trim(),assignedTo:document.getElementById('t_user').value,entity:document.getElementById('t_entity').value,entityId:document.getElementById('t_eid').value.trim(),done:false}; if(!t.text) return alert('Task text required'); (db.todo=db.todo||[]).unshift(t); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','todo',t.id,t.text); rows(); document.getElementById('t_text').value=''; };
   wrap.addEventListener('change',(ev)=>{ const cb=ev.target.closest('input[type=checkbox][data-act=toggle]'); if(!cb) return; const t=(db.todo||[]).find(x=>x.id===cb.dataset.id); if(!t) return; t.done=cb.checked; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','todo',t.id,t.text+' done='+t.done); });
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; if(b.dataset.act==='del'){ if(!canAction('del')) return alert('No permission'); db.todo=db.todo.filter(x=>x.id!==b.dataset.id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','todo',b.dataset.id,''); rows(); } });
+  return wrap;
+}
+
+/* ========= Customer Complaints ========= */
+function viewComplaints(){
+  if(!canTab('Customer Complaints')) return document.createElement('div'); 
+  const wrap=document.createElement('div'); 
+  wrap.className='card';
+  
+  wrap.innerHTML=`<h2>Customer Complaints</h2>
+  <div class="row">
+  <input id="comp_date" type="date">
+  <input id="comp_customer" placeholder="Customer Name *" style="min-width:180px">
+  <input id="comp_vehicle" placeholder="Vehicle REG" style="min-width:180px">
+  <input id="comp_type" placeholder="Complaint Type" style="min-width:180px">
+  <select id="comp_severity">
+    <option value="low">Low</option>
+    <option value="medium" selected>Medium</option>
+    <option value="high">High</option>
+    <option value="urgent">Urgent</option>
+  </select>
+  </div>
+  <div class="row">
+    <textarea id="comp_details" placeholder="Complaint details *" style="flex:1;min-height:80px"></textarea>
+  </div>
+  <div class="row">
+    <textarea id="comp_resolution" placeholder="Resolution taken / plan" style="flex:1;min-height:80px"></textarea>
+  </div>
+  <div class="row">
+    <select id="comp_status">
+      <option value="new">New</option>
+      <option value="investigating">Investigating</option>
+      <option value="resolved">Resolved</option>
+      <option value="closed">Closed</option>
+      <option value="escalated">Escalated</option>
+    </select>
+    <input id="comp_assigned" placeholder="Assigned to (optional)">
+    <input id="comp_followup" type="date" placeholder="Follow-up date">
+    <input id="comp_cost" type="number" placeholder="Cost £ (if any)">
+    <button id="comp_add" class="primary">Add / Update</button>
+  </div>
+  
+  <div class="row" style="margin-top:16px;margin-bottom:8px">
+    <input id="comp_search" placeholder="Search customer/reg/details..." style="flex:1">
+    <select id="comp_filter_status">
+      <option value="">All Status</option>
+      <option value="new">New</option>
+      <option value="investigating">Investigating</option>
+      <option value="resolved">Resolved</option>
+      <option value="closed">Closed</option>
+      <option value="escalated">Escalated</option>
+    </select>
+    <select id="comp_filter_severity">
+      <option value="">All Severity</option>
+      <option value="low">Low</option>
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+      <option value="urgent">Urgent</option>
+    </select>
+    <button id="comp_clear">Clear Filters</button>
+  </div>
+  
+  <table class="table" style="margin-top:10px">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Customer</th>
+        <th>Vehicle</th>
+        <th>Type</th>
+        <th>Severity</th>
+        <th>Status</th>
+        <th>Assigned</th>
+        <th>Follow-up</th>
+        <th>Cost</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="comp_body"></tbody>
+  </table>`;
+  
+  // Initialize complaints array if not exists
+  db.complaints = db.complaints || [];
+  
+  const body = wrap.querySelector('#comp_body');
+  let editId = null;
+  
+  function renderComplaints(filter = {}) {
+    body.innerHTML = '';
+    
+    let complaints = db.complaints || [];
+    
+    // Apply filters
+    if (filter.search) {
+      const searchTerm = filter.search.toLowerCase();
+      complaints = complaints.filter(c => 
+        (c.customer || '').toLowerCase().includes(searchTerm) ||
+        (c.vehicle || '').toLowerCase().includes(searchTerm) ||
+        (c.details || '').toLowerCase().includes(searchTerm) ||
+        (c.resolution || '').toLowerCase().includes(searchTerm)
+      );
+    }
+    
+    if (filter.status) {
+      complaints = complaints.filter(c => c.status === filter.status);
+    }
+    
+    if (filter.severity) {
+      complaints = complaints.filter(c => c.severity === filter.severity);
+    }
+    
+    // Sort by date (newest first)
+    complaints.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    
+    if (complaints.length === 0) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="10" class="small" style="text-align: center; padding: 20px;">No complaints found${filter.search ? ' for "' + filter.search + '"' : ''}</td>`;
+      body.appendChild(tr);
+      return;
+    }
+    
+    complaints.forEach(c => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${ddmmyyyy(c.date)}</td>
+        <td>${c.customer || ''}<br><small style="color:var(--mut)">${(c.details || '').substring(0, 50)}${(c.details || '').length > 50 ? '...' : ''}</small></td>
+        <td>${c.vehicle || ''}</td>
+        <td>${c.type || ''}</td>
+        <td>${c.severity || ''}</td>
+        <td>${c.status || ''}</td>
+        <td>${c.assigned || ''}</td>
+        <td>${ddmmyyyy(c.followup)}</td>
+        <td class="right">${c.cost ? fmtMoney(c.cost) : ''}</td>
+        <td>
+          <button data-act="view" data-id="${c.id}" title="View Details">View</button>
+          ${canAction('edit') ? `<button data-act="edit" data-id="${c.id}">Edit</button>` : ''}
+          ${canAction('del') ? `<button class="danger" data-act="del" data-id="${c.id}">Delete</button>` : ''}
+        </td>
+      `;
+      body.appendChild(tr);
+    });
+  }
+  
+  // Add/Update complaint
+  wrap.querySelector('#comp_add').onclick = () => {
+    if(!canAction('add')) return alert('No permission');
+    
+    const comp = {
+      id: editId || uid(),
+      date: wrap.querySelector('#comp_date').value || new Date().toISOString().split('T')[0],
+      customer: wrap.querySelector('#comp_customer').value.trim(),
+      vehicle: (wrap.querySelector('#comp_vehicle').value || '').trim().toUpperCase(),
+      type: wrap.querySelector('#comp_type').value,
+      severity: wrap.querySelector('#comp_severity').value,
+      details: wrap.querySelector('#comp_details').value.trim(),
+      resolution: wrap.querySelector('#comp_resolution').value.trim(),
+      status: wrap.querySelector('#comp_status').value,
+      assigned: wrap.querySelector('#comp_assigned').value.trim(),
+      followup: wrap.querySelector('#comp_followup').value,
+      cost: Number(wrap.querySelector('#comp_cost').value || 0),
+      createdAt: editId ? (db.complaints.find(x => x.id === editId)?.createdAt) : new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    if(!comp.customer || !comp.details) {
+      return alert('Customer name and complaint details are required');
+    }
+    
+    if(editId) {
+      db.complaints = db.complaints.map(x => x.id === editId ? comp : x);
+      addAudit('update', 'complaint', comp.id, `${comp.customer} - ${comp.type} - ${comp.status}`);
+      editId = null;
+    } else {
+      db.complaints.unshift(comp);
+      addAudit('add', 'complaint', comp.id, `${comp.customer} - ${comp.type} - ${comp.severity}`);
+    }
+    
+    saveDB();
+    try{renderAlertBell();}catch(e){}
+    renderComplaints();
+    
+    // Clear form unless we were editing
+    if(!editId) {
+      wrap.querySelector('#comp_customer').value = '';
+      wrap.querySelector('#comp_vehicle').value = '';
+      wrap.querySelector('#comp_details').value = '';
+      wrap.querySelector('#comp_resolution').value = '';
+      wrap.querySelector('#comp_assigned').value = '';
+      wrap.querySelector('#comp_followup').value = '';
+      wrap.querySelector('#comp_cost').value = '';
+    }
+  };
+  
+  // Event handlers
+  wrap.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if(!b) return;
+    const id = b.dataset.id;
+    const act = b.dataset.act;
+    const comp = db.complaints.find(x => x.id === id);
+    
+    if(!comp) return;
+    
+    if(act === 'view') {
+      const html = `
+        <div style="padding:10px;max-width:600px">
+          <h3>Complaint Details</h3>
+          <table style="width:100%;border-collapse:collapse">
+            <tr><th style="text-align:left;padding:8px 4px;width:120px">Date:</th><td style="padding:8px 4px">${ddmmyyyy(comp.date)}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px">Customer:</th><td style="padding:8px 4px">${comp.customer}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px">Vehicle:</th><td style="padding:8px 4px">${comp.vehicle || 'N/A'}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px">Type:</th><td style="padding:8px 4px">${comp.type || ''}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px">Severity:</th><td style="padding:8px 4px">${comp.severity || ''}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px">Status:</th><td style="padding:8px 4px">${comp.status || ''}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px">Assigned:</th><td style="padding:8px 4px">${comp.assigned || 'Not assigned'}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px">Follow-up:</th><td style="padding:8px 4px">${ddmmyyyy(comp.followup) || 'Not set'}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px">Cost:</th><td style="padding:8px 4px">${comp.cost ? fmtMoney(comp.cost) : 'None'}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px;vertical-align:top">Details:</th><td style="padding:8px 4px">${(comp.details || '').replace(/\n/g, '<br>')}</td></tr>
+            <tr><th style="text-align:left;padding:8px 4px;vertical-align:top">Resolution:</th><td style="padding:8px 4px">${(comp.resolution || '').replace(/\n/g, '<br>') || 'None recorded'}</td></tr>
+          </table>
+        </div>
+      `;
+      openPrintable(`<!doctype html><html><head><meta charset="utf-8"><title>Complaint ${comp.customer}</title><style>body{font-family:Arial;padding:20px}</style></head><body>${html}</body></html>`);
+    }
+    else if(act === 'edit') {
+      if(!canAction('edit')) return alert('No permission');
+      editId = id;
+      wrap.querySelector('#comp_date').value = comp.date || '';
+      wrap.querySelector('#comp_customer').value = comp.customer || '';
+      wrap.querySelector('#comp_vehicle').value = comp.vehicle || '';
+      wrap.querySelector('#comp_type').value = comp.type || '';
+      wrap.querySelector('#comp_severity').value = comp.severity || 'medium';
+      wrap.querySelector('#comp_details').value = comp.details || '';
+      wrap.querySelector('#comp_resolution').value = comp.resolution || '';
+      wrap.querySelector('#comp_status').value = comp.status || 'new';
+      wrap.querySelector('#comp_assigned').value = comp.assigned || '';
+      wrap.querySelector('#comp_followup').value = comp.followup || '';
+      wrap.querySelector('#comp_cost').value = comp.cost || '';
+    }
+    else if(act === 'del') {
+      if(!canAction('del')) return alert('No permission');
+      if(!confirm('Delete this complaint?')) return;
+      db.complaints = db.complaints.filter(x => x.id !== id);
+      saveDB();
+      try{renderAlertBell();}catch(e){}
+      addAudit('delete', 'complaint', id, `${comp.customer} - ${comp.type}`);
+      renderComplaints();
+    }
+  });
+  
+  // Filter handlers
+  wrap.querySelector('#comp_search').addEventListener('input', function(e) {
+    renderComplaints({
+      search: e.target.value.trim(),
+      status: wrap.querySelector('#comp_filter_status').value,
+      severity: wrap.querySelector('#comp_filter_severity').value
+    });
+  });
+  
+  wrap.querySelector('#comp_filter_status').addEventListener('change', function() {
+    renderComplaints({
+      search: wrap.querySelector('#comp_search').value.trim(),
+      status: this.value,
+      severity: wrap.querySelector('#comp_filter_severity').value
+    });
+  });
+  
+  wrap.querySelector('#comp_filter_severity').addEventListener('change', function() {
+    renderComplaints({
+      search: wrap.querySelector('#comp_search').value.trim(),
+      status: wrap.querySelector('#comp_filter_status').value,
+      severity: this.value
+    });
+  });
+  
+  wrap.querySelector('#comp_clear').onclick = function() {
+    wrap.querySelector('#comp_search').value = '';
+    wrap.querySelector('#comp_filter_status').value = '';
+    wrap.querySelector('#comp_filter_severity').value = '';
+    renderComplaints();
+  };
+  
+  // Initial render
+  renderComplaints();
   return wrap;
 }
 
