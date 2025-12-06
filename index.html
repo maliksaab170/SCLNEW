@@ -293,6 +293,169 @@ function openPrintable(html){
   iframe.srcdoc=html; return false;
 }
 
+// Export Vehicles as CSV
+function exportVehiclesCSV() {
+    const vehicles = db.vehicles || [];
+    
+    // Apply the same filters as the current view
+    const searchTerm = (document.getElementById('veh_search')?.value || '').toLowerCase().trim();
+    const instockOnly = document.getElementById('veh_instock')?.checked;
+    const soldOnly = document.getElementById('veh_soldonly')?.checked;
+    const investorOnly = document.getElementById('veh_investoronly')?.checked;
+    const pxOnly = document.getElementById('veh_pxonly')?.checked;
+    
+    let filteredVehicles = vehicles.filter(v => {
+        // Apply stock status filters
+        if (instockOnly && v.status === 'sold') return false;
+        if (soldOnly && v.status !== 'sold') return false;
+        
+        // Apply investor stock filter
+        if (investorOnly && v.ownerType !== 'investor') return false;
+        
+        // Apply part-ex filter
+        if (pxOnly && v.supplier !== 'PART-EX') return false;
+        
+        // Apply search filter
+        if (searchTerm) {
+            const hay = ((v.reg || '') + ' ' + (v.make || '') + ' ' + (v.model || '')).toLowerCase();
+            if (!hay.includes(searchTerm)) return false;
+        }
+        
+        return true;
+    });
+    
+    // Define headers
+    const headers = [
+        'REG', 'Make', 'Model', 'Colour', 'Fuel', 'Mileage', 
+        'First Registration', 'Purchase Date', 'Purchase Price', 
+        'Owner Type', 'Investor', 'Status', 'Supplier', 'Supplier Note',
+        'VIN', 'Created At', 'Last MOT Date', 'Last MOT Expiry', 'Last MOT Mileage'
+    ];
+    
+    // Create CSV rows
+    const rows = filteredVehicles.map(v => [
+        v.reg || '',
+        v.make || '',
+        v.model || '',
+        v.colour || '',
+        v.fuel || '',
+        v.mileage || 0,
+        ddmmyyyy(v.firstReg || ''),
+        ddmmyyyy(v.purchaseDate || ''),
+        Number(v.purchase || 0).toFixed(2),
+        v.ownerType || 'owned',
+        v.investor || '',
+        v.status || '',
+        v.supplier || '',
+        v.supplierNote || '',
+        v.vin || '',
+        v.createdAt || '',
+        v.lastMotDate || '',
+        v.lastMotExpiry || '',
+        v.lastMotMileage || ''
+    ]);
+    
+    // Create CSV content
+    const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => 
+            typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n')) 
+                ? `"${cell.replace(/"/g, '""')}"` 
+                : cell
+        ).join(','))
+    ].join('\n');
+    
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `vehicles_export_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    addAudit('export', 'vehicles', '', `Exported ${filteredVehicles.length} vehicles to CSV`);
+}
+
+// Export Sales as CSV
+function exportSalesCSV() {
+    // Get all sales or filtered sales based on your current view
+    const sales = db.sales || [];
+    
+    // Define headers
+    const headers = [
+        'Date', 'Invoice #', 'Vehicle REG', 'Make', 'Model', 'Colour',
+        'Customer Name', 'Customer Address', 'Phone', 'Email',
+        'Sale Price', 'Deposit', 'Cash', 'Card', 'Bank Transfer', 'Finance',
+        'PX Allowance', 'PX REG', 'PX Make', 'PX Model', 'Finance Company',
+        'Agreement #', 'Deliver To', 'Keys', 'MOT Expiry', 'Service History',
+        'Mileage at Sale', 'First Registration'
+    ];
+    
+    // Create CSV rows
+    const rows = sales.map(s => {
+        const v = db.vehicles.find(x => x.id === s.vehicleId) || {};
+        return [
+            ddmmyyyy(s.date),
+            s.invNo || '',
+            v.reg || '',
+            v.make || '',
+            v.model || '',
+            v.colour || '',
+            s.buyer || '',
+            s.address || '',
+            s.phone || '',
+            s.email || '',
+            Number(s.salePrice || 0).toFixed(2),
+            Number(s.deposit || 0).toFixed(2),
+            Number(s.cash || 0).toFixed(2),
+            Number(s.card || 0).toFixed(2),
+            Number(s.bank || 0).toFixed(2),
+            Number(s.finance || 0).toFixed(2),
+            Number(s.pxAllowance || 0).toFixed(2),
+            s.pxReg || '',
+            s.pxMake || '',
+            s.pxModel || '',
+            s.financeCompany || '',
+            s.agreement || '',
+            s.deliverTo || '',
+            s.keys || '',
+            s.mot || '',
+            s.serviceHistory || '',
+            s.mileage || '',
+            ddmmyyyy(s.firstReg || '')
+        ];
+    });
+    
+    // Create CSV content
+    const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => 
+            typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n')) 
+                ? `"${cell.replace(/"/g, '""')}"` 
+                : cell
+        ).join(','))
+    ].join('\n');
+    
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `sales_export_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Log the export in audit trail
+    if (typeof addAudit === 'function') {
+        addAudit('export', 'sales', '', `Exported ${sales.length} sales to CSV`);
+    }
+}
+
 // DVLA Response Validation Helper
 function validateDVLAResponse(data) {
   if (!data || typeof data !== 'object') {
@@ -773,14 +936,6 @@ function viewVehicles(){
     <label>Status<select id="v_status"><option value="for sale">for sale</option><option value="sold">sold</option></select></label>
   </div>
   <div class="row">
-    <label style="min-width:320px;flex:1">Media URLs (comma-separated)<textarea id="v_mediaUrls" placeholder="https://...jpg, https://...png"></textarea></label>
-  </div>
-  <div class="row">
-    <label>Upload Images<input id="v_mediaUpload" type="file" multiple accept="image/*"></label>
-    <div id="v_mediaPreview" class="previewStrip"></div>
-  </div>
-  <div class="row">
-    <label>YouTube URL (optional)<input id="v_video" placeholder="https://youtube.com/watch?v=..."></label>
     <button id="v_add" class="primary">Add / Update</button>
   </div>
 
@@ -790,8 +945,9 @@ function viewVehicles(){
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_soldonly"> Sold only</label>
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_investoronly"> Investor stock</label>
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_pxonly"> Part-ex only</label>
+    <button onclick="exportVehiclesCSV()">Export CSV</button>
   </div>
-  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>Status</th><th>Supplier #</th><th>Media</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
+  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>Status</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
 // Populate investor dropdown from db.investors
   const invSel = wrap.querySelector('#v_investor');
@@ -804,16 +960,6 @@ function viewVehicles(){
   }
 
   let editId=null; const body=wrap.querySelector('#vehBody');
-
-  function renderPreview(arr){ const pv=wrap.querySelector('#v_mediaPreview'); pv.innerHTML=(arr||[]).map(u=>`<img src="${u}">`).join(''); }
-  wrap.querySelector('#v_mediaUpload').addEventListener('change',async (e)=>{
-    const files=[...e.target.files||[]]; if(!files.length) return;
-    const reads=await Promise.all(files.map(f=>new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(f); })));
-    const existing=(wrap.querySelector('#v_mediaPreview').dataset.urls?JSON.parse(wrap.querySelector('#v_mediaPreview').dataset.urls):[]);
-    const merged=[...existing,...reads];
-    wrap.querySelector('#v_mediaPreview').dataset.urls=JSON.stringify(merged);
-    renderPreview(merged);
-  });
 
   function rows(q='', mode='instock'){
     body.innerHTML='';
@@ -849,7 +995,6 @@ function viewVehicles(){
 <td class="right">${fmtMoney(v.purchase||0)}</td>
 <td>${v.status||''}</td>
 <td>${v.supplier||''}${v.supplierNote ? '<br><small style="color:#53a8ff;">' + v.supplierNote + '</small>' : ''}</td>
-<td>${mcount?mcount+' item(s)':''}</td>
 <td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''} ${v.originalSaleId?`<button data-act="viewSale" data-id="${v.originalSaleId}" title="View original sale" style="margin-left:4px;">📋</button>`:''}</td>`;
       body.appendChild(tr);
     });
@@ -895,10 +1040,6 @@ function viewVehicles(){
         }
         invSel2.value = invId || '';
       }
-      
-      wrap.querySelector('#v_mediaUrls').value=(v.media||[]).filter(u=>!u.startsWith('data:')).join(', ');
-      wrap.querySelector('#v_mediaPreview').dataset.urls=JSON.stringify((v.media||[]));
-      renderPreview(v.media||[]);
       
       // ADDED: Create hidden fields to preserve part-ex specific data
       // Remove any existing hidden fields first
@@ -1066,9 +1207,6 @@ if (motBtn) {
   wrap.querySelector('#v_add').onclick=()=>{ if(!canAction('add')) return alert('No permission');
     const reg=(wrap.querySelector('#v_reg').value||'').toUpperCase().trim(); if(!reg){ alert('Reg is required'); return; }
     const dupe=(db.vehicles||[]).find(x=>x.reg===reg && x.id!==editId); if(dupe){ alert('Duplicate reg exists'); return; }
-    const urls=(wrap.querySelector('#v_mediaUrls').value||'').split(',').map(s=>s.trim()).filter(Boolean);
-    const uploaded=(wrap.querySelector('#v_mediaPreview').dataset.urls?JSON.parse(wrap.querySelector('#v_mediaPreview').dataset.urls):[]);
-    const media=[...uploaded,...urls];
     const v={ 
       id:editId||uid(), 
       reg, 
@@ -1101,13 +1239,11 @@ if (motBtn) {
   originalSaleId: wrap.querySelector('#v_originalSaleId') ? wrap.querySelector('#v_originalSaleId').value : (db.vehicles.find(x=>x.id===editId)?.originalSaleId || null),
   vin:wrap.querySelector('#v_vin').value.trim(), 
   status:wrap.querySelector('#v_status').value, 
-  createdAt:(db.vehicles.find(x=>x.id===editId)?.createdAt)||new Date().toISOString(),
-  media, 
-  video:(wrap.querySelector('#v_video').value||'').trim() 
+  createdAt:(db.vehicles.find(x=>x.id===editId)?.createdAt)||new Date().toISOString(), 
 };
     if(editId){ const i=db.vehicles.findIndex(x=>x.id===editId); db.vehicles[i]=v; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); editId=null; }
     else { db.vehicles.unshift(v); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); }
-    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_vin','v_mediaUrls','v_video'].forEach(k=>document.getElementById(k).value=''); wrap.querySelector('#v_mediaPreview').dataset.urls='[]'; renderPreview([]);
+    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_vin'].forEach(k=>document.getElementById(k).value='');
     
     // Clean up hidden fields
     ['v_supplierNote', 'v_originalSaleId'].forEach(field => {
@@ -1249,6 +1385,7 @@ function viewSales(){
       <div style="display: flex; gap: 8px; align-items: flex-end;">
         <button id="sales_clear_search" style="margin-top: 20px;">Clear Search</button>
         <button id="sales_clear_month" style="margin-top: 20px;">Show All Time</button>
+        <button onclick="exportSalesCSV()" style="margin-top: 20px;">Export CSV</button>
       </div>
     </div>
   </div>
@@ -3130,28 +3267,33 @@ function viewSettings(){
   // Only show save button for company settings if user is admin
   if (isAdmin) {
     wrap.querySelector('#c_save').onclick=()=>{
-      db.company.name=document.getElementById('c_name').value;
-      db.company.address=document.getElementById('c_addr').value;
-      db.company.phone=document.getElementById('#c_phone').value;
-      db.company.email=document.getElementById('#c_email').value;
-      db.company.vatNumber=document.getElementById('#c_vat').value;
-      db.company.companyNumber=document.getElementById('#c_co').value;
-      db.company.logo=document.getElementById('#c_logo').value;
-      db.company.openingBank=Number(document.getElementById('#c_bank').value||0);
-      db.company.openingCash=Number(document.getElementById('#c_cash').value||0);
-      db.company.terms=document.getElementById('#c_terms').value;
-      db.company.financeTerms=document.getElementById('#c_finTerms').value;       
-      db.company.dvlaProxy=document.getElementById('#c_dvlaProxy')?.value||'';
-      db.company.dvsaProxy=document.getElementById('#c_dvsaProxy')?.value||'';
-      db.company.dvlaKey=document.getElementById('#c_dvlaKey')?.value||'';
-      db.company.dvsaKey=document.getElementById('#c_dvsaKey')?.value||'';
-      db.company.invoiceFontPx=Number(document.getElementById('#c_invFont').value||12);
-      db.company.termsFontPx=Number(document.getElementById('#c_termsFont').value||10);
-      db.company.logoMaxW=Number(document.getElementById('#c_logoW').value||140);
-      db.company.logoMaxH=Number(document.getElementById('#c_logoH').value||80);
-      saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','company','company','Updated company profile'); refreshLogoBox(); alert('Saved');
+        db.company.name=document.getElementById('c_name').value;
+        db.company.address=document.getElementById('c_addr').value;
+        db.company.phone=document.getElementById('c_phone').value; // Fixed selector
+        db.company.email=document.getElementById('c_email').value; // Fixed selector
+        db.company.vatNumber=document.getElementById('c_vat').value; // Fixed selector
+        db.company.companyNumber=document.getElementById('c_co').value; // Fixed selector
+        db.company.logo=document.getElementById('c_logo').value; // Fixed selector
+        db.company.openingBank=Number(document.getElementById('c_bank').value||0);
+        db.company.openingCash=Number(document.getElementById('c_cash').value||0);
+        db.company.terms=document.getElementById('c_terms').value;
+        db.company.financeTerms=document.getElementById('c_finTerms').value;
+        db.company.invoiceFontPx=Number(document.getElementById('c_invFont').value||12);
+        db.company.termsFontPx=Number(document.getElementById('c_termsFont').value||10);
+        db.company.logoMaxW=Number(document.getElementById('c_logoW').value||140);
+        db.company.logoMaxH=Number(document.getElementById('c_logoH').value||80);
+        db.company.dvlaProxy=document.getElementById('c_dvlaProxy').value||'';
+        db.company.dvsaProxy=document.getElementById('c_dvsaProxy').value||'';
+        db.company.dvlaKey=document.getElementById('c_dvlaKey').value||'';
+        db.company.dvsaKey=document.getElementById('c_dvsaKey').value||'';
+        
+        saveDB();
+        try{renderAlertBell();}catch(e){}
+        addAudit('update','company','company','Updated company profile');
+        refreshLogoBox();
+        alert('Saved');
     };
-  } else {
+    } else {
     // Hide company save button for non-admin users with settings permission
     const saveBtn = wrap.querySelector('#c_save');
     if (saveBtn) saveBtn.style.display = 'none';
