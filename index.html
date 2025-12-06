@@ -923,6 +923,8 @@ function viewVehicles(){
         hiddenSaleId.value = v.originalSaleId || '';
         wrap.appendChild(hiddenSaleId);
       }
+      document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
+
     }else if(act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete vehicle?')) return; const delV=db.vehicles.find(x=>x.id===id); db.vehicles=db.vehicles.filter(x=>x.id!==id); db.vehicleExpenses=db.vehicleExpenses.filter(e=>e.vehicleId!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','vehicle',id,delV?delV.reg:''); rows(); }
     else if(act==='viewSale'){
       const sale = db.sales.find(x => x.id === id);
