@@ -959,7 +959,7 @@ function viewVehicles(){
         .join('');
   }
 
-  let editId=null; const body=wrap.querySelector('#vehBody');
+  let editId=null; let vehEditSeenAt=null; const body=wrap.querySelector('#vehBody');
 
   function rows(q='', mode='instock'){
     body.innerHTML='';
@@ -1019,6 +1019,7 @@ function viewVehicles(){
       if(!canAction('edit')) return alert('No permission'); 
       const v=db.vehicles.find(x=>x.id===id); 
       editId=id;
+      vehEditSeenAt = v && v.lastUpdatedAt || null;
       
       // Populate all standard fields
       ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase',
@@ -1207,7 +1208,8 @@ if (motBtn) {
   wrap.querySelector('#v_add').onclick=()=>{ if(!canAction('add')) return alert('No permission');
     const reg=(wrap.querySelector('#v_reg').value||'').toUpperCase().trim(); if(!reg){ alert('Reg is required'); return; }
     const dupe=(db.vehicles||[]).find(x=>x.reg===reg && x.id!==editId); if(dupe){ alert('Duplicate reg exists'); return; }
-    const v={ 
+    if(editId){ const existing=db.vehicles.find(x=>x.id===editId); if(existing && existing.lastUpdatedAt && vehEditSeenAt && existing.lastUpdatedAt!==vehEditSeenAt){ if(!confirm('Warning: this vehicle was changed on another device since you opened it. Overwrite with your version?')) return; } }
+  const v={ 
       id:editId||uid(), 
       reg, 
       make:wrap.querySelector('#v_make').value.trim(), 
@@ -1240,6 +1242,8 @@ if (motBtn) {
   vin:wrap.querySelector('#v_vin').value.trim(), 
   status:wrap.querySelector('#v_status').value, 
   createdAt:(db.vehicles.find(x=>x.id===editId)?.createdAt)||new Date().toISOString(), 
+  lastUpdatedAt:new Date().toISOString(), 
+  lastUpdatedBy:(typeof session!=='undefined' && (session.username||session.name)) || 'unknown', 
 };
     if(editId){ const i=db.vehicles.findIndex(x=>x.id===editId); db.vehicles[i]=v; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); editId=null; }
     else { db.vehicles.unshift(v); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); }
@@ -1429,7 +1433,7 @@ function viewSales(){
   <table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Reg</th><th>Customer</th><th class="right">Price</th><th>Breakdown</th>${canProfit()?'<th class="right">Profit</th>':''}<th>Actions</th></tr></thead><tbody id="sale_body"></tbody></table>
   <div id="sales_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>`;
   
-  let editId=null; 
+  let editId=null; let saleEditSeenAt=null;
   const body=wrap.querySelector('#sale_body');
   let currentFilter = {
     search: '',
@@ -1596,7 +1600,7 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
       addAudit('delete','sale',s.id,(v?v.reg:'')+' inv '+(s.invNo||'') + (pxVehicle ? ' and PX ' + pxVehicle.reg : '')); 
       rows(); 
     } }
-    else if(b.dataset.act==='edit'){ if(!canAction('edit')) return alert('No permission'); editId=s.id; const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
+    else if(b.dataset.act==='edit'){ if(!canAction('edit')) return alert('No permission'); editId=s.id; saleEditSeenAt = s && s.lastUpdatedAt || null; const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
       wrap.querySelector('#sale_reg').value=(v.reg||'').toUpperCase(); wrap.querySelector('#sale_date').value=s.date; wrap.querySelector('#sale_buyer').value=s.buyer||''; wrap.querySelector('#sale_addr').value=s.address||'';
       wrap.querySelector('#sale_phone').value=s.phone||''; wrap.querySelector('#sale_email').value=s.email||''; wrap.querySelector('#sale_mileage').value=s.mileage||0; wrap.querySelector('#sale_firstReg').value=s.firstReg||'';
       wrap.querySelector('#sale_price').value=s.salePrice||0; wrap.querySelector('#sale_dep').value=s.deposit||0; wrap.querySelector('#sale_cash').value=s.cash||0; wrap.querySelector('#sale_card').value=s.card||0; wrap.querySelector('#sale_bank').value=s.bank||0; wrap.querySelector('#sale_fin').value=s.finance||0;
@@ -1618,6 +1622,9 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
   }
   
   const price=Number(wrap.querySelector('#sale_price').value||0);
+
+  if(editId){ const existing=db.sales.find(x=>x.id===editId); if(existing && existing.lastUpdatedAt && saleEditSeenAt && existing.lastUpdatedAt!==saleEditSeenAt){ if(!confirm('Warning: this sale was changed on another device since you opened it. Overwrite with your version?')) return; } }
+
   const s={ 
     id:editId||uid(), 
     vehicleId:vid, 
@@ -1645,7 +1652,9 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
     keys:wrap.querySelector('#sale_keys').value.trim(),
     mot:wrap.querySelector('#sale_mot').value.trim(),
     serviceHistory:wrap.querySelector('#sale_sh').value.trim(),
-    invNo:invNoValue || (Date.now()+'').slice(-6)};
+    invNo:invNoValue || (Date.now()+'').slice(-6),
+    lastUpdatedAt:new Date().toISOString(),
+    lastUpdatedBy:(typeof session!=='undefined' && (session.username||session.name)) || 'unknown'};
     
     const sumBreak=s.deposit+s.cash+s.card+s.bank+s.finance+s.pxAllowance;
     if(sumBreak!==s.salePrice){ if(!confirm('Payments + PX do not equal sale price. Continue?')) return; }
@@ -1775,7 +1784,7 @@ function viewCredit(){
   </table>`;
   
   const body=wrap.querySelector('#cr_body');
-  let editId=null;
+  let editId=null; let creditEditSeenAt=null;
   
   // DVLA Lookup for Credit tab - Updated to populate individual fields
   wrap.querySelector('#cr_dvla').onclick = async () => {
@@ -1843,6 +1852,8 @@ function viewCredit(){
   wrap.querySelector('#cr_add').onclick=()=>{
     if(!canAction('add')) return alert('No permission');
     
+    if(editId){ const existing=db.credits.find(x=>x.id===editId); if(existing && existing.lastUpdatedAt && creditEditSeenAt && existing.lastUpdatedAt!==creditEditSeenAt){ if(!confirm('Warning: this credit/refund was changed on another device since you opened it. Overwrite with your version?')) return; } }
+    
     const cr={
       id: editId||uid(),
       date: wrap.querySelector('#cr_date').value,
@@ -1857,7 +1868,9 @@ function viewCredit(){
       vin: wrap.querySelector('#cr_vin').value.trim(),
       mileage: Number(wrap.querySelector('#cr_mileage').value||0),
       colour: wrap.querySelector('#cr_colour').value.trim(),
-      fuel: wrap.querySelector('#cr_fuel').value.trim()
+      fuel: wrap.querySelector('#cr_fuel').value.trim(),
+      lastUpdatedAt:new Date().toISOString(),
+      lastUpdatedBy:(typeof session!=='undefined' && (session.username||session.name)) || 'unknown'
     };
     
     if(!cr.date || !cr.customer || !cr.amount) {
@@ -1945,6 +1958,7 @@ function viewCredit(){
       if(!canAction('edit')) return alert('No permission');
       const cr=db.credits.find(x=>x.id===id);
       editId=id;
+      creditEditSeenAt = cr && cr.lastUpdatedAt || null;
       wrap.querySelector('#cr_date').value=cr.date;
       wrap.querySelector('#cr_customer').value=cr.customer||'';
       wrap.querySelector('#cr_vehicle').value=cr.vehicle||'';
