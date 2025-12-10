@@ -495,6 +495,7 @@ function validateDVLAResponse(data) {
 
 /* ========= DB init ========= */
 let db=loadDB();
+db.deleted = db.deleted || {};
 if (!db.lastPush) db.lastPush = {};
 let pushEnabled = false;
 const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','To-Do','Users','Settings'];
@@ -631,6 +632,54 @@ function recordPullActivity(type = 'pull') {
     saveDB();
 }
 
+// ========= Deletion tracking (for multi-PC sync) =========
+function ensureDeletedMap() {
+  db.deleted = db.deleted || {};
+}
+
+// Merge remote deleted map into local (keep latest timestamp)
+function mergeDeletedMaps(localDel, remoteDel) {
+  const out = localDel && typeof localDel === 'object' ? JSON.parse(JSON.stringify(localDel)) : {};
+  if (remoteDel && typeof remoteDel === 'object') {
+    Object.keys(remoteDel).forEach(section => {
+      out[section] = out[section] || {};
+      const tgt = out[section];
+      const src = remoteDel[section] || {};
+      Object.keys(src).forEach(id => {
+        if (!tgt[id] || String(tgt[id]) < String(src[id])) {
+          tgt[id] = src[id];
+        }
+      });
+    });
+  }
+  return out;
+}
+
+// Mark a record as deleted so other PCs know to remove it too
+function markDeleted(section, id) {
+  if (!id) return;
+  ensureDeletedMap();
+  if (!db.deleted[section]) db.deleted[section] = {};
+  db.deleted[section][id] = db.deleted[section][id] || new Date().toISOString();
+}
+
+// Apply deletions to a given array (vehicles, sales, etc.)
+function applyDeletions(section) {
+  ensureDeletedMap();
+  const map = db.deleted[section];
+  if (!map) return;
+  if (!Array.isArray(db[section])) return;
+  db[section] = db[section].filter(item => !item || !item.id || !map[item.id]);
+}
+
+// Apply deletions to all arrays we know about
+function applyAllDeletions() {
+  ensureDeletedMap();
+  Object.keys(db.deleted || {}).forEach(section => {
+    applyDeletions(section);
+  });
+}
+
 async function syncPull() {
   try {
     const gistId = (db.company.gistId || '').trim();
@@ -650,12 +699,24 @@ async function syncPull() {
 
     recordPullActivity('pull');
 
+    // 1) Merge deleted map first so we know what to remove
+    if (incoming.deleted) {
+      db.deleted = mergeDeletedMaps(db.deleted, incoming.deleted);
+    } else {
+      ensureDeletedMap();
+    }
+
     Object.keys(incoming).forEach(k => {
       const val = incoming[k];
 
       if (k === 'audit') {
         // Replace audit completely
         db.audit = Array.isArray(val) ? val.slice() : (db.audit || []);
+        return;
+      }
+
+      if (k === 'deleted') {
+        // already handled above
         return;
       }
 
@@ -674,16 +735,19 @@ async function syncPull() {
           }
         }
 
-        // Apply incoming: overwrite same-id items, add new ones
+        // Apply incoming: overwrite same-id items, add new ones (remote wins)
         for (const item of val) {
           if (item && item.id) {
-            byId[item.id] = item; // remote (Gist) wins
+            byId[item.id] = item;
           } else {
             noId.push(item);
           }
         }
 
         db[k] = [...noId, ...Object.values(byId)];
+
+        // Apply deletions for this section
+        applyDeletions(k);
 
         // Users: normalise permissions
         if (k === 'users' && typeof normalizePerms === 'function') {
@@ -723,10 +787,13 @@ async function syncPull() {
       });
     }
 
+    // As a safety net, apply deletions everywhere
+    applyAllDeletions();
+
     saveDB();
     try { renderAlertBell(); } catch (_) {}
-    addAudit('sync', 'pull', db.company.gistId || '', 'Pulled from Gist (id-merge)');
-    alert('Pulled & merged from Gist (arrays merged by id)');
+    addAudit('sync', 'pull', db.company.gistId || '', 'Pulled from Gist (arrays merged by id, deletions respected)');
+    alert('Pulled & merged from Gist (arrays merged by id; deletions synced)');
     enablePushButton();
     render();
   } catch (e) {
@@ -769,6 +836,8 @@ async function syncPullHard() {
     db.warrantySales = db.warrantySales || [];
     db.audit = db.audit || [];
     db.users = db.users || [];
+    db.company.autoSyncEnabled = db.company.autoSyncEnabled ?? false;   // default OFF
+    db.company.autoSyncSeconds = db.company.autoSyncSeconds || 120;     // default 120s
 
     // Normalise user permissions if helper exists
     if (typeof normalizePerms === 'function') {
@@ -789,6 +858,51 @@ async function syncPullHard() {
   }
 }
 
+// ========= Auto Sync (auto-pull from Gist) =========
+let autoSyncTimer = null;
+let autoSyncRunning = false;
+
+function stopAutoSync(){
+  if (autoSyncTimer){
+    clearInterval(autoSyncTimer);
+    autoSyncTimer = null;
+  }
+}
+
+async function autoSyncTick(){
+  if (autoSyncRunning) return; // don't overlap
+  autoSyncRunning = true;
+  try {
+    if (!db || !db.company) return;
+
+    const enabled = !!db.company.autoSyncEnabled;
+    const gistId  = (db.company.gistId || '').trim();
+
+    if (!enabled || !gistId) return;
+
+    // Use normal safe pull (merge + deletions)
+    await syncPull();
+  } catch (e) {
+    console.warn('Auto sync failed:', e);
+  } finally {
+    autoSyncRunning = false;
+  }
+}
+
+function startAutoSyncFromSettings(){
+  stopAutoSync();
+  if (!db) return;
+  db.company = db.company || {};
+
+  if (!db.company.autoSyncEnabled) return;
+
+  let sec = Number(db.company.autoSyncSeconds || 120);
+  if (!sec || sec < 30) sec = 30;     // minimum 30s to avoid hammering GitHub
+  if (sec > 600) sec = 600;           // max 10 mins
+
+  autoSyncTimer = setInterval(autoSyncTick, sec * 1000);
+}
+
 // Add this function to record push activity
 function recordPushActivity() {
     if (!db.lastPush) db.lastPush = {};
@@ -801,31 +915,147 @@ function recordPushActivity() {
 }
 
 async function syncPush(){ 
-    try{ 
-        const gistId=(db.company.gistId||'').trim(); 
-        if(!gistId) return alert('Enter Gist ID in Settings');
-        const token=(getGhToken()||'').trim(); 
-        if(!token) return alert('Enter GitHub token and Save');
-        const payload={files:{'starcars.json':{content:JSON.stringify(db,null,2)}}};
-        const r=await fetch(`https://api.github.com/gists/${gistId}`,{method:'PATCH',headers:{'content-type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(payload)});
-        const txt=await r.text(); 
-        if(!r.ok){ 
-            return alert('Push failed '+r.status+': '+txt); 
-        } 
-        
-        // Record the push activity
-        recordPushActivity();
-        
-        addAudit('sync','push',gistId,'Pushed to Gist'); 
-        alert('Pushed to Gist as starcars.json');
-        
-        // Refresh the Settings view to show updated timestamp
-        if (currentTab === 'Settings') {
-            render();
+  try{ 
+    const gistId = (db.company.gistId || '').trim(); 
+    if (!gistId) return alert('Enter Gist ID in Settings');
+    const token = (getGhToken() || '').trim(); 
+    if (!token) return alert('Enter GitHub token and Save');
+
+    // 1) Read current Gist so we don't overwrite other PCs' work
+    let remote = null;
+    try {
+      const r0 = await fetch(`https://api.github.com/gists/${gistId}`);
+      const txt0 = await r0.text();
+      if (r0.ok) {
+        const j0 = JSON.parse(txt0 || '{}');
+        const file0 = j0.files && (j0.files['starcars.json'] || Object.values(j0.files)[0]);
+        if (file0 && file0.content) {
+          remote = JSON.parse(file0.content || '{}');
         }
-    } catch(e){ 
-        alert('Push failed: '+e.message); 
+      }
+    } catch (e) {
+      console.warn('Could not read remote Gist before push:', e);
+    }
+
+    // 2) Merge remote into local (same logic as syncPull, but no alerts)
+    if (remote) {
+
+      // 2a) Merge "deleted" map first so we know what to remove
+      if (remote.deleted) {
+        db.deleted = mergeDeletedMaps(db.deleted, remote.deleted);
+      } else {
+        ensureDeletedMap();
+      }
+
+      Object.keys(remote).forEach(k => {
+        const val = remote[k];
+
+        if (k === 'audit') {
+          // Replace audit completely
+          db.audit = Array.isArray(val) ? val.slice() : (db.audit || []);
+          return;
+        }
+
+        if (k === 'deleted') {
+          // already handled above
+          return;
+        }
+
+        if (Array.isArray(val)) {
+          // 🔁 Merge ANY array by id: vehicles, expenses, showroom, users, directors, investors, etc.
+          const localArr = Array.isArray(db[k]) ? db[k] : [];
+          const byId = Object.create(null);
+          const noId = [];
+
+          // Start from local → keep our unsynced stuff
+          for (const item of localArr) {
+            if (item && item.id) {
+              byId[item.id] = item;
+            } else {
+              noId.push(item);
+            }
+          }
+
+          // Apply incoming (remote) → add new items, overwrite same-id with remote
+          for (const item of val) {
+            if (item && item.id) {
+              byId[item.id] = item; // remote (Gist) wins on conflicts
+            } else {
+              noId.push(item);
+            }
+          }
+
+          db[k] = [...noId, ...Object.values(byId)];
+
+          // Users: normalise permissions
+          if (k === 'users' && typeof normalizePerms === 'function') {
+            db.users = (db.users || []).map(u => {
+              u.perms = normalizePerms(u.perms);
+              return u;
+            });
+          }
+
+          // Directors: unique partners by name
+          if (k === 'partners') {
+            db.partners = (db.partners || []).filter((p, i, arr) =>
+              arr.findIndex(pp =>
+                String(pp.name || '').trim().toLowerCase() ===
+                String(p.name || '').trim().toLowerCase()
+              ) === i
+            );
+          }
+
+          return;
+        }
+
+        if (val && typeof val === 'object') {
+          // Shallow-merge plain objects (company, settings etc.)
+          db[k] = Object.assign({}, db[k] || {}, val);
+        } else {
+          // Simple values
+          db[k] = val;
+        }
+      });
+
+    } else {
+      // No remote data (first time?) – just make sure deleted map exists
+      ensureDeletedMap();
+    }
+
+    // 3) Apply deletions from merged deleted map
+    applyAllDeletions();
+
+    // 4) Now push the merged, cleaned DB to Gist
+    const payload = { files: { 'starcars.json': { content: JSON.stringify(db, null, 2) } } };
+
+    const r = await fetch(`https://api.github.com/gists/${gistId}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const txt = await r.text(); 
+    if (!r.ok){ 
+      return alert('Push failed ' + r.status + ': ' + txt); 
     } 
+    
+    // Record the push activity
+    recordPushActivity();
+    
+    addAudit('sync','push',gistId,'Pushed to Gist (safe merge)'); 
+    alert('Pushed to Gist as starcars.json (merged with remote; deletions respected)');
+    
+    // Refresh the Settings view to show updated timestamp
+    if (currentTab === 'Settings') {
+      render();
+    }
+
+  } catch(e){ 
+    alert('Push failed: ' + e.message); 
+  } 
 }
 
 /* ========= Navigation & render ========= */
@@ -1176,7 +1406,24 @@ function viewVehicles(){
       }
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
 
-    }else if(act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete vehicle?')) return; const delV=db.vehicles.find(x=>x.id===id); db.vehicles=db.vehicles.filter(x=>x.id!==id); db.vehicleExpenses=db.vehicleExpenses.filter(e=>e.vehicleId!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','vehicle',id,delV?delV.reg:''); rows(); }
+    
+    }else if(act==='del'){ 
+    if(!canAction('del')) return alert('No permission'); 
+    if(!confirm('Delete vehicle?')) return; 
+    const delV=db.vehicles.find(x=>x.id===id); 
+
+    // Mark deletion so it syncs to other PCs
+    markDeleted('vehicles', id);
+
+    db.vehicles=db.vehicles.filter(x=>x.id!==id); 
+    db.vehicleExpenses=db.vehicleExpenses.filter(e=>e.vehicleId!==id); 
+
+    saveDB(); 
+    try{renderAlertBell();}catch(e){}; 
+    addAudit('delete','vehicle',id,delV?delV.reg:''); 
+    rows(); 
+    }
+    
     else if(act==='viewSale'){
       const sale = db.sales.find(x => x.id === id);
       if(sale) {
@@ -1465,7 +1712,7 @@ function hint(){ const bal=calcBalances(); wrap.querySelector('#s_totHint').text
     saveDB(); try{renderAlertBell();}catch(e){}; rows(); wrap.querySelector('#s_type').value=''; wrap.querySelector('#s_amt').value=''; wrap.querySelector('#s_note').value=''; hint();
   };
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
-    if(act==='del'){ if(!canAction('del')) return alert('No permission'); const delS=db.showroomExpenses.find(x=>x.id===id); db.showroomExpenses=db.showroomExpenses.filter(x=>x.id!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','showroomExpense',id,delS?delS.type+' '+delS.amount:''); rows(); hint(); }
+    if(act==='del'){ if(!canAction('del')) return alert('No permission'); const delS=db.showroomExpenses.find(x=>x.id===id); markDeleted('showroomExpenses', id); db.showroomExpenses=db.showroomExpenses.filter(x=>x.id!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','showroomExpense',id,delS?delS.type+' '+delS.amount:''); rows(); hint(); }
     else if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const e=db.showroomExpenses.find(x=>x.id===id); editId=id; wrap.querySelector('#s_date').value=e.date; wrap.querySelector('#s_type').value=e.type||''; wrap.querySelector('#s_method').value=e.method||'bank'; wrap.querySelector('#s_amt').value=e.amount||0; wrap.querySelector('#s_note').value=e.note||''; }
   });
   return wrap;
@@ -1691,21 +1938,22 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
 
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b)return; const s=db.sales.find(x=>x.id===b.dataset.id);
     if(b.dataset.act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete sale? Vehicle will go back to stock.')) return; if(s){ 
-      // Also delete any associated part-ex vehicle
-      const pxVehicle = (db.vehicles||[]).find(v => v.originalSaleId === s.id);
-      if(pxVehicle) {
-        db.vehicles = db.vehicles.filter(v => v.id !== pxVehicle.id);
-        db.vehicleExpenses = db.vehicleExpenses.filter(e => e.vehicleId !== pxVehicle.id);
-      }
-      
-      const v=db.vehicles.find(x=>x.id===s.vehicleId); 
-      if(v) v.status='for sale'; 
-      db.sales=db.sales.filter(x=>x.id!==s.id); 
-      saveDB(); 
-      try{renderAlertBell();}catch(e){}; 
-      addAudit('delete','sale',s.id,(v?v.reg:'')+' inv '+(s.invNo||'') + (pxVehicle ? ' and PX ' + pxVehicle.reg : '')); 
-      rows(); 
+    // Also delete any associated part-ex vehicle
+    const pxVehicle = (db.vehicles||[]).find(v => v.originalSaleId === s.id);
+    if(pxVehicle) {
+      db.vehicles = db.vehicles.filter(v => v.id !== pxVehicle.id);
+      db.vehicleExpenses = db.vehicleExpenses.filter(e => e.vehicleId !== pxVehicle.id);
+    }
+  
+    const v=db.vehicles.find(x=>x.id===s.vehicleId); 
+    if(v) v.status='for sale'; 
+    db.sales=db.sales.filter(x=>x.id!==s.id); 
+    saveDB(); 
+    try{renderAlertBell();}catch(e){}; 
+    addAudit('delete','sale',s.id,(v?v.reg:'')+' inv '+(s.invNo||'') + (pxVehicle ? ' and PX ' + pxVehicle.reg : '')); 
+    rows(); 
     } }
+
     else if(b.dataset.act==='edit'){ if(!canAction('edit')) return alert('No permission'); editId=s.id; const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
       wrap.querySelector('#sale_reg').value=(v.reg||'').toUpperCase(); wrap.querySelector('#sale_date').value=s.date; wrap.querySelector('#sale_buyer').value=s.buyer||''; wrap.querySelector('#sale_addr').value=s.address||'';
       wrap.querySelector('#sale_phone').value=s.phone||''; wrap.querySelector('#sale_email').value=s.email||''; wrap.querySelector('#sale_mileage').value=s.mileage||0; wrap.querySelector('#sale_firstReg').value=s.firstReg||'';
@@ -2307,15 +2555,20 @@ function viewPurchaseInvoice(){
     const id=b.dataset.id, act=b.dataset.act;
     
     if(act==='del'){
-      if(!canAction('del')) return alert('No permission');
-      if(!confirm('Delete this purchase invoice?')) return;
-      const delPi=db.purchaseInvoices.find(x=>x.id===id);
-      db.purchaseInvoices=db.purchaseInvoices.filter(x=>x.id!==id);
-      saveDB(); 
-      try{renderAlertBell();}catch(e){}
-      addAudit('delete','purchaseInvoice',id,delPi?`Purchase from ${delPi.supplier} - ${delPi.reg}`:'');
-      renderPurchases();
-    }
+    if(!canAction('del')) return alert('No permission');
+    if(!confirm('Delete this purchase invoice?')) return;
+    const delPi=db.purchaseInvoices.find(x=>x.id===id);
+
+    // mark deletion for sync
+    markDeleted('purchaseInvoices', id);
+
+    db.purchaseInvoices=db.purchaseInvoices.filter(x=>x.id!==id);
+    saveDB(); 
+    try{renderAlertBell();}catch(e){}
+    addAudit('delete','purchaseInvoice',id,delPi?`Purchase from ${delPi.supplier} - ${delPi.reg}`:'');
+    renderPurchases();
+  }
+
     else if(act==='edit'){
       if(!canAction('edit')) return alert('No permission');
       const pi=db.purchaseInvoices.find(x=>x.id===id);
@@ -3467,6 +3720,27 @@ function viewSettings(){
     ${lastPushInfo}
     <div class="small">Token is stored only in your browser (LocalStorage), not inside backups.</div>
   </div></div>`;
+
+  // After wrap.innerHTML is set, add Auto Sync controls into the Integrations card
+  const cards = wrap.querySelectorAll('.card');
+  const integrationsCard = cards[1]; // 0 = Company, 1 = Integrations (in your layout)
+
+  if (integrationsCard) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `
+      <label class="small">
+        <input id="c_autoSync" type="checkbox" ${db.company.autoSyncEnabled ? 'checked' : ''}>
+        Auto Sync (auto pull from Gist)
+        &nbsp;every&nbsp;
+        <input id="c_autoSyncSec" type="number" min="30" max="600"
+               value="${db.company.autoSyncSeconds || 120}"
+               style="width:80px">
+        seconds
+      </label>
+    `;
+    integrationsCard.appendChild(row);
+  }
   
   // Only show save button for company settings if user is admin
   if (isAdmin) {
@@ -3505,17 +3779,33 @@ function viewSettings(){
   
   // Integration settings are available for all users with settings permission
   wrap.querySelector('#c_isave').onclick=()=>{ 
-    db.company.dvlaProxy=document.getElementById('c_dvlaProxy').value; 
-    db.company.dvlaKey=document.getElementById('c_dvlaKey').value;
-    db.company.dvsaProxy=document.getElementById('c_dvsaProxy').value; 
-    db.company.dvsaKey=document.getElementById('c_dvsaKey').value; 
-    db.company.gistId=document.getElementById('c_gistId').value.trim(); 
+    db.company.dvlaProxy = document.getElementById('c_dvlaProxy').value; 
+    db.company.dvlaKey   = document.getElementById('c_dvlaKey').value;
+    db.company.dvsaProxy = document.getElementById('c_dvsaProxy').value; 
+    db.company.dvsaKey   = document.getElementById('c_dvsaKey').value; 
+    db.company.gistId    = document.getElementById('c_gistId').value.trim(); 
     setGhToken(document.getElementById('c_ghToken').value.trim()); 
-    saveDB(); 
-    try{renderAlertBell();}catch(e){}; 
-    addAudit('update','integrations','integrations','Updated DVLA & Gist'); 
-    alert('Saved integrations'); 
+
+    // Read auto-sync controls if present
+    const chk = document.getElementById('c_autoSync');
+    const sec = document.getElementById('c_autoSyncSec');
+    if (chk && sec) {
+    db.company.autoSyncEnabled = chk.checked;
+    db.company.autoSyncSeconds = Number(sec.value || 120);
+  }
+
+  saveDB(); 
+  try { renderAlertBell(); } catch(e) {} 
+  addAudit('update','integrations','integrations','Updated DVLA, Gist & Auto Sync'); 
+
+  // Restart auto sync with new settings
+  if (typeof startAutoSyncFromSettings === 'function') {
+    startAutoSyncFromSettings();
+  }
+
+  alert('Saved integrations'); 
   };
+
   
   wrap.querySelector('#c_pull').onclick=()=>syncPull();
   wrap.querySelector('#c_push').onclick=()=>syncPush();
@@ -3588,6 +3878,7 @@ if (hardBtn) {
   return wrap;
 }
 
+startAutoSyncFromSettings();
 render();
 </script>
 </body>
