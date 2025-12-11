@@ -495,6 +495,7 @@ function validateDVLAResponse(data) {
 
 /* ========= DB init ========= */
 let db=loadDB();
+window.db = db;
 db.deleted = db.deleted || {};
 if (!db.lastPush) db.lastPush = {};
 let pushEnabled = false;
@@ -615,6 +616,212 @@ function backupJSON(){
     addAudit && addAudit('export','backup','','Full JSON backup');
   }catch(e){ alert('Backup failed: '+(e.message||e)); }
 
+}
+
+// Merge-from-backup with id-based merge for ALL arrays
+function restoreJSONMerge() {
+  const i = document.createElement('input');
+  i.type = 'file';
+  i.accept = '.json,application/json';
+
+  i.onchange = () => {
+    const f = i.files && i.files[0];
+    if (!f) return;
+
+    const fr = new FileReader();
+    fr.onload = () => {
+      try {
+        const incoming = JSON.parse(fr.result || '{}');
+        if (!incoming || typeof incoming !== 'object') {
+          throw new Error('Backup file has no data');
+        }
+
+        // Make sure db exists
+        db = db || {};
+
+        // If backup contains deleted map, merge it first
+        if (incoming.deleted && typeof mergeDeletedMaps === 'function') {
+          db.deleted = mergeDeletedMaps(db.deleted, incoming.deleted);
+        } else {
+          db.deleted = db.deleted || {};
+        }
+
+        Object.keys(incoming).forEach(k => {
+          const val = incoming[k];
+
+          if (k === 'audit') {
+            // Replace audit log with backup audit
+            db.audit = Array.isArray(val) ? val.slice() : (db.audit || []);
+            return;
+          }
+
+          if (k === 'deleted') {
+            // Already merged above
+            return;
+          }
+
+          if (Array.isArray(val)) {
+            // 🔁 Merge ANY array by id: vehicles, sales, expenses, showroomExpenses,
+            // vehicleExpenses, investors, credits, complaints, todo, users, partners, etc.
+            const localArr = Array.isArray(db[k]) ? db[k] : [];
+            const byId = Object.create(null);
+            const noId = [];
+
+            // Start from local (current browser) data
+            for (const item of localArr) {
+              if (item && item.id) {
+                byId[item.id] = item;
+              } else {
+                noId.push(item);
+              }
+            }
+
+            // Apply incoming backup: overwrite same-id items, add new ones
+            for (const item of val) {
+              if (item && item.id) {
+                byId[item.id] = item; // backup wins on conflicts
+              } else {
+                noId.push(item);
+              }
+            }
+
+            db[k] = [...noId, ...Object.values(byId)];
+
+            // Users: normalise permissions
+            if (k === 'users' && typeof normalizePerms === 'function') {
+              db.users = (db.users || []).map(u => {
+                u.perms = normalizePerms(u.perms);
+                return u;
+              });
+            }
+
+            // Directors: make sure partners are unique by name
+            if (k === 'partners') {
+              db.partners = (db.partners || []).filter((p, i, arr) =>
+                arr.findIndex(pp =>
+                  String(pp.name || '').trim().toLowerCase() ===
+                  String(p.name || '').trim().toLowerCase()
+                ) === i
+              );
+            }
+
+            return;
+          }
+
+          if (val && typeof val === 'object') {
+            // Shallow-merge plain objects (company, settings, etc.)
+            db[k] = Object.assign({}, db[k] || {}, val);
+          } else {
+            // Simple values (numbers / strings / booleans)
+            db[k] = val;
+          }
+        });
+
+        // Safety defaults
+        db.company           = db.company           || {};
+        db.vehicles          = db.vehicles          || [];
+        db.sales             = db.sales             || [];
+        db.expenses          = db.expenses          || [];
+        db.showroomExpenses  = db.showroomExpenses  || [];
+        db.vehicleExpenses   = db.vehicleExpenses   || [];
+        db.credits           = db.credits           || [];
+        db.complaints        = db.complaints        || [];
+        db.investors         = db.investors         || [];
+        db.partners          = db.partners          || [];
+        db.todo              = db.todo              || [];
+        db.purchaseInvoices  = db.purchaseInvoices  || [];
+        db.audit             = db.audit             || [];
+        db.deleted           = db.deleted           || {};
+
+        // Apply deletions (if map exists)
+        if (typeof applyAllDeletions === 'function') {
+          applyAllDeletions();
+        }
+
+        saveDB();
+        try { renderAlertBell(); } catch (_) {}
+        if (typeof addAudit === 'function') {
+          addAudit('import', 'backup', '', 'Merged JSON backup (id-merge)');
+        }
+        alert('Merged from backup');
+        if (typeof render === 'function') render();
+      } catch (e) {
+        alert('Bad JSON: ' + (e.message || e));
+      }
+    };
+    fr.readAsText(f);
+  };
+
+  i.click();
+}
+
+// Replace-from-backup (full overwrite of local DB)
+function restoreJSONReplace() {
+  const i = document.createElement('input');
+  i.type = 'file';
+  i.accept = '.json,application/json';
+
+  i.onchange = () => {
+    const f = i.files && i.files[0];
+    if (!f) return;
+
+    const fr = new FileReader();
+    fr.onload = () => {
+      try {
+        const incoming = JSON.parse(fr.result || '{}');
+        if (!incoming || typeof incoming !== 'object') {
+          throw new Error('Backup file has no data');
+        }
+
+        // Completely replace the in-memory DB with backup
+        db = incoming || {};
+
+        // Safety defaults
+        db.company           = db.company           || {};
+        db.vehicles          = db.vehicles          || [];
+        db.sales             = db.sales             || [];
+        db.expenses          = db.expenses          || [];
+        db.showroomExpenses  = db.showroomExpenses  || [];
+        db.vehicleExpenses   = db.vehicleExpenses   || [];
+        db.credits           = db.credits           || [];
+        db.complaints        = db.complaints        || [];
+        db.investors         = db.investors         || [];
+        db.partners          = db.partners          || [];
+        db.todo              = db.todo              || [];
+        db.purchaseInvoices  = db.purchaseInvoices  || [];
+        db.audit             = db.audit             || [];
+        db.deleted           = db.deleted           || {};
+
+        // Normalise user permissions
+        if (Array.isArray(db.users) && typeof normalizePerms === 'function') {
+          db.users = db.users.map(u => {
+            u.perms = normalizePerms(u.perms);
+            return u;
+          });
+        } else {
+          db.users = db.users || [];
+        }
+
+        // Apply deletions if any
+        if (typeof applyAllDeletions === 'function') {
+          applyAllDeletions();
+        }
+
+        saveDB();
+        try { renderAlertBell(); } catch (_) {}
+        if (typeof addAudit === 'function') {
+          addAudit('import', 'backup', '', 'Replaced from JSON backup');
+        }
+        alert('Replaced from backup');
+        if (typeof render === 'function') render();
+      } catch (e) {
+        alert('Bad JSON: ' + (e.message || e));
+      }
+    };
+    fr.readAsText(f);
+  };
+
+  i.click();
 }
 
 /* ========= Gist sync ========= */
@@ -1009,12 +1216,15 @@ async function syncPush(){
         }
 
         if (val && typeof val === 'object') {
-          // Shallow-merge plain objects (company, settings etc.)
-          db[k] = Object.assign({}, db[k] || {}, val);
+        // Shallow-merge plain objects (company, settings etc.)
+        // Remote fills in missing keys, but LOCAL values win on conflicts
+        db[k] = Object.assign({}, val || {}, db[k] || {});
         } else {
-          // Simple values
-          db[k] = val;
+        // Simple values – only take remote if we don't already have a local value
+        if (typeof db[k] === 'undefined') {
+        db[k] = val;
         }
+      }
       });
 
     } else {
