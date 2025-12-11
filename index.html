@@ -1168,14 +1168,15 @@ async function syncPush(){
           return;
         }
 
-        if (Array.isArray(val)) {
+                if (Array.isArray(val)) {
           // 🔁 Merge ANY array by id: vehicles, expenses, showroom, users, directors, investors, etc.
-          const localArr = Array.isArray(db[k]) ? db[k] : [];
+          const remoteArr = Array.isArray(val)    ? val   : [];
+          const localArr  = Array.isArray(db[k]) ? db[k] : [];
           const byId = Object.create(null);
           const noId = [];
 
-          // Start from local → keep our unsynced stuff
-          for (const item of localArr) {
+          // 1) Start from REMOTE → get everything that is already on Gist
+          for (const item of remoteArr) {
             if (item && item.id) {
               byId[item.id] = item;
             } else {
@@ -1183,10 +1184,10 @@ async function syncPush(){
             }
           }
 
-          // Apply incoming (remote) → add new items, overwrite same-id with remote
-          for (const item of val) {
+          // 2) Apply LOCAL last → our edits/changes WIN on conflicts
+          for (const item of localArr) {
             if (item && item.id) {
-              byId[item.id] = item; // remote (Gist) wins on conflicts
+              byId[item.id] = item; // LOCAL (this PC) wins on conflicts
             } else {
               noId.push(item);
             }
@@ -1214,6 +1215,7 @@ async function syncPush(){
 
           return;
         }
+
 
         if (val && typeof val === 'object') {
         // Shallow-merge plain objects (company, settings etc.)
