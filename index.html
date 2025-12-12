@@ -1846,7 +1846,17 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
   wrap.querySelector('#e_add').onclick=()=>{ if(!canAction('add')) return alert('No permission');
     const regInput=(wrap.querySelector('#e_vehicle').value||'').toUpperCase().trim();
     const vid=findVehicleIdByReg(regInput);
-    if(!vid){ return alert('Enter a valid REG from the suggestions'); }
+    if(!vid){ return alert('Enter a valid REG from the suggestions');
+    // ✅ Block duplicate sales (manual typing protection)
+    const vCheck = (db.vehicles || []).find(x => x.id === vid);
+    const alreadySold = vCheck && String(vCheck.status || '').toLowerCase() === 'sold';
+    const alreadyHasSale = (db.sales || []).some(sx => sx.vehicleId === vid && sx.id !== editId);
+
+  if (!editId && (alreadySold || alreadyHasSale)) {
+    return alert('This vehicle is already sold. You cannot record another sale for it.');
+  }
+
+     }
     const e={id:editId||uid(),vehicleId:vid,date:wrap.querySelector('#e_date').value,type:wrap.querySelector('#e_type').value.trim(),method:wrap.querySelector('#e_method').value,amount:Number(wrap.querySelector('#e_amt').value||0),note:wrap.querySelector('#e_note').value.trim()};
     if(editId){ db.vehicleExpenses=db.vehicleExpenses.map(x=>x.id===editId?e:x); addAudit('update','vehicleExpense',e.id,(db.vehicles.find(x=>x.id===e.vehicleId)||{}).reg+' '+e.type+' '+e.amount); editId=null; }
     else{ db.vehicleExpenses.unshift(e); addAudit('add','vehicleExpense',e.id,(db.vehicles.find(x=>x.id===e.vehicleId)||{}).reg+' '+e.type+' '+e.amount); }
@@ -1936,8 +1946,14 @@ function viewSales(){
   const wrap=document.createElement('div'); 
   wrap.className='card';
   
-  // Filter out sold vehicles from the REG dropdown
-  const regOptions=(db.vehicles||[]).filter(v => v.status !== 'sold').map(v=>`<option value="${(v.reg||'').toUpperCase()}">`).join('');
+  // ✅ Only show vehicles that are NOT sold and do NOT already have a sale record
+  const soldVehicleIds = new Set((db.sales || []).map(s => s.vehicleId));
+  const regOptions = (db.vehicles || [])
+  .filter(v => v && String(v.status || '').toLowerCase() !== 'sold')
+  .filter(v => !soldVehicleIds.has(v.id))
+  .map(v => `<option value="${(v.reg || '').toUpperCase()}">`)
+  .join('');
+
   
   wrap.innerHTML=`<h2>Sales</h2>
   <!-- Search and Filter Section -->
