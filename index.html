@@ -1936,8 +1936,8 @@ function viewSales(){
   const wrap=document.createElement('div'); 
   wrap.className='card';
   
-  // Remove the filter that excludes sold vehicles from the REG dropdown
-  const regOptions=(db.vehicles||[]).map(v=>`<option value="${(v.reg||'').toUpperCase()}">`).join('');
+  // Filter out sold vehicles from the REG dropdown
+  const regOptions=(db.vehicles||[]).filter(v => v.status !== 'sold').map(v=>`<option value="${(v.reg||'').toUpperCase()}">`).join('');
   
   wrap.innerHTML=`<h2>Sales</h2>
   <!-- Search and Filter Section -->
@@ -2175,94 +2175,110 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
     } else if(b.dataset.act==='inv'){ printInvoice(s.id); } else if(b.dataset.act==='proforma'){ printFinanceProforma(s.id); }
   });
 
-  wrap.querySelector('#sale_add').onclick=()=>{ 
-  if(!canAction('add')) return alert('No permission'); 
-  const regInput=(wrap.querySelector('#sale_reg').value||'').toUpperCase().trim(); 
-  const vid=findVehicleIdByReg(regInput); 
-  if(!vid) return alert('Enter a valid REG (use the suggestions).');
+    wrap.querySelector('#sale_add').onclick = () => { 
+    if (!canAction('add')) return alert('No permission'); 
+
+    const regInput = (wrap.querySelector('#sale_reg').value || '').toUpperCase().trim(); 
+    const vid = findVehicleIdByReg(regInput); 
+    if (!vid) return alert('Enter a valid REG (use the suggestions).');
+
+    // 🔒 PREVENT DOUBLE SALE when creating a NEW sale
+    if (!editId) {
+      const vehicle = (db.vehicles || []).find(x => x.id === vid);
+      const hasSale = (db.sales || []).some(sale => sale.vehicleId === vid);
+
+      if ((vehicle && vehicle.status === 'sold') || hasSale) {
+        return alert('This vehicle is already sold. Use EDIT on the existing sale instead of creating a new one.');
+      }
+    }
   
-  // AUTO-INCREMENT: Get or generate invoice number
-  let invNoValue = wrap.querySelector('#sale_invNo').value.trim();
-  if (!invNoValue && !editId) {
-    invNoValue = getNextInvoiceNo();
-  }
+    // AUTO-INCREMENT: Get or generate invoice number
+    let invNoValue = wrap.querySelector('#sale_invNo').value.trim();
+    if (!invNoValue && !editId) {
+      invNoValue = getNextInvoiceNo();
+    }
   
-  const price=Number(wrap.querySelector('#sale_price').value||0);
-  const s={ 
-    id:editId||uid(), 
-    vehicleId:vid, 
-    date:wrap.querySelector('#sale_date').value,
-    firstReg:wrap.querySelector('#sale_firstReg').value,
-    buyer:wrap.querySelector('#sale_buyer').value.trim(),
-    address:wrap.querySelector('#sale_addr').value.trim(),
-    phone:wrap.querySelector('#sale_phone').value.trim(),
-    email:wrap.querySelector('#sale_email').value.trim(),
-    mileage:Number(wrap.querySelector('#sale_mileage').value||0),
-    salePrice:price,
-    deposit:Number(wrap.querySelector('#sale_dep').value||0),
-    cash:Number(wrap.querySelector('#sale_cash').value||0),
-    card:Number(wrap.querySelector('#sale_card').value||0),
-    bank:Number(wrap.querySelector('#sale_bank').value||0),
-    finance:Number(wrap.querySelector('#sale_fin').value||0),
-    partex:wrap.querySelector('#sale_partex').value.trim(),
-    pxReg:(wrap.querySelector('#sale_pxReg').value||'').trim().toUpperCase(),
-    pxMake:wrap.querySelector('#sale_pxMake').value.trim(),
-    pxModel:wrap.querySelector('#sale_pxModel').value.trim(),
-    pxAllowance:Number(wrap.querySelector('#sale_pxAllowance').value||0),
-    financeCompany:wrap.querySelector('#sale_finCo').value.trim(),
-    agreement:wrap.querySelector('#sale_agree').value.trim(),
-    deliverTo:wrap.querySelector('#sale_deliver').value.trim(),
-    keys:wrap.querySelector('#sale_keys').value.trim(),
-    mot:wrap.querySelector('#sale_mot').value.trim(),
-    serviceHistory:wrap.querySelector('#sale_sh').value.trim(),
-    invNo:invNoValue || (Date.now()+'').slice(-6)};
+    const price = Number(wrap.querySelector('#sale_price').value || 0);
+    const s = { 
+      id: editId || uid(), 
+      vehicleId: vid, 
+      date: wrap.querySelector('#sale_date').value,
+      firstReg: wrap.querySelector('#sale_firstReg').value,
+      buyer: wrap.querySelector('#sale_buyer').value.trim(),
+      address: wrap.querySelector('#sale_addr').value.trim(),
+      phone: wrap.querySelector('#sale_phone').value.trim(),
+      email: wrap.querySelector('#sale_email').value.trim(),
+      mileage: Number(wrap.querySelector('#sale_mileage').value || 0),
+      salePrice: price,
+      deposit: Number(wrap.querySelector('#sale_dep').value || 0),
+      cash: Number(wrap.querySelector('#sale_cash').value || 0),
+      card: Number(wrap.querySelector('#sale_card').value || 0),
+      bank: Number(wrap.querySelector('#sale_bank').value || 0),
+      finance: Number(wrap.querySelector('#sale_fin').value || 0),
+      partex: wrap.querySelector('#sale_partex').value.trim(),
+      pxReg: (wrap.querySelector('#sale_pxReg').value || '').trim().toUpperCase(),
+      pxMake: wrap.querySelector('#sale_pxMake').value.trim(),
+      pxModel: wrap.querySelector('#sale_pxModel').value.trim(),
+      pxAllowance: Number(wrap.querySelector('#sale_pxAllowance').value || 0),
+      financeCompany: wrap.querySelector('#sale_finCo').value.trim(),
+      agreement: wrap.querySelector('#sale_agree').value.trim(),
+      deliverTo: wrap.querySelector('#sale_deliver').value.trim(),
+      keys: wrap.querySelector('#sale_keys').value.trim(),
+      mot: wrap.querySelector('#sale_mot').value.trim(),
+      serviceHistory: wrap.querySelector('#sale_sh').value.trim(),
+      invNo: invNoValue || (Date.now() + '').slice(-6)
+    };
     
-    const sumBreak=s.deposit+s.cash+s.card+s.bank+s.finance+s.pxAllowance;
-    if(sumBreak!==s.salePrice){ if(!confirm('Payments + PX do not equal sale price. Continue?')) return; }
-    if(editId){ 
+    const sumBreak = s.deposit + s.cash + s.card + s.bank + s.finance + s.pxAllowance;
+    if (sumBreak !== s.salePrice) {
+      if (!confirm('Payments + PX do not equal sale price. Continue?')) return;
+    }
+
+    if (editId) { 
       // Update existing sale - don't change vehicle status
-      db.sales=db.sales.map(x=>x.id===editId?s:x); 
-      addAudit('update','sale',s.id,(db.vehicles.find(x=>x.id===s.vehicleId)||{}).reg+' inv '+s.invNo); 
-      const vM=db.vehicles.find(x=>x.id===s.vehicleId); 
-      if(vM) vM.mileage=s.mileage||vM.mileage; 
-      editId=null; 
+      db.sales = db.sales.map(x => x.id === editId ? s : x); 
+      addAudit('update', 'sale', s.id, (db.vehicles.find(x => x.id === s.vehicleId) || {}).reg + ' inv ' + s.invNo); 
+      const vM = db.vehicles.find(x => x.id === s.vehicleId); 
+      if (vM) vM.mileage = s.mileage || vM.mileage; 
+      editId = null; 
     } else { 
       // New sale - mark vehicle as sold
       db.sales.unshift(s); 
-      addAudit('add','sale',s.id,(db.vehicles.find(x=>x.id===s.vehicleId)||{}).reg+' inv '+s.invNo); 
-      const vStat=db.vehicles.find(x=>x.id===vid); 
-      if(vStat){ 
-        vStat.status='sold'; 
-        vStat.mileage=s.mileage||vStat.mileage; 
+      addAudit('add', 'sale', s.id, (db.vehicles.find(x => x.id === s.vehicleId) || {}).reg + ' inv ' + s.invNo); 
+      const vStat = db.vehicles.find(x => x.id === vid); 
+      if (vStat) { 
+        vStat.status = 'sold'; 
+        vStat.mileage = s.mileage || vStat.mileage; 
       } 
-      if(s.pxReg&&s.pxAllowance>0){ 
-        const px={
-          id:uid(),
-          reg:s.pxReg,
-          make:s.pxMake,
-          model:s.pxModel,
-          colour:'',
-          fuel:'',
-          mileage:0,
-          purchase:s.pxAllowance,
-          ownerType:'owned',
-          investor:'',
-          supplier:'PART-EX',
+      if (s.pxReg && s.pxAllowance > 0) { 
+        const px = {
+          id: uid(),
+          reg: s.pxReg,
+          make: s.pxMake,
+          model: s.pxModel,
+          colour: '',
+          fuel: '',
+          mileage: 0,
+          purchase: s.pxAllowance,
+          ownerType: 'owned',
+          investor: '',
+          supplier: 'PART-EX',
           supplierNote: `PX from sale ${s.invNo} (${vStat?.reg || 'Unknown'})`,
           originalSaleId: s.id,
-          vin:'',
-          status:'for sale',
-          createdAt:new Date().toISOString(),
-          media:[],
-          video:''
+          vin: '',
+          status: 'for sale',
+          createdAt: new Date().toISOString(),
+          media: [],
+          video: ''
         }; 
         db.vehicles.unshift(px); 
-        addAudit('add','vehicle',px.id,'PX '+px.reg+' '+(px.make||'')+' '+(px.model||'')+' from sale '+s.invNo+' ('+(vStat?.reg || 'Unknown')+')'); 
+        addAudit('add', 'vehicle', px.id, 'PX ' + px.reg + ' ' + (px.make || '') + ' ' + (px.model || '') + ' from sale ' + s.invNo + ' (' + (vStat?.reg || 'Unknown') + ')'); 
       } 
     }
-    saveDB(); try{renderAlertBell();}catch(e){}; rows();
-    
-    // Clear the form for the next entry
+
+    saveDB(); 
+    try { renderAlertBell(); } catch(e) {} 
+    rows();
     clearSaleForm();
   };
   
