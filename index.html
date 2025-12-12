@@ -862,6 +862,54 @@ function mergeDeletedMaps(localDel, remoteDel) {
   return out;
 }
 
+function dedupePeopleByNamePreferLocal(mergedArr, localArr) {
+  const norm = s => String(s || '').trim().toLowerCase();
+
+  // Set of names that exist in LOCAL (so local version should win)
+  const localNameSet = new Set((localArr || []).map(x => norm(x && x.name)));
+
+  // Choose “best” record if we see duplicates:
+  // 1) Prefer record that came from LOCAL (same name exists locally)
+  // 2) Otherwise prefer one with more tx entries
+  // 3) Otherwise prefer one with higher abs(balance)
+  const pickBest = (a, b) => {
+    const an = norm(a && a.name), bn = norm(b && b.name);
+    const aLocal = localNameSet.has(an);
+    const bLocal = localNameSet.has(bn);
+
+    if (aLocal && !bLocal) return a;
+    if (!aLocal && bLocal) return b;
+
+    const atx = (a && a.tx && a.tx.length) ? a.tx.length : 0;
+    const btx = (b && b.tx && b.tx.length) ? b.tx.length : 0;
+    if (atx !== btx) return atx > btx ? a : b;
+
+    const abal = Math.abs(Number(a && a.balance || 0));
+    const bbal = Math.abs(Number(b && b.balance || 0));
+    if (abal !== bbal) return abal > bbal ? a : b;
+
+    return a; // stable fallback
+  };
+
+  const map = Object.create(null);
+  const out = [];
+
+  for (const item of (mergedArr || [])) {
+    const key = norm(item && item.name);
+    if (!key) { out.push(item); continue; }
+    if (!map[key]) {
+      map[key] = item;
+    } else {
+      map[key] = pickBest(map[key], item);
+    }
+  }
+
+  // rebuild in a stable order by name (optional but helps keep dropdown stable)
+  const named = Object.keys(map).sort().map(k => map[k]);
+  const unnamed = out.filter(x => !x || !norm(x.name));
+  return [...named, ...unnamed];
+}
+
 // Mark a record as deleted so other PCs know to remove it too
 function markDeleted(section, id) {
   if (!id) return;
@@ -964,15 +1012,13 @@ async function syncPull() {
           });
         }
 
-        // Directors: make sure partners are unique by name (your existing rule)
         if (k === 'partners') {
-          db.partners = (db.partners || []).filter((p, i, arr) =>
-            arr.findIndex(pp =>
-              String(pp.name || '').trim().toLowerCase() ===
-              String(p.name || '').trim().toLowerCase()
-            ) === i
-          );
+        db.partners = dedupePeopleByNamePreferLocal(db.partners || [], localArr);
+        } 
+        if (k === 'investors') {
+        db.investors = dedupePeopleByNamePreferLocal(db.investors || [], localArr);
         }
+
 
         return;
       }
@@ -1203,15 +1249,16 @@ async function syncPush(){
             });
           }
 
-          // Directors: unique partners by name
+          // ✅ Directors: dedupe by name but ALWAYS prefer LOCAL copy
           if (k === 'partners') {
-            db.partners = (db.partners || []).filter((p, i, arr) =>
-              arr.findIndex(pp =>
-                String(pp.name || '').trim().toLowerCase() ===
-                String(p.name || '').trim().toLowerCase()
-              ) === i
-            );
+          db.partners = dedupePeopleByNamePreferLocal(db.partners || [], localArr);
           }
+
+          // ✅ Investors: same issue can happen here too
+          if (k === 'investors') {
+          db.investors = dedupePeopleByNamePreferLocal(db.investors || [], localArr);
+          }
+
 
           return;
         }
