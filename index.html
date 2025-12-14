@@ -294,6 +294,21 @@ function ddmmyyyy(d){
 }
 function ymStr(d){ return (d||'').slice(0,7); } // yyyy-mm
 
+function lastDayOfMonth(ym) {
+  // ym = "YYYY-MM"
+  const [y, m] = ym.split('-').map(Number);
+  // Day 0 of next month = last day of current month
+  const d = new Date(y, m, 0);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function mcId(ym, type, a, b, c) {
+  // stable, deterministic IDs for MonthClose postings
+  const safe = (x) => String(x || '').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,60);
+  return `mc_${safe(ym)}_${safe(type)}_${safe(a)}_${safe(b)}_${safe(c)}`;
+}
+
+
 function openPrintable(html){
   try{
     const blob=new Blob([html],{type:'text/html'});
@@ -910,6 +925,47 @@ function dedupePeopleByNamePreferLocal(mergedArr, localArr) {
   return [...named, ...unnamed];
 }
 
+function dedupePeopleByNamePreferRemote(mergedArr, remoteArr) {
+  const norm = s => String(s || '').trim().toLowerCase();
+  const remoteNameSet = new Set((remoteArr || []).map(x => norm(x && x.name)));
+
+  const pickBest = (a, b) => {
+    const an = norm(a && a.name), bn = norm(b && b.name);
+    const aRemote = remoteNameSet.has(an);
+    const bRemote = remoteNameSet.has(bn);
+
+    // Prefer record that exists in REMOTE (Gist)
+    if (aRemote && !bRemote) return a;
+    if (!aRemote && bRemote) return b;
+
+    // Fallback: more tx wins
+    const atx = (a && a.tx && a.tx.length) ? a.tx.length : 0;
+    const btx = (b && b.tx && b.tx.length) ? b.tx.length : 0;
+    if (atx !== btx) return atx > btx ? a : b;
+
+    // Fallback: higher abs(balance)
+    const abal = Math.abs(Number(a && a.balance || 0));
+    const bbal = Math.abs(Number(b && b.balance || 0));
+    if (abal !== bbal) return abal > bbal ? a : b;
+
+    return a;
+  };
+
+  const map = Object.create(null);
+  const out = [];
+
+  for (const item of (mergedArr || [])) {
+    const key = norm(item && item.name);
+    if (!key) { out.push(item); continue; }
+    if (!map[key]) map[key] = item;
+    else map[key] = pickBest(map[key], item);
+  }
+
+  const named = Object.keys(map).sort().map(k => map[k]);
+  const unnamed = out.filter(x => !x || !norm(x.name));
+  return [...named, ...unnamed];
+}
+
 // Mark a record as deleted so other PCs know to remove it too
 function markDeleted(section, id) {
   if (!id) return;
@@ -936,6 +992,26 @@ function applyAllDeletions() {
 }
 
 async function syncPull() {
+
+  function makeKey(item) {
+  if (!item || typeof item !== 'object') return null;
+
+  // ✅ For showroomExpenses ALWAYS use composite key (ignore id)
+  if (k === 'showroomExpenses') {
+    const d    = (item.date || '').slice(0, 10);
+    const type = String(item.type   || '').trim().toLowerCase();
+    const m    = String(item.method || '').trim().toLowerCase();
+    const amt  = Number(item.amount || 0) || 0;
+    const note = String(item.note   || '').trim().toLowerCase();
+    return d + '|' + type + '|' + m + '|' + amt + '|' + note;
+  }
+
+  // Normal case: use id when present
+  if (item.id) return item.id;
+
+  return null;
+  }
+
   try {
     const gistId = (db.company.gistId || '').trim();
     if (!gistId) return alert('Enter Gist ID in Settings');
@@ -1012,24 +1088,19 @@ async function syncPull() {
           });
         }
 
-        if (k === 'partners') {
-        db.partners = dedupePeopleByNamePreferLocal(db.partners || [], localArr);
-        } 
-        if (k === 'investors') {
-        db.investors = dedupePeopleByNamePreferLocal(db.investors || [], localArr);
-        }
-
+        if (k === 'partners')  db.partners  = dedupePeopleByNamePreferRemote(db.partners || [], remoteArr);
+        if (k === 'investors') db.investors = dedupePeopleByNamePreferRemote(db.investors || [], remoteArr);
 
         return;
       }
 
       if (val && typeof val === 'object') {
-        // Shallow-merge plain objects (company, settings etc.)
-        db[k] = Object.assign({}, db[k] || {}, val);
+      // ✅ On PULL: remote (Gist) should overwrite local settings
+      db[k] = Object.assign({}, db[k] || {}, val || {});
       } else {
-        // Simple values
-        db[k] = val;
+      db[k] = val;
       }
+
     });
 
     // Normalise users again just in case
@@ -1042,6 +1113,11 @@ async function syncPull() {
 
     // As a safety net, apply deletions everywhere
     applyAllDeletions();
+
+    // Ensure font sizes are numeric
+    db.company = db.company || {};
+    if (db.company.invoiceFontPx != null) db.company.invoiceFontPx = Number(db.company.invoiceFontPx || 12);
+    if (db.company.termsFontPx  != null) db.company.termsFontPx  = Number(db.company.termsFontPx  || 10);
 
     saveDB();
     try { renderAlertBell(); } catch (_) {}
@@ -1167,7 +1243,28 @@ function recordPushActivity() {
     saveDB();
 }
 
-async function syncPush(){ 
+async function syncPush(){
+  
+  function makeKey(item) {
+  if (!item || typeof item !== 'object') return null;
+
+  // ✅ For showroomExpenses ALWAYS use composite key (ignore id)
+  if (k === 'showroomExpenses') {
+    const d    = (item.date || '').slice(0, 10);
+    const type = String(item.type   || '').trim().toLowerCase();
+    const m    = String(item.method || '').trim().toLowerCase();
+    const amt  = Number(item.amount || 0) || 0;
+    const note = String(item.note   || '').trim().toLowerCase();
+    return d + '|' + type + '|' + m + '|' + amt + '|' + note;
+  }
+
+  // Normal case: use id when present
+  if (item.id) return item.id;
+
+  return null;
+  }
+
+
   try{ 
     const gistId = (db.company.gistId || '').trim(); 
     if (!gistId) return alert('Enter Gist ID in Settings');
@@ -1216,7 +1313,7 @@ async function syncPush(){
 
                 if (Array.isArray(val)) {
           // 🔁 Merge ANY array by id: vehicles, expenses, showroom, users, directors, investors, etc.
-          const remoteArr = Array.isArray(val)    ? val   : [];
+          const remoteArr = Array.isArray(val) ? val : [];
           const localArr  = Array.isArray(db[k]) ? db[k] : [];
           const byId = Object.create(null);
           const noId = [];
@@ -1539,14 +1636,14 @@ function viewVehicles(){
   </div>
 
   <div class="row">
-    <input id="veh_search" placeholder="Search reg/make/model (auto filter)">
+    <input id="veh_search" placeholder="Search reg/make/model/supplier>
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_instock" checked> In stock only</label>
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_soldonly"> Sold only</label>
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_investoronly"> Investor stock</label>
     <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_pxonly"> Part-ex only</label>
     <button onclick="exportVehiclesCSV()">Export CSV</button>
   </div>
-  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>Status</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
+  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
 // Populate investor dropdown from db.investors
   const invSel = wrap.querySelector('#v_investor');
@@ -1576,8 +1673,9 @@ function viewVehicles(){
       const pxonly = wrap.querySelector('#veh_pxonly').checked;
       if(pxonly && v.supplier !== 'PART-EX') return;
       
-      const hay = ((v.reg||'')+' '+(v.make||'')+' '+(v.model||'')).toLowerCase();
-      if(q && !hay.includes(q)) return;
+      // Apply search filter
+      const hay = ((v.reg||'')+' '+(v.make||'')+' '+(v.model||'')+' '+(v.supplier||'')).toLowerCase();
+      if(q && !hay.includes(q)) return false;
       
       const tr=document.createElement('tr');
       const mcount=(v.media||[]).length + ((v.video&&1)||0);
@@ -1592,7 +1690,7 @@ function viewVehicles(){
 <td>${v.ownerType||'owned'}</td>
 <td>${v.investor||''}</td>
 <td class="right">${fmtMoney(v.purchase||0)}</td>
-<td>${v.status||''}</td>
+<td>${v.vin||''}</td>
 <td>${v.supplier||''}${v.supplierNote ? '<br><small style="color:#53a8ff;">' + v.supplierNote + '</small>' : ''}</td>
 <td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''} ${v.originalSaleId?`<button data-act="viewSale" data-id="${v.originalSaleId}" title="View original sale" style="margin-left:4px;">📋</button>`:''}</td>`;
       body.appendChild(tr);
@@ -2352,30 +2450,182 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
 
 /* ========= Sold (new) ========= */
 function viewSold(){
-  if(!canTab('Sold')) return document.createElement('div'); const wrap=document.createElement('div'); wrap.className='card';
+  if(!canTab('Sold')) return document.createElement('div'); 
+  const wrap=document.createElement('div'); 
+  wrap.className='card';
+  
   wrap.innerHTML=`<h2>Sold</h2>
-  <div class="row">
-    <label>Month<input id="sold_month" type="month"></label>
-    <button id="sold_clear">All</button>
-    <button id="sold_export">Export CSV</button>
+  <div class="row" style="margin-bottom: 16px; padding: 10px; background: rgba(19, 26, 43, 0.5); border-radius: 10px;">
+    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; width: 100%;">
+      <div style="flex: 1; min-width: 200px;">
+        <label class="small">Search by REG, Customer, or Phone</label>
+        <input id="sold_search" placeholder="Type to search..." style="width: 100%;">
+      </div>
+      <div style="flex: 1; min-width: 200px;">
+        <label class="small">Filter by Month</label>
+        <input id="sold_month" type="month" style="width: 100%;">
+      </div>
+      <div style="display: flex; gap: 8px; align-items: flex-end;">
+        <button id="sold_clear_search" style="margin-top: 20px;">Clear Search</button>
+        <button id="sold_clear_month" style="margin-top: 20px;">Show All Time</button>
+        <button id="sold_export" style="margin-top: 20px;">Export CSV</button>
+      </div>
+    </div>
   </div>
   <table class="table" style="margin-top:10px"><thead><tr>
     <th>Date</th><th>Reg</th><th>Make</th><th>Model</th><th>Customer</th><th>Address</th><th>Postcode</th><th>Phone</th><th>Email</th><th class="right">Price</th>
-  </tr></thead><tbody id="sold_body"></tbody></table>`;
+  </tr></thead><tbody id="sold_body"></tbody></table>
+  <div id="sold_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>`;
+  
   const body=wrap.querySelector('#sold_body');
-  function postcodeFrom(addr){ const m=(addr||'').match(/([A-Z]{1,2}\d{1,2}[A-Z]?)\s*\d[A-Z]{2}/i); return m?m[0].toUpperCase():''; }
-  function rows(){
-    const monthEl=wrap.querySelector('#sold_month'); const k=((monthEl&&monthEl.value)||'').slice(0,7);
-    body.innerHTML=''; (db.sales||[]).forEach(s=>{
-      if(k && ymStr(s.date)!==k) return;
-      const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
-      const tr=document.createElement('tr'); tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td><td>${v.reg||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${s.buyer||''}</td><td>${s.address || ''}</td><td>${postcodeFrom(s.address)}</td><td>${s.phone||''}</td><td>${s.email||''}</td><td class="right">${fmtMoney(s.salePrice||0)}</td>`; body.appendChild(tr);
-    });
+  const summary=wrap.querySelector('#sold_summary');
+  
+  // Filter state
+  let currentFilter = {
+    search: '',
+    month: '' // Empty by default instead of current month
+  };
+  
+  // Set default month to empty (show all time)
+  wrap.querySelector('#sold_month').value = currentFilter.month;
+  
+  function postcodeFrom(addr){ 
+    const m=(addr||'').match(/([A-Z]{1,2}\d{1,2}[A-Z]?)\s*\d[A-Z]{2}/i); 
+    return m?m[0].toUpperCase():''; 
   }
-  rows();
-  wrap.querySelector('#sold_month').addEventListener('change', rows);
-  wrap.querySelector('#sold_clear').onclick=()=>{ wrap.querySelector('#sold_month').value=''; rows(); };
-  wrap.querySelector('#sold_export').onclick=()=>{ const rowsCSV=[["Date","Reg","Make","Model","Customer","Postcode","Phone","Email","Price"]]; (db.sales||[]).forEach(s=>{ const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; rowsCSV.push([ddmmyyyy(s.date),v.reg||'',v.make||'',v.model||'',s.buyer||'',(s.address||'').split(',').slice(-1)[0]||'',s.phone||'',s.email||'',Number(s.salePrice||0)]); }); const csv=rowsCSV.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='sold.csv'; a.click(); };
+  
+  function getFilteredSales() {
+    let sales = db.sales || [];
+    
+    // Apply month filter if specified
+    if (currentFilter.month) {
+      sales = sales.filter(s => ymStr(s.date) === currentFilter.month);
+    }
+    
+    // Apply search filter if specified
+    if (currentFilter.search) {
+      const searchTerm = currentFilter.search.toLowerCase();
+      sales = sales.filter(s => {
+        const v = db.vehicles.find(x => x.id === s.vehicleId) || {};
+        return (
+          (v.reg || '').toLowerCase().includes(searchTerm) ||
+          (s.buyer || '').toLowerCase().includes(searchTerm) ||
+          (s.phone || '').toLowerCase().includes(searchTerm)
+        );
+      });
+    }
+    
+    // Sort by date (newest first)
+    sales.sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return b.date.localeCompare(a.date);
+    });
+    
+    return sales;
+  }
+  
+  function renderSoldRows(){
+    const filteredSales = getFilteredSales();
+    body.innerHTML=''; 
+    
+    if (filteredSales.length === 0) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="10" class="small" style="text-align: center; padding: 20px;">No sold vehicles found${currentFilter.search ? ' for "' + currentFilter.search + '"' : ''}${currentFilter.month ? ' in ' + currentFilter.month : ''}</td>`;
+      body.appendChild(tr);
+    } else {
+      filteredSales.forEach(s=>{
+        const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
+        const tr=document.createElement('tr'); 
+        tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td>
+                     <td>${v.reg||''}</td>
+                     <td>${v.make||''}</td>
+                     <td>${v.model||''}</td>
+                     <td>${s.buyer||''}</td>
+                     <td>${s.address || ''}</td>
+                     <td>${postcodeFrom(s.address)}</td>
+                     <td>${s.phone||''}</td>
+                     <td>${s.email||''}</td>
+                     <td class="right">${fmtMoney(s.salePrice||0)}</td>`; 
+        body.appendChild(tr);
+      });
+    }
+    
+    // Update summary
+    updateSummary();
+  }
+  
+  function updateSummary() {
+    const filteredSales = getFilteredSales();
+    const totalSales = filteredSales.reduce((sum, s) => sum + Number(s.salePrice || 0), 0);
+    
+    let summaryText = `Showing ${filteredSales.length} sold vehicle${filteredSales.length !== 1 ? 's' : ''}`;
+    if (currentFilter.month) {
+      summaryText += ` for ${currentFilter.month}`;
+    } else {
+      summaryText += ` (all time)`;
+    }
+    if (currentFilter.search) {
+      summaryText += ` matching "${currentFilter.search}"`;
+    }
+    summaryText += ` | Total Sales: ${fmtMoney(totalSales)}`;
+    
+    summary.textContent = summaryText;
+  }
+  
+  // Event listeners for search and filter
+  wrap.querySelector('#sold_search').addEventListener('input', function(e) {
+    currentFilter.search = e.target.value.trim();
+    renderSoldRows();
+  });
+  
+  wrap.querySelector('#sold_month').addEventListener('change', function(e) {
+    currentFilter.month = e.target.value || '';
+    renderSoldRows();
+  });
+  
+  wrap.querySelector('#sold_clear_search').onclick = function() {
+    wrap.querySelector('#sold_search').value = '';
+    currentFilter.search = '';
+    renderSoldRows();
+  };
+  
+  wrap.querySelector('#sold_clear_month').onclick = function() {
+    wrap.querySelector('#sold_month').value = '';
+    currentFilter.month = '';
+    renderSoldRows();
+  };
+  
+  // Export CSV functionality (unchanged)
+  wrap.querySelector('#sold_export').onclick=()=>{ 
+    const rowsCSV=[["Date","Reg","Make","Model","Customer","Postcode","Phone","Email","Price"]]; 
+    getFilteredSales().forEach(s=>{ 
+      const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; 
+      rowsCSV.push([
+        ddmmyyyy(s.date),
+        v.reg||'',
+        v.make||'',
+        v.model||'',
+        s.buyer||'',
+        (s.address||'').split(',').slice(-1)[0]||'',
+        s.phone||'',
+        s.email||'',
+        Number(s.salePrice||0)
+      ]); 
+    }); 
+    
+    const csv=rowsCSV.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n'); 
+    const a=document.createElement('a'); 
+    a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); 
+    a.download='sold_export_' + new Date().toISOString().slice(0,10) + '.csv'; 
+    a.click(); 
+    
+    addAudit('export', 'sold', '', `Exported ${getFilteredSales().length} sold vehicles to CSV`);
+  };
+  
+  // Initial render
+  renderSoldRows();
   return wrap;
 }
 
@@ -2687,6 +2937,7 @@ function printCreditInvoice(creditId){
     th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}
     th{background:#f5f5f5;text-align:left}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35}
+    .terms{ page-break-inside: avoid; break-inside: avoid; }
     .tight td{padding:4px 6px}
     .negative{color:#d00;font-weight:bold}
   </style></head><body>
@@ -2950,6 +3201,7 @@ function printPurchaseInvoice(purchaseId){
     th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}
     th{background:#f5f5f5;text-align:left}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35}
+    .terms{ page-break-inside: avoid; break-inside: avoid; }
     .tight td{padding:4px 6px}
     .no-print{margin:8px 0}
     @media print{.no-print{display:none !important}}
@@ -3281,6 +3533,7 @@ function printInvoice(saleId){
     th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}
     th{background:#f5f5f5;text-align:left}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35}
+    .terms{ page-break-inside: avoid; break-inside: avoid; }
     .tight td{padding:4px 6px}
     .no-print{margin:8px 0}
     @media print{.no-print{display:none !important}}
@@ -3341,6 +3594,7 @@ function printFinanceProforma(saleId){
     th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}
     th{background:#f5f5f5;text-align:left}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35}
+    .terms{ page-break-inside: avoid; break-inside: avoid; }
     .tight td{padding:4px 6px}
     .print-btn-proforma{margin:8px 0}
     @media print{.print-btn-proforma{display:none !important}}
@@ -3554,9 +3808,9 @@ function alreadyPosted(k){
     // 1) Post mgmt fees to Showroom Expenses (175 + 20% for PROFITABLE investor cars only)
     c.items.forEach(x=>{
       if(x.isInvestor && x.gross > 0){  // Only if car made profit
-        db.showroomExpenses.unshift({id:uid(),date:k+'-01',type:'Mgmt flat £175',method:'bank',amount:-175,note:(x.v.reg||'')});
+        db.showroomExpenses.unshift({id:mcId(k, 'showroom_flat175', x.v.reg, '', ''),date:lastDayOfMonth(k),type:'Mgmt flat £175',method:'bank',amount:-175,note:(x.v.reg||'')});
         const pct=+(x.mgmtPct||0);
-        if(pct>0) db.showroomExpenses.unshift({id:uid(),date:k+'-01',type:'Mgmt 20% (investor car)',method:'bank',amount:-pct,note:(x.v.reg||'')});
+        if(pct>0) db.showroomExpenses.unshift({id:mcId(k, 'showroom_20pct', x.v.reg, '', ''),date:lastDayOfMonth(k),type:'Mgmt 20% (investor car)',method:'bank',amount:-pct,note:(x.v.reg||'')});
       }
     });
 
@@ -3571,7 +3825,7 @@ function alreadyPosted(k){
       let inv=(db.investors||[]).find(i=>i.name===name);
       if(!inv){ inv={id:uid(),name,balance:0,tx:[]}; (db.investors=db.investors||[]).push(inv); }
       const amt=byInvestor[name];
-      inv.tx.unshift({id:uid(),date:k+'-01',type:'fund_in',method:'bank',amount:amt,note:'MonthClose '+k});
+      inv.tx.unshift({id:mcId(k, 'investor_30pct', inv.id, '', ''),date:lastDayOfMonth(k),type:'fund_in',method:'bank',amount:amt,note:'MonthClose '+k});
       inv.balance+=(+amt||0);
     });
 
@@ -3579,7 +3833,7 @@ function alreadyPosted(k){
     const marker='MonthClose '+k;
     (db.partners||[]).forEach(p=>{
       const amt=c.directorHalf;
-      p.tx=p.tx||[]; p.tx.unshift({id:uid(),date:k+'-01',type:'profit',method:'bank',amount:amt,note:marker});
+      p.tx=p.tx||[]; p.tx.unshift({id:mcId(k, 'director_profit', p.id, '', ''),date:lastDayOfMonth(k),type:'profit',method:'bank',amount:amt,note:marker});
       p.balance=(p.tx||[]).reduce((bal,x)=> bal+((x.type==='invest'||x.type==='profit')?+x.amount:-x.amount),0);
     });
 
