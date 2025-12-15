@@ -294,6 +294,21 @@ function ddmmyyyy(d){
 }
 function ymStr(d){ return (d||'').slice(0,7); } // yyyy-mm
 
+function lastDayOfMonth(ym) {
+  // ym = "YYYY-MM"
+  const [y, m] = ym.split('-').map(Number);
+  // Day 0 of next month = last day of current month
+  const d = new Date(y, m, 0);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function mcId(ym, type, a, b, c) {
+  // stable, deterministic IDs for MonthClose postings
+  const safe = (x) => String(x || '').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,60);
+  return `mc_${safe(ym)}_${safe(type)}_${safe(a)}_${safe(b)}_${safe(c)}`;
+}
+
+
 function openPrintable(html){
   try{
     const blob=new Blob([html],{type:'text/html'});
@@ -500,6 +515,140 @@ db.deleted = db.deleted || {};
 if (!db.lastPush) db.lastPush = {};
 let pushEnabled = false;
 const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','To-Do','Users','Settings'];
+
+// Add to the core utils section
+let changeTracker = {
+  lastSnapshot: null,
+  changes: {},
+  init: function() {
+    // Load last snapshot from localStorage
+    try {
+      this.lastSnapshot = JSON.parse(localStorage.getItem('starcars_last_snapshot') || 'null');
+    } catch(e) {
+      this.lastSnapshot = null;
+    }
+    
+    // Initialize changes object
+    this.changes = {};
+  },
+  
+  saveSnapshot: function() {
+    // Save current state as snapshot
+    this.lastSnapshot = JSON.parse(JSON.stringify(window.db || {}));
+    localStorage.setItem('starcars_last_snapshot', JSON.stringify(this.lastSnapshot));
+  },
+  
+  trackChange: function(section, id, operation, data) {
+    // Track a change (add, update, delete)
+    if (!this.changes[section]) {
+      this.changes[section] = [];
+    }
+    
+    this.changes[section].push({
+      id: id,
+      operation: operation,
+      data: data,
+      timestamp: new Date().toISOString(),
+      user: session ? session.username : 'unknown'
+    });
+  },
+  
+  getChanges: function() {
+    return this.changes;
+  },
+  
+  clearChanges: function() {
+    this.changes = {};
+  },
+  
+  // Compare current state with last snapshot to find all changes
+  detectAllChanges: function() {
+    if (!this.lastSnapshot) {
+      return null; // No baseline to compare against
+    }
+    
+    const current = window.db || {};
+    const previous = this.lastSnapshot;
+    const changes = {};
+    
+    // Track array changes
+    const sections = ['vehicles', 'sales', 'vehicleExpenses', 'showroomExpenses', 
+                     'credits', 'purchaseInvoices', 'complaints', 'investors', 
+                     'partners', 'todo', 'users', 'audit'];
+    
+    sections.forEach(section => {
+      const currentArr = current[section] || [];
+      const previousArr = previous[section] || [];
+      
+      // Create maps for easy comparison
+      const currentMap = new Map(currentArr.map(item => [item.id, item]));
+      const previousMap = new Map(previousArr.map(item => [item.id, item]));
+      
+      const sectionChanges = [];
+      
+      // Find new items
+      currentArr.forEach(item => {
+        if (!previousMap.has(item.id)) {
+          sectionChanges.push({
+            id: item.id,
+            operation: 'add',
+            data: item
+          });
+        }
+      });
+      
+      // Find modified items
+      currentArr.forEach(item => {
+        if (previousMap.has(item.id)) {
+          const prevItem = previousMap.get(item.id);
+          if (JSON.stringify(item) !== JSON.stringify(prevItem)) {
+            sectionChanges.push({
+              id: item.id,
+              operation: 'update',
+              data: item
+            });
+          }
+        }
+      });
+      
+      // Find deleted items (only if we're tracking deletions)
+      if (db.deleted && db.deleted[section]) {
+        Object.keys(db.deleted[section] || {}).forEach(id => {
+          if (previousMap.has(id) && !currentMap.has(id)) {
+            sectionChanges.push({
+              id: id,
+              operation: 'delete',
+              data: { id: id, deletedAt: db.deleted[section][id] }
+            });
+          }
+        });
+      }
+      
+      if (sectionChanges.length > 0) {
+        changes[section] = sectionChanges;
+      }
+    });
+    
+    // Track object changes (company settings)
+    if (JSON.stringify(current.company || {}) !== JSON.stringify(previous.company || {})) {
+      changes.company = {
+        operation: 'update',
+        data: current.company || {}
+      };
+    }
+    
+    return changes;
+  }
+};
+
+// Initialize change tracker
+changeTracker.init();
+
+// Save initial snapshot if none exists
+if (!changeTracker.lastSnapshot) {
+  changeTracker.saveSnapshot();
+}
+
 function defaultPerms(){ const tabs={}; DEFAULT_TABS.forEach(t=>tabs[t]=true); return {tabs,actions:{view:true,add:true,edit:true,del:true},profit:true,settings:true}; }
 function normalizePerms(perms){
   const base=defaultPerms(); const p=Object.assign({},base,perms||{});
@@ -602,7 +751,28 @@ function canTab(tab){ const u=currentUser(); return !!(u&&u.perms&&u.perms.tabs&
 function canProfit(){ const u=currentUser(); return !!(u&&u.perms&&u.perms.profit); }
 function canSettings(){ const u=currentUser(); return !!(u&&u.perms&&u.perms.settings); }
 function canAction(act){ const u=currentUser(); return !!(u&&u.perms&&u.perms.actions&&u.perms.actions[act]); }
-function addAudit(action,entity,entityId,details){ try{ db.audit.unshift({id:uid(),ts:new Date().toISOString(),user:session?session.username:'(anon)',action,entity,entityId,details:details||''}); if(db.audit.length>5000) db.audit.length=5000; saveDB(); try{renderAlertBell();}catch(e){}; }catch(e){} }
+
+function addAudit(action, entity, entityId, details){ 
+  try{ 
+    db.audit.unshift({
+      id:uid(),
+      ts:new Date().toISOString(),
+      user:session?session.username:'(anon)',
+      action,
+      entity,
+      entityId,
+      details:details||''
+    }); 
+    
+    if(db.audit.length>5000) db.audit.length=5000; 
+    
+    // Track the change
+    changeTracker.trackChange(entity, entityId, action, details);
+    
+    saveDB(); 
+    try{renderAlertBell();}catch(e){}; 
+  }catch(e){}
+}
 
 /* ========= Backup / Restore / CSV ========= */
 function backupJSON(){
@@ -910,6 +1080,47 @@ function dedupePeopleByNamePreferLocal(mergedArr, localArr) {
   return [...named, ...unnamed];
 }
 
+function dedupePeopleByNamePreferRemote(mergedArr, remoteArr) {
+  const norm = s => String(s || '').trim().toLowerCase();
+  const remoteNameSet = new Set((remoteArr || []).map(x => norm(x && x.name)));
+
+  const pickBest = (a, b) => {
+    const an = norm(a && a.name), bn = norm(b && b.name);
+    const aRemote = remoteNameSet.has(an);
+    const bRemote = remoteNameSet.has(bn);
+
+    // Prefer record that exists in REMOTE (Gist)
+    if (aRemote && !bRemote) return a;
+    if (!aRemote && bRemote) return b;
+
+    // Fallback: more tx wins
+    const atx = (a && a.tx && a.tx.length) ? a.tx.length : 0;
+    const btx = (b && b.tx && b.tx.length) ? b.tx.length : 0;
+    if (atx !== btx) return atx > btx ? a : b;
+
+    // Fallback: higher abs(balance)
+    const abal = Math.abs(Number(a && a.balance || 0));
+    const bbal = Math.abs(Number(b && b.balance || 0));
+    if (abal !== bbal) return abal > bbal ? a : b;
+
+    return a;
+  };
+
+  const map = Object.create(null);
+  const out = [];
+
+  for (const item of (mergedArr || [])) {
+    const key = norm(item && item.name);
+    if (!key) { out.push(item); continue; }
+    if (!map[key]) map[key] = item;
+    else map[key] = pickBest(map[key], item);
+  }
+
+  const named = Object.keys(map).sort().map(k => map[k]);
+  const unnamed = out.filter(x => !x || !norm(x.name));
+  return [...named, ...unnamed];
+}
+
 // Mark a record as deleted so other PCs know to remove it too
 function markDeleted(section, id) {
   if (!id) return;
@@ -1012,22 +1223,17 @@ async function syncPull() {
           });
         }
 
-        if (k === 'partners') {
-        db.partners = dedupePeopleByNamePreferLocal(db.partners || [], localArr);
-        } 
-        if (k === 'investors') {
-        db.investors = dedupePeopleByNamePreferLocal(db.investors || [], localArr);
-        }
-
+        // FIXED: Use 'val' instead of 'remoteArr' which doesn't exist here
+        if (k === 'partners')  db.partners  = dedupePeopleByNamePreferRemote(db.partners || [], val);
+        if (k === 'investors') db.investors = dedupePeopleByNamePreferRemote(db.investors || [], val);
 
         return;
       }
 
       if (val && typeof val === 'object') {
-        // Shallow-merge plain objects (company, settings etc.)
-        db[k] = Object.assign({}, db[k] || {}, val);
+        // ✅ On PULL: remote (Gist) should overwrite local settings
+        db[k] = Object.assign({}, db[k] || {}, val || {});
       } else {
-        // Simple values
         db[k] = val;
       }
     });
@@ -1042,6 +1248,11 @@ async function syncPull() {
 
     // As a safety net, apply deletions everywhere
     applyAllDeletions();
+
+    // Ensure font sizes are numeric
+    db.company = db.company || {};
+    if (db.company.invoiceFontPx != null) db.company.invoiceFontPx = Number(db.company.invoiceFontPx || 12);
+    if (db.company.termsFontPx  != null) db.company.termsFontPx  = Number(db.company.termsFontPx  || 10);
 
     saveDB();
     try { renderAlertBell(); } catch (_) {}
@@ -1167,14 +1378,21 @@ function recordPushActivity() {
     saveDB();
 }
 
-async function syncPush(){ 
+async function smartPush(){
   try{ 
     const gistId = (db.company.gistId || '').trim(); 
     if (!gistId) return alert('Enter Gist ID in Settings');
     const token = (getGhToken() || '').trim(); 
     if (!token) return alert('Enter GitHub token and Save');
 
-    // 1) Read current Gist so we don't overwrite other PCs' work
+    // 1. Get current changes
+    const changes = changeTracker.detectAllChanges();
+    
+    if (!changes || Object.keys(changes).length === 0) {
+      return alert('No changes to push');
+    }
+    
+    // 2. Read current Gist
     let remote = null;
     try {
       const r0 = await fetch(`https://api.github.com/gists/${gistId}`);
@@ -1190,102 +1408,22 @@ async function syncPush(){
       console.warn('Could not read remote Gist before push:', e);
     }
 
-    // 2) Merge remote into local (same logic as syncPull, but no alerts)
-    if (remote) {
-
-      // 2a) Merge "deleted" map first so we know what to remove
-      if (remote.deleted) {
-        db.deleted = mergeDeletedMaps(db.deleted, remote.deleted);
-      } else {
-        ensureDeletedMap();
-      }
-
-      Object.keys(remote).forEach(k => {
-        const val = remote[k];
-
-        if (k === 'audit') {
-          // Replace audit completely
-          db.audit = Array.isArray(val) ? val.slice() : (db.audit || []);
-          return;
-        }
-
-        if (k === 'deleted') {
-          // already handled above
-          return;
-        }
-
-                if (Array.isArray(val)) {
-          // 🔁 Merge ANY array by id: vehicles, expenses, showroom, users, directors, investors, etc.
-          const remoteArr = Array.isArray(val)    ? val   : [];
-          const localArr  = Array.isArray(db[k]) ? db[k] : [];
-          const byId = Object.create(null);
-          const noId = [];
-
-          // 1) Start from REMOTE → get everything that is already on Gist
-          for (const item of remoteArr) {
-            if (item && item.id) {
-              byId[item.id] = item;
-            } else {
-              noId.push(item);
-            }
-          }
-
-          // 2) Apply LOCAL last → our edits/changes WIN on conflicts
-          for (const item of localArr) {
-            if (item && item.id) {
-              byId[item.id] = item; // LOCAL (this PC) wins on conflicts
-            } else {
-              noId.push(item);
-            }
-          }
-
-          db[k] = [...noId, ...Object.values(byId)];
-
-          // Users: normalise permissions
-          if (k === 'users' && typeof normalizePerms === 'function') {
-            db.users = (db.users || []).map(u => {
-              u.perms = normalizePerms(u.perms);
-              return u;
-            });
-          }
-
-          // ✅ Directors: dedupe by name but ALWAYS prefer LOCAL copy
-          if (k === 'partners') {
-          db.partners = dedupePeopleByNamePreferLocal(db.partners || [], localArr);
-          }
-
-          // ✅ Investors: same issue can happen here too
-          if (k === 'investors') {
-          db.investors = dedupePeopleByNamePreferLocal(db.investors || [], localArr);
-          }
-
-
-          return;
-        }
-
-
-        if (val && typeof val === 'object') {
-        // Shallow-merge plain objects (company, settings etc.)
-        // Remote fills in missing keys, but LOCAL values win on conflicts
-        db[k] = Object.assign({}, val || {}, db[k] || {});
-        } else {
-        // Simple values – only take remote if we don't already have a local value
-        if (typeof db[k] === 'undefined') {
-        db[k] = val;
-        }
-      }
-      });
-
-    } else {
-      // No remote data (first time?) – just make sure deleted map exists
-      ensureDeletedMap();
+    // 3. If no remote exists, send full backup
+    if (!remote) {
+      return await syncPush(); // Fall back to full push
     }
-
-    // 3) Apply deletions from merged deleted map
-    applyAllDeletions();
-
-    // 4) Now push the merged, cleaned DB to Gist
-    const payload = { files: { 'starcars.json': { content: JSON.stringify(db, null, 2) } } };
+    
+    // 4. Apply changes to remote
+    const updatedRemote = applyChangesToRemote(remote, changes);
+    
+    // 5. Push the updated remote back to Gist
+    const payload = { 
+      files: { 
+        'starcars.json': { 
+          content: JSON.stringify(updatedRemote, null, 2) 
+        } 
+      } 
+    };
 
     const r = await fetch(`https://api.github.com/gists/${gistId}`, {
       method: 'PATCH',
@@ -1301,11 +1439,15 @@ async function syncPush(){
       return alert('Push failed ' + r.status + ': ' + txt); 
     } 
     
+    // 6. Update local snapshot to match what we just pushed
+    changeTracker.saveSnapshot();
+    changeTracker.clearChanges();
+    
     // Record the push activity
     recordPushActivity();
     
-    addAudit('sync','push',gistId,'Pushed to Gist (safe merge)'); 
-    alert('Pushed to Gist as starcars.json (merged with remote; deletions respected)');
+    addAudit('sync','smart-push',gistId,'Smart push: ' + countChanges(changes) + ' changes'); 
+    alert('Pushed ' + countChanges(changes) + ' changes to Gist');
     
     // Refresh the Settings view to show updated timestamp
     if (currentTab === 'Settings') {
@@ -1313,8 +1455,88 @@ async function syncPush(){
     }
 
   } catch(e){ 
-    alert('Push failed: ' + e.message); 
+    alert('Smart Push failed: ' + e.message); 
   } 
+}
+
+// Helper function to apply changes to remote data
+function applyChangesToRemote(remote, changes) {
+  const result = JSON.parse(JSON.stringify(remote)); // Deep clone
+  
+  Object.keys(changes).forEach(section => {
+    if (section === 'company') {
+      // Update company settings
+      result.company = changes.company.data;
+      return;
+    }
+    
+    const sectionChanges = changes[section];
+    if (!Array.isArray(sectionChanges)) return;
+    
+    // Ensure the section exists in remote
+    if (!result[section]) {
+      result[section] = [];
+    }
+    
+    sectionChanges.forEach(change => {
+      switch(change.operation) {
+        case 'add':
+          // Add new item (prepend to beginning)
+          result[section].unshift(change.data);
+          break;
+          
+        case 'update':
+          // Update existing item
+          const index = result[section].findIndex(item => item.id === change.id);
+          if (index !== -1) {
+            result[section][index] = change.data;
+          } else {
+            // If not found, add it
+            result[section].unshift(change.data);
+          }
+          break;
+          
+        case 'delete':
+          // Remove item
+          result[section] = result[section].filter(item => item.id !== change.id);
+          
+          // Also add to deleted map for syncing to other PCs
+          if (!result.deleted) result.deleted = {};
+          if (!result.deleted[section]) result.deleted[section] = {};
+          result.deleted[section][change.id] = change.data.deletedAt || new Date().toISOString();
+          break;
+      }
+    });
+    
+    // Sort arrays to maintain consistency (newest first where applicable)
+    if (['audit', 'sales', 'vehicles'].includes(section)) {
+      result[section].sort((a, b) => {
+        const dateA = a.date || a.ts || a.createdAt || '';
+        const dateB = b.date || b.ts || b.createdAt || '';
+        return dateB.localeCompare(dateA);
+      });
+    }
+  });
+  
+  // Merge deleted maps
+  if (db.deleted) {
+    result.deleted = mergeDeletedMaps(result.deleted || {}, db.deleted);
+  }
+  
+  return result;
+}
+
+// Helper to count total changes
+function countChanges(changes) {
+  let count = 0;
+  Object.keys(changes).forEach(section => {
+    if (Array.isArray(changes[section])) {
+      count += changes[section].length;
+    } else {
+      count += 1; // For company changes
+    }
+  });
+  return count;
 }
 
 /* ========= Navigation & render ========= */
@@ -1529,26 +1751,36 @@ function viewVehicles(){
   <select id="v_investor">
     <option value="">-- Select investor (if any) --</option>
   </select>
-</label>
+  </label>
     <label>Supplier Invoice #<input id="v_supplier" placeholder="INV-001"></label>
     <label>VIN (optional)<input id="v_vin"></label>
+    <label>MOT Expiry<input id="v_motExpiry" type="date" placeholder="Optional"></label> <!-- ADDED THIS LINE -->
     <label>Status<select id="v_status"><option value="for sale">for sale</option><option value="sold">sold</option></select></label>
   </div>
   <div class="row">
     <button id="v_add" class="primary">Add / Update</button>
   </div>
 
-  <div class="row">
-    <input id="veh_search" placeholder="Search reg/make/model (auto filter)">
-    <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_instock" checked> In stock only</label>
-    <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_soldonly"> Sold only</label>
-    <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_investoronly"> Investor stock</label>
-    <label class="small" style="margin-left:8px"><input type="checkbox" id="veh_pxonly"> Part-ex only</label>
+  <div class="row" style="display: flex; align-items: center; gap: 12px; margin-top: 12px;">
+    <input id="veh_search" placeholder="Search reg/make/model/supplier">
+    <label class="small" style="display: flex; align-items: center; margin: 0;">
+      <input type="checkbox" id="veh_instock" checked> In stock only
+    </label>
+    <label class="small" style="display: flex; align-items: center; margin: 0;">
+      <input type="checkbox" id="veh_soldonly"> Sold only
+    </label>
+    <label class="small" style="display: flex; align-items: center; margin: 0;">
+      <input type="checkbox" id="veh_investoronly"> Investor stock
+    </label>
+    <label class="small" style="display: flex; align-items: center; margin: 0;">
+      <input type="checkbox" id="veh_pxonly"> Part-ex only
+    </label>
     <button onclick="exportVehiclesCSV()">Export CSV</button>
   </div>
-  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>Status</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
+
+  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table> <!-- ADDED MOT Expiry COLUMN -->
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
-// Populate investor dropdown from db.investors
+  // Populate investor dropdown from db.investors
   const invSel = wrap.querySelector('#v_investor');
   if (invSel) {
     invSel.innerHTML =
@@ -1561,57 +1793,126 @@ function viewVehicles(){
   let editId=null; const body=wrap.querySelector('#vehBody');
 
   function rows(q='', mode='instock'){
-    body.innerHTML='';
-    q=(q||'').toLowerCase().trim();
-    (db.vehicles||[]).forEach(v=>{
-      // Apply stock status filters
-      if(mode==='instock' && v.status==='sold') return;
-      if(mode==='sold' && v.status!=='sold') return;
-      
-      // Apply investor stock filter
-      const investorOnly = wrap.querySelector('#veh_investoronly').checked;
-      if(investorOnly && v.ownerType !== 'investor') return;
-      
-      // Apply part-ex filter
-      const pxonly = wrap.querySelector('#veh_pxonly').checked;
-      if(pxonly && v.supplier !== 'PART-EX') return;
-      
-      const hay = ((v.reg||'')+' '+(v.make||'')+' '+(v.model||'')).toLowerCase();
-      if(q && !hay.includes(q)) return;
-      
-      const tr=document.createElement('tr');
-      const mcount=(v.media||[]).length + ((v.video&&1)||0);
-      tr.innerHTML=`<td>${v.reg||''}</td>
-<td>${v.make||''}</td>
-<td>${v.model||''}</td>
-<td>${v.colour||''}</td>
-<td>${v.mileage||''}</td>
-<td>${v.fuel||''}</td>
-<td>${ddmmyyyy(v.firstReg||'')}</td>
-<td>${ddmmyyyy(v.purchaseDate||'')}</td>
-<td>${v.ownerType||'owned'}</td>
-<td>${v.investor||''}</td>
-<td class="right">${fmtMoney(v.purchase||0)}</td>
-<td>${v.status||''}</td>
-<td>${v.supplier||''}${v.supplierNote ? '<br><small style="color:#53a8ff;">' + v.supplierNote + '</small>' : ''}</td>
-<td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''} ${v.originalSaleId?`<button data-act="viewSale" data-id="${v.originalSaleId}" title="View original sale" style="margin-left:4px;">📋</button>`:''}</td>`;
-      body.appendChild(tr);
-    });
+  body.innerHTML='';
+  q=(q||'').toLowerCase().trim();
+  
+  // Get filter states
+  const instockOnly = wrap.querySelector('#veh_instock')?.checked;
+  const soldOnly = wrap.querySelector('#veh_soldonly')?.checked;
+  const investorOnly = wrap.querySelector('#veh_investoronly')?.checked;
+  const pxOnly = wrap.querySelector('#veh_pxonly')?.checked;
+  
+  (db.vehicles||[]).forEach(v=>{
+    // Apply filters...
+    if (instockOnly && v.status === 'sold') return;
+    if (soldOnly && v.status !== 'sold') return;
+    
+    // Apply investor stock filter
+    if (investorOnly && v.ownerType !== 'investor') return;
+    
+    // Apply part-ex filter
+    if (pxOnly && v.supplier !== 'PART-EX') return;
+    
+    // Apply search filter
+    if (q) {
+      const hay = ((v.reg || '') + ' ' + (v.make || '') + ' ' + (v.model || '')).toLowerCase();
+      if (!hay.includes(q)) return;
+    }
+    
+    const tr=document.createElement('tr');
+    const mcount=(v.media||[]).length + ((v.video&&1)||0);
+    tr.innerHTML=`<td>${v.reg||''}</td>
+    <td>${v.make||''}</td>
+    <td>${v.model||''}</td>
+    <td>${v.colour||''}</td>
+    <td>${v.mileage||''}</td>
+    <td>${v.fuel||''}</td>
+    <td>${ddmmyyyy(v.firstReg||'')}</td>
+    <td>${ddmmyyyy(v.purchaseDate||'')}</td>
+    <td>${v.ownerType||'owned'}</td>
+    <td>${v.investor||''}</td>
+    <td class="right">${fmtMoney(v.purchase||0)}</td>
+    <td style="text-align:center;" title="${v.vin || ''}">${v.vin ? '🆔' : ''}</td>
+    <td>${(() => {const motDate = v.motExpiry || v.lastMotExpiry || '';if (!motDate) return '';const expiry = new Date(motDate);const today = new Date();today.setHours(0, 0, 0, 0);expiry.setHours(0, 0, 0, 0);const diffMs = expiry - today;const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));let icon = '📅';let color = '#a3b2cc';if (diffDays < 0) {icon = '⚠️';color = '#ff6b6b';} else if (diffDays <= 30) {icon = '⏳';color = '#ffa726';} else if (diffDays <= 90) {icon = '✅';color = '#2ecc71';}return `<span title="${ddmmyyyy(motDate)}" style="cursor:help;color:${color}">${icon}${Math.abs(diffDays)}</span>`;})()}</td>
+    <td>${v.supplier||''}${v.supplierNote ? '<br><small style="color:#53a8ff;">' + v.supplierNote + '</small>' : ''}</td>
+    <td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''} ${v.originalSaleId?`<button data-act="viewSale" data-id="${v.originalSaleId}" title="View original sale" style="margin-left:4px;">📋</button>`:''}</td>`;
+    body.appendChild(tr);
+  });
   };
   rows('', 'instock');
 
   function applyVehFilter(){
-    const q=(wrap.querySelector('#veh_search') && wrap.querySelector('#veh_search').value) || '';
-    const chkIn=wrap.querySelector('#veh_instock'); const chkSold=wrap.querySelector('#veh_soldonly');
-    const instock=chkIn && chkIn.checked; const soldonly=chkSold && chkSold.checked;
-    const mode=soldonly?'sold':(instock?'instock':'all'); rows(q,mode);
+  const q=(wrap.querySelector('#veh_search') && wrap.querySelector('#veh_search').value) || '';
+  
+  // Get all checkbox states
+  const chkIn=wrap.querySelector('#veh_instock'); 
+  const chkSold=wrap.querySelector('#veh_soldonly');
+  const chkInvestor=wrap.querySelector('#veh_investoronly');
+  const chkPx=wrap.querySelector('#veh_pxonly');
+  
+  // Determine mode based on checked checkboxes
+  let mode = 'all';
+  if (chkSold && chkSold.checked) mode = 'sold';
+  else if (chkIn && chkIn.checked) mode = 'instock';
+  
+  // Call rows with all parameters
+  rows(q, mode);
   }
   
-  const SRCH=wrap.querySelector('#veh_search'); if(SRCH) SRCH.addEventListener('input', applyVehFilter);
-  const CHK_IN=wrap.querySelector('#veh_instock'); if(CHK_IN) CHK_IN.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_soldonly'); if(s) s.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; const px=wrap.querySelector('#veh_pxonly'); if(px) px.checked=false; } applyVehFilter(); });
-  const CHK_SOLD=wrap.querySelector('#veh_soldonly'); if(CHK_SOLD) CHK_SOLD.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; const px=wrap.querySelector('#veh_pxonly'); if(px) px.checked=false; } applyVehFilter(); });
-  const CHK_INVESTOR=wrap.querySelector('#veh_investoronly'); if(CHK_INVESTOR) CHK_INVESTOR.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const sold=wrap.querySelector('#veh_soldonly'); if(sold) sold.checked=false; const px=wrap.querySelector('#veh_pxonly'); if(px) px.checked=false; } applyVehFilter(); });
-  const CHK_PX=wrap.querySelector('#veh_pxonly'); if(CHK_PX) CHK_PX.addEventListener('change', (e)=>{ if(e.target.checked){ const s=wrap.querySelector('#veh_instock'); if(s) s.checked=false; const sold=wrap.querySelector('#veh_soldonly'); if(sold) sold.checked=false; const inv=wrap.querySelector('#veh_investoronly'); if(inv) inv.checked=false; } applyVehFilter(); });
+  const SRCH=wrap.querySelector('#veh_search'); 
+  if(SRCH) SRCH.addEventListener('input', applyVehFilter);
+
+  const CHK_IN=wrap.querySelector('#veh_instock'); 
+  if(CHK_IN) CHK_IN.addEventListener('change', (e)=>{
+  if(e.target.checked){ 
+    const s=wrap.querySelector('#veh_soldonly'); 
+    if(s) s.checked=false; 
+    const inv=wrap.querySelector('#veh_investoronly'); 
+    if(inv) inv.checked=false; 
+    const px=wrap.querySelector('#veh_pxonly'); 
+    if(px) px.checked=false; 
+  } 
+  applyVehFilter(); 
+  });
+
+  const CHK_SOLD=wrap.querySelector('#veh_soldonly'); 
+  if(CHK_SOLD) CHK_SOLD.addEventListener('change', (e)=>{ 
+  if(e.target.checked){ 
+    const s=wrap.querySelector('#veh_instock'); 
+    if(s) s.checked=false; 
+    const inv=wrap.querySelector('#veh_investoronly'); 
+    if(inv) inv.checked=false; 
+    const px=wrap.querySelector('#veh_pxonly'); 
+    if(px) px.checked=false; 
+  } 
+  applyVehFilter(); 
+  });
+
+  const CHK_INVESTOR=wrap.querySelector('#veh_investoronly'); 
+  if(CHK_INVESTOR) CHK_INVESTOR.addEventListener('change', (e)=>{ 
+  if(e.target.checked){ 
+    const s=wrap.querySelector('#veh_instock'); 
+    if(s) s.checked=false; 
+    const sold=wrap.querySelector('#veh_soldonly'); 
+    if(sold) sold.checked=false; 
+    const px=wrap.querySelector('#veh_pxonly'); 
+    if(px) px.checked=false; 
+  } 
+  applyVehFilter(); 
+  });
+
+  const CHK_PX=wrap.querySelector('#veh_pxonly'); 
+  if(CHK_PX) CHK_PX.addEventListener('change', (e)=>{ 
+  if(e.target.checked){ 
+    const s=wrap.querySelector('#veh_instock'); 
+    if(s) s.checked=false; 
+    const sold=wrap.querySelector('#veh_soldonly'); 
+    if(sold) sold.checked=false; 
+    const inv=wrap.querySelector('#veh_investoronly'); 
+    if(inv) inv.checked=false; 
+  } 
+  applyVehFilter(); 
+  });
 
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
     if(act==='edit'){ 
@@ -1621,7 +1922,7 @@ function viewVehicles(){
       
       // Populate all standard fields
       ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase',
-       'v_purchaseDate','v_firstReg','v_ownerType','v_supplier','v_status','v_vin','v_video']
+       'v_purchaseDate','v_firstReg','v_ownerType','v_supplier','v_status','v_vin','v_motExpiry','v_video']
       .forEach(k => {
         const el = wrap.querySelector('#' + k);
         if (!el) return;
@@ -1821,45 +2122,47 @@ if (motBtn) {
 }
 
   wrap.querySelector('#v_add').onclick=()=>{ if(!canAction('add')) return alert('No permission');
-    const reg=(wrap.querySelector('#v_reg').value||'').toUpperCase().trim(); if(!reg){ alert('Reg is required'); return; }
-    const dupe=(db.vehicles||[]).find(x=>x.reg===reg && x.id!==editId); if(dupe){ alert('Duplicate reg exists'); return; }
-    const v={ 
-      id:editId||uid(), 
-      reg, 
-      make:wrap.querySelector('#v_make').value.trim(), 
-      model:wrap.querySelector('#v_model').value.trim(), 
-      colour:wrap.querySelector('#v_colour').value.trim(), 
-      fuel:wrap.querySelector('#v_fuel').value.trim(),
-      mileage:Number(wrap.querySelector('#v_mileage').value||0), 
-      purchase:Number(wrap.querySelector('#v_purchase').value||0), 
-      purchaseDate:wrap.querySelector('#v_purchaseDate').value,
-      firstReg:wrap.querySelector('#v_firstReg').value,
-      ownerType: wrap.querySelector('#v_ownerType').value,
-      // investorId + investor name from dropdown
-      ...(() => {
-      const sel = wrap.querySelector('#v_investor');
-      const invId = (sel && sel.value) || '';
-      let invName = '';
-      if (invId) {
-      const inv = (db.investors || []).find(i => i.id === invId);
-      if (inv) invName = inv.name;
-      }
-      return {
-      investorId: invId || null,
-      investor: invName // keep name for display / backwards-compat
-    };
+  const reg=(wrap.querySelector('#v_reg').value||'').toUpperCase().trim(); if(!reg){ alert('Reg is required'); return; }
+  const dupe=(db.vehicles||[]).find(x=>x.reg===reg && x.id!==editId); if(dupe){ alert('Duplicate reg exists'); return; }
+  const v={ 
+    id:editId||uid(), 
+    reg, 
+    make:wrap.querySelector('#v_make').value.trim(), 
+    model:wrap.querySelector('#v_model').value.trim(), 
+    colour:wrap.querySelector('#v_colour').value.trim(), 
+    fuel:wrap.querySelector('#v_fuel').value.trim(),
+    mileage:Number(wrap.querySelector('#v_mileage').value||0), 
+    purchase:Number(wrap.querySelector('#v_purchase').value||0), 
+    purchaseDate:wrap.querySelector('#v_purchaseDate').value,
+    firstReg:wrap.querySelector('#v_firstReg').value,
+    ownerType: wrap.querySelector('#v_ownerType').value,
+    // investorId + investor name from dropdown
+    ...(() => {
+    const sel = wrap.querySelector('#v_investor');
+    const invId = (sel && sel.value) || '';
+    let invName = '';
+    if (invId) {
+    const inv = (db.investors || []).find(i => i.id === invId);
+    if (inv) invName = inv.name;
+    }
+    return {
+    investorId: invId || null,
+    investor: invName // keep name for display / backwards-compat
+  };
   })(),
   supplier:wrap.querySelector('#v_supplier').value.trim(), 
   // Preserve part-ex specific fields when editing
   supplierNote: wrap.querySelector('#v_supplierNote') ? wrap.querySelector('#v_supplierNote').value : (db.vehicles.find(x=>x.id===editId)?.supplierNote || ''),
   originalSaleId: wrap.querySelector('#v_originalSaleId') ? wrap.querySelector('#v_originalSaleId').value : (db.vehicles.find(x=>x.id===editId)?.originalSaleId || null),
   vin:wrap.querySelector('#v_vin').value.trim(), 
+  motExpiry: wrap.querySelector('#v_motExpiry').value || '', // ADDED THIS LINE
   status:wrap.querySelector('#v_status').value, 
   createdAt:(db.vehicles.find(x=>x.id===editId)?.createdAt)||new Date().toISOString(), 
-};
+  lastMotExpiry: (db.vehicles.find(x=>x.id===editId)?.lastMotExpiry) || '', // Preserve DVSA lookup data
+  };
     if(editId){ const i=db.vehicles.findIndex(x=>x.id===editId); db.vehicles[i]=v; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); editId=null; }
     else { db.vehicles.unshift(v); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); }
-    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_vin'].forEach(k=>document.getElementById(k).value='');
+    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_vin','v_motExpiry'].forEach(k=>document.getElementById(k).value='');
     
     // Clean up hidden fields
     ['v_supplierNote', 'v_originalSaleId'].forEach(field => {
@@ -2352,30 +2655,182 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
 
 /* ========= Sold (new) ========= */
 function viewSold(){
-  if(!canTab('Sold')) return document.createElement('div'); const wrap=document.createElement('div'); wrap.className='card';
+  if(!canTab('Sold')) return document.createElement('div'); 
+  const wrap=document.createElement('div'); 
+  wrap.className='card';
+  
   wrap.innerHTML=`<h2>Sold</h2>
-  <div class="row">
-    <label>Month<input id="sold_month" type="month"></label>
-    <button id="sold_clear">All</button>
-    <button id="sold_export">Export CSV</button>
+  <div class="row" style="margin-bottom: 16px; padding: 10px; background: rgba(19, 26, 43, 0.5); border-radius: 10px;">
+    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; width: 100%;">
+      <div style="flex: 1; min-width: 200px;">
+        <label class="small">Search by REG, Customer, or Phone</label>
+        <input id="sold_search" placeholder="Type to search..." style="width: 100%;">
+      </div>
+      <div style="flex: 1; min-width: 200px;">
+        <label class="small">Filter by Month</label>
+        <input id="sold_month" type="month" style="width: 100%;">
+      </div>
+      <div style="display: flex; gap: 8px; align-items: flex-end;">
+        <button id="sold_clear_search" style="margin-top: 20px;">Clear Search</button>
+        <button id="sold_clear_month" style="margin-top: 20px;">Show All Time</button>
+        <button id="sold_export" style="margin-top: 20px;">Export CSV</button>
+      </div>
+    </div>
   </div>
   <table class="table" style="margin-top:10px"><thead><tr>
     <th>Date</th><th>Reg</th><th>Make</th><th>Model</th><th>Customer</th><th>Address</th><th>Postcode</th><th>Phone</th><th>Email</th><th class="right">Price</th>
-  </tr></thead><tbody id="sold_body"></tbody></table>`;
+  </tr></thead><tbody id="sold_body"></tbody></table>
+  <div id="sold_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>`;
+  
   const body=wrap.querySelector('#sold_body');
-  function postcodeFrom(addr){ const m=(addr||'').match(/([A-Z]{1,2}\d{1,2}[A-Z]?)\s*\d[A-Z]{2}/i); return m?m[0].toUpperCase():''; }
-  function rows(){
-    const monthEl=wrap.querySelector('#sold_month'); const k=((monthEl&&monthEl.value)||'').slice(0,7);
-    body.innerHTML=''; (db.sales||[]).forEach(s=>{
-      if(k && ymStr(s.date)!==k) return;
-      const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
-      const tr=document.createElement('tr'); tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td><td>${v.reg||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${s.buyer||''}</td><td>${s.address || ''}</td><td>${postcodeFrom(s.address)}</td><td>${s.phone||''}</td><td>${s.email||''}</td><td class="right">${fmtMoney(s.salePrice||0)}</td>`; body.appendChild(tr);
-    });
+  const summary=wrap.querySelector('#sold_summary');
+  
+  // Filter state
+  let currentFilter = {
+    search: '',
+    month: '' // Empty by default instead of current month
+  };
+  
+  // Set default month to empty (show all time)
+  wrap.querySelector('#sold_month').value = currentFilter.month;
+  
+  function postcodeFrom(addr){ 
+    const m=(addr||'').match(/([A-Z]{1,2}\d{1,2}[A-Z]?)\s*\d[A-Z]{2}/i); 
+    return m?m[0].toUpperCase():''; 
   }
-  rows();
-  wrap.querySelector('#sold_month').addEventListener('change', rows);
-  wrap.querySelector('#sold_clear').onclick=()=>{ wrap.querySelector('#sold_month').value=''; rows(); };
-  wrap.querySelector('#sold_export').onclick=()=>{ const rowsCSV=[["Date","Reg","Make","Model","Customer","Postcode","Phone","Email","Price"]]; (db.sales||[]).forEach(s=>{ const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; rowsCSV.push([ddmmyyyy(s.date),v.reg||'',v.make||'',v.model||'',s.buyer||'',(s.address||'').split(',').slice(-1)[0]||'',s.phone||'',s.email||'',Number(s.salePrice||0)]); }); const csv=rowsCSV.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='sold.csv'; a.click(); };
+  
+  function getFilteredSales() {
+    let sales = db.sales || [];
+    
+    // Apply month filter if specified
+    if (currentFilter.month) {
+      sales = sales.filter(s => ymStr(s.date) === currentFilter.month);
+    }
+    
+    // Apply search filter if specified
+    if (currentFilter.search) {
+      const searchTerm = currentFilter.search.toLowerCase();
+      sales = sales.filter(s => {
+        const v = db.vehicles.find(x => x.id === s.vehicleId) || {};
+        return (
+          (v.reg || '').toLowerCase().includes(searchTerm) ||
+          (s.buyer || '').toLowerCase().includes(searchTerm) ||
+          (s.phone || '').toLowerCase().includes(searchTerm)
+        );
+      });
+    }
+    
+    // Sort by date (newest first)
+    sales.sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return b.date.localeCompare(a.date);
+    });
+    
+    return sales;
+  }
+  
+  function renderSoldRows(){
+    const filteredSales = getFilteredSales();
+    body.innerHTML=''; 
+    
+    if (filteredSales.length === 0) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="10" class="small" style="text-align: center; padding: 20px;">No sold vehicles found${currentFilter.search ? ' for "' + currentFilter.search + '"' : ''}${currentFilter.month ? ' in ' + currentFilter.month : ''}</td>`;
+      body.appendChild(tr);
+    } else {
+      filteredSales.forEach(s=>{
+        const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
+        const tr=document.createElement('tr'); 
+        tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td>
+                     <td>${v.reg||''}</td>
+                     <td>${v.make||''}</td>
+                     <td>${v.model||''}</td>
+                     <td>${s.buyer||''}</td>
+                     <td>${s.address || ''}</td>
+                     <td>${postcodeFrom(s.address)}</td>
+                     <td>${s.phone||''}</td>
+                     <td>${s.email||''}</td>
+                     <td class="right">${fmtMoney(s.salePrice||0)}</td>`; 
+        body.appendChild(tr);
+      });
+    }
+    
+    // Update summary
+    updateSummary();
+  }
+  
+  function updateSummary() {
+    const filteredSales = getFilteredSales();
+    const totalSales = filteredSales.reduce((sum, s) => sum + Number(s.salePrice || 0), 0);
+    
+    let summaryText = `Showing ${filteredSales.length} sold vehicle${filteredSales.length !== 1 ? 's' : ''}`;
+    if (currentFilter.month) {
+      summaryText += ` for ${currentFilter.month}`;
+    } else {
+      summaryText += ` (all time)`;
+    }
+    if (currentFilter.search) {
+      summaryText += ` matching "${currentFilter.search}"`;
+    }
+    summaryText += ` | Total Sales: ${fmtMoney(totalSales)}`;
+    
+    summary.textContent = summaryText;
+  }
+  
+  // Event listeners for search and filter
+  wrap.querySelector('#sold_search').addEventListener('input', function(e) {
+    currentFilter.search = e.target.value.trim();
+    renderSoldRows();
+  });
+  
+  wrap.querySelector('#sold_month').addEventListener('change', function(e) {
+    currentFilter.month = e.target.value || '';
+    renderSoldRows();
+  });
+  
+  wrap.querySelector('#sold_clear_search').onclick = function() {
+    wrap.querySelector('#sold_search').value = '';
+    currentFilter.search = '';
+    renderSoldRows();
+  };
+  
+  wrap.querySelector('#sold_clear_month').onclick = function() {
+    wrap.querySelector('#sold_month').value = '';
+    currentFilter.month = '';
+    renderSoldRows();
+  };
+  
+  // Export CSV functionality (unchanged)
+  wrap.querySelector('#sold_export').onclick=()=>{ 
+    const rowsCSV=[["Date","Reg","Make","Model","Customer","Postcode","Phone","Email","Price"]]; 
+    getFilteredSales().forEach(s=>{ 
+      const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; 
+      rowsCSV.push([
+        ddmmyyyy(s.date),
+        v.reg||'',
+        v.make||'',
+        v.model||'',
+        s.buyer||'',
+        (s.address||'').split(',').slice(-1)[0]||'',
+        s.phone||'',
+        s.email||'',
+        Number(s.salePrice||0)
+      ]); 
+    }); 
+    
+    const csv=rowsCSV.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n'); 
+    const a=document.createElement('a'); 
+    a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); 
+    a.download='sold_export_' + new Date().toISOString().slice(0,10) + '.csv'; 
+    a.click(); 
+    
+    addAudit('export', 'sold', '', `Exported ${getFilteredSales().length} sold vehicles to CSV`);
+  };
+  
+  // Initial render
+  renderSoldRows();
   return wrap;
 }
 
@@ -2687,6 +3142,7 @@ function printCreditInvoice(creditId){
     th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}
     th{background:#f5f5f5;text-align:left}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35}
+    .terms{ page-break-inside: avoid; break-inside: avoid; }
     .tight td{padding:4px 6px}
     .negative{color:#d00;font-weight:bold}
   </style></head><body>
@@ -2950,6 +3406,7 @@ function printPurchaseInvoice(purchaseId){
     th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}
     th{background:#f5f5f5;text-align:left}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35}
+    .terms{ page-break-inside: avoid; break-inside: avoid; }
     .tight td{padding:4px 6px}
     .no-print{margin:8px 0}
     @media print{.no-print{display:none !important}}
@@ -3281,6 +3738,7 @@ function printInvoice(saleId){
     th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}
     th{background:#f5f5f5;text-align:left}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35}
+    .terms{ page-break-inside: avoid; break-inside: avoid; }
     .tight td{padding:4px 6px}
     .no-print{margin:8px 0}
     @media print{.no-print{display:none !important}}
@@ -3332,6 +3790,31 @@ function printFinanceProforma(saleId){
     <div style="text-align:right"><h2 style="margin:0">PROFORMA INVOICE — FINANCE</h2><div>Invoice #: ${s.invNo||''}</div><div>Date: ${ddmmyyyy(s.date||'')}</div><div>Time: ${timeStr}</div></div></div>
     <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''}</div>`;
 
+  // Build terms section - Terms first, then Finance Terms if both exist
+  let termsHTML = '';
+  const regularTerms = String(co.terms || '').trim();
+  const financeTerms = String(co.financeTerms || '').trim();
+  
+  if (regularTerms || financeTerms) {
+    termsHTML = '<p class="terms"><b>Terms:</b><br>';
+    
+    if (regularTerms) {
+      termsHTML += regularTerms.replace(/\n/g, '<br>');
+    }
+    
+    if (regularTerms && financeTerms) {
+      termsHTML += '<br><br><b>Finance-Specific Terms:</b><br>';
+    } else if (financeTerms) {
+      termsHTML += '<b>Finance-Specific Terms:</b><br>';
+    }
+    
+    if (financeTerms) {
+      termsHTML += financeTerms.replace(/\n/g, '<br>');
+    }
+    
+    termsHTML += '</p>';
+  }
+
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Finance Proforma</title>
   <style>
     @page{size:A4;margin:10mm 10mm}
@@ -3341,6 +3824,7 @@ function printFinanceProforma(saleId){
     th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}
     th{background:#f5f5f5;text-align:left}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35}
+    .terms{ page-break-inside: avoid; break-inside: avoid; }
     .tight td{padding:4px 6px}
     .print-btn-proforma{margin:8px 0}
     @media print{.print-btn-proforma{display:none !important}}
@@ -3366,6 +3850,7 @@ function printFinanceProforma(saleId){
     <tr><th>Finance</th><td>${price(s.finance)}</td></tr>
     <tr><th>Part-ex Allowance</th><td>${price(s.pxAllowance)}</td></tr>
   </table>
+  ${termsHTML}
   <p class="terms"><b>Note:</b> Proforma for finance completion only. Vehicle remains property of dealer until cleared funds and executed agreement.</p>
   </body></html>`;
 
@@ -3554,9 +4039,9 @@ function alreadyPosted(k){
     // 1) Post mgmt fees to Showroom Expenses (175 + 20% for PROFITABLE investor cars only)
     c.items.forEach(x=>{
       if(x.isInvestor && x.gross > 0){  // Only if car made profit
-        db.showroomExpenses.unshift({id:uid(),date:k+'-01',type:'Mgmt flat £175',method:'bank',amount:-175,note:(x.v.reg||'')});
+        db.showroomExpenses.unshift({id:mcId(k, 'showroom_flat175', x.v.reg, '', ''),date:lastDayOfMonth(k),type:'Mgmt flat £175',method:'bank',amount:-175,note:(x.v.reg||'')});
         const pct=+(x.mgmtPct||0);
-        if(pct>0) db.showroomExpenses.unshift({id:uid(),date:k+'-01',type:'Mgmt 20% (investor car)',method:'bank',amount:-pct,note:(x.v.reg||'')});
+        if(pct>0) db.showroomExpenses.unshift({id:mcId(k, 'showroom_20pct', x.v.reg, '', ''),date:lastDayOfMonth(k),type:'Mgmt 20% (investor car)',method:'bank',amount:-pct,note:(x.v.reg||'')});
       }
     });
 
@@ -3571,7 +4056,7 @@ function alreadyPosted(k){
       let inv=(db.investors||[]).find(i=>i.name===name);
       if(!inv){ inv={id:uid(),name,balance:0,tx:[]}; (db.investors=db.investors||[]).push(inv); }
       const amt=byInvestor[name];
-      inv.tx.unshift({id:uid(),date:k+'-01',type:'fund_in',method:'bank',amount:amt,note:'MonthClose '+k});
+      inv.tx.unshift({id:mcId(k, 'investor_30pct', inv.id, '', ''),date:lastDayOfMonth(k),type:'fund_in',method:'bank',amount:amt,note:'MonthClose '+k});
       inv.balance+=(+amt||0);
     });
 
@@ -3579,7 +4064,7 @@ function alreadyPosted(k){
     const marker='MonthClose '+k;
     (db.partners||[]).forEach(p=>{
       const amt=c.directorHalf;
-      p.tx=p.tx||[]; p.tx.unshift({id:uid(),date:k+'-01',type:'profit',method:'bank',amount:amt,note:marker});
+      p.tx=p.tx||[]; p.tx.unshift({id:mcId(k, 'director_profit', p.id, '', ''),date:lastDayOfMonth(k),type:'profit',method:'bank',amount:amt,note:marker});
       p.balance=(p.tx||[]).reduce((bal,x)=> bal+((x.type==='invest'||x.type==='profit')?+x.amount:-x.amount),0);
     });
 
@@ -4099,7 +4584,7 @@ function viewSettings(){
 
   
   wrap.querySelector('#c_pull').onclick=()=>syncPull();
-  wrap.querySelector('#c_push').onclick=()=>syncPush();
+  wrap.querySelector('#c_push').onclick=()=>smartPush();
 
   const hardBtn = wrap.querySelector('#syncPullHard');
 if (hardBtn) {
