@@ -1754,7 +1754,7 @@ function viewVehicles(){
   </label>
     <label>Supplier Invoice #<input id="v_supplier" placeholder="INV-001"></label>
     <label>VIN (optional)<input id="v_vin"></label>
-    <label>MOT Expiry<input id="v_motExpiry" type="date" placeholder="Optional"></label> <!-- ADDED THIS LINE -->
+    <label>MOT Expiry<input id="v_motExpiry" type="date" placeholder="Optional"></label>
     <label>Status<select id="v_status"><option value="for sale">for sale</option><option value="sold">sold</option></select></label>
   </div>
   <div class="row">
@@ -1775,11 +1775,23 @@ function viewVehicles(){
     <label class="small" style="display: flex; align-items: center; margin: 0;">
       <input type="checkbox" id="veh_pxonly"> Part-ex only
     </label>
+    <!-- NEW: MOT Expiry Filter -->
+    <label class="small" style="display: flex; align-items: center; margin: 0;">
+      <select id="veh_motFilter" style="padding: 4px 6px; font-size: 12px; background: #0f1628; border: 1px solid var(--line); color: var(--ink); border-radius: 6px;">
+        <option value="">MOT Expiry</option>
+        <option value="expired">Expired</option>
+        <option value="30">Less than 30 days</option>
+        <option value="60">Less than 60 days</option>
+        <option value="90">Less than 90 days</option>
+        <option value="valid">Valid MOT</option>
+      </select>
+    </label>
     <button onclick="exportVehiclesCSV()">Export CSV</button>
   </div>
 
-  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table> <!-- ADDED MOT Expiry COLUMN -->
+  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
+  
   // Populate investor dropdown from db.investors
   const invSel = wrap.querySelector('#v_investor');
   if (invSel) {
@@ -1801,6 +1813,7 @@ function viewVehicles(){
   const soldOnly = wrap.querySelector('#veh_soldonly')?.checked;
   const investorOnly = wrap.querySelector('#veh_investoronly')?.checked;
   const pxOnly = wrap.querySelector('#veh_pxonly')?.checked;
+  const motFilter = wrap.querySelector('#veh_motFilter')?.value || '';
   
   (db.vehicles||[]).forEach(v=>{
     // Apply filters...
@@ -1818,6 +1831,38 @@ function viewVehicles(){
       const hay = ((v.reg || '') + ' ' + (v.make || '') + ' ' + (v.model || '')).toLowerCase();
       if (!hay.includes(q)) return;
     }
+    
+    // Apply MOT expiry filter
+    if (motFilter) {
+        const motDate = v.motExpiry || v.lastMotExpiry || '';
+        if (!motDate) {
+        return;
+        }
+        const expiry = new Date(motDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        expiry.setHours(0, 0, 0, 0);
+        const diffMs = expiry - today;
+        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        
+        switch(motFilter) {
+          case 'expired':
+            if (diffDays >= 0) return; // Skip if not expired
+            break;
+          case '30':
+            if (diffDays <= 0 || diffDays > 30) return;
+            break;
+          case '60':
+            if (diffDays <= 0 || diffDays > 60) return;
+            break;
+          case '90':
+            if (diffDays <= 0 || diffDays > 90) return;
+            break;
+          case 'valid':
+            if (diffDays < 0) return; // Skip if expired
+            break;
+        }
+      }
     
     const tr=document.createElement('tr');
     const mcount=(v.media||[]).length + ((v.video&&1)||0);
@@ -1837,7 +1882,7 @@ function viewVehicles(){
     <td>${v.supplier||''}${v.supplierNote ? '<br><small style="color:#53a8ff;">' + v.supplierNote + '</small>' : ''}</td>
     <td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''} ${v.originalSaleId?`<button data-act="viewSale" data-id="${v.originalSaleId}" title="View original sale" style="margin-left:4px;">📋</button>`:''}</td>`;
     body.appendChild(tr);
-  });
+    });
   };
   rows('', 'instock');
 
@@ -1913,6 +1958,12 @@ function viewVehicles(){
   } 
   applyVehFilter(); 
   });
+
+  // NEW: MOT filter change listener
+  const MOT_FILTER = wrap.querySelector('#veh_motFilter');
+  if(MOT_FILTER) {
+    MOT_FILTER.addEventListener('change', applyVehFilter);
+  }
 
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
     if(act==='edit'){ 
@@ -2202,11 +2253,11 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
     const alreadySold = vCheck && String(vCheck.status || '').toLowerCase() === 'sold';
     const alreadyHasSale = (db.sales || []).some(sx => sx.vehicleId === vid && sx.id !== editId);
 
-  if (!editId && (alreadySold || alreadyHasSale)) {
-    return alert('This vehicle is already sold. You cannot record another sale for it.');
-  }
+      if (!editId && (alreadySold || alreadyHasSale)) {
+      return alert('This vehicle is already sold. You cannot record another sale for it.');
+      }
 
-     }
+    }
     const e={id:editId||uid(),vehicleId:vid,date:wrap.querySelector('#e_date').value,type:wrap.querySelector('#e_type').value.trim(),method:wrap.querySelector('#e_method').value,amount:Number(wrap.querySelector('#e_amt').value||0),note:wrap.querySelector('#e_note').value.trim()};
     if(editId){ db.vehicleExpenses=db.vehicleExpenses.map(x=>x.id===editId?e:x); addAudit('update','vehicleExpense',e.id,(db.vehicles.find(x=>x.id===e.vehicleId)||{}).reg+' '+e.type+' '+e.amount); editId=null; }
     else{ db.vehicleExpenses.unshift(e); addAudit('add','vehicleExpense',e.id,(db.vehicles.find(x=>x.id===e.vehicleId)||{}).reg+' '+e.type+' '+e.amount); }
@@ -2214,7 +2265,7 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
   };
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
     if(act==='del'){ if(!canAction('del')) return alert('No permission'); const delE=db.vehicleExpenses.find(x=>x.id===id); if(!confirm('Delete expense?')) return; db.vehicleExpenses=db.vehicleExpenses.filter(x=>x.id!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','vehicleExpense',id,delE?delE.type+' '+delE.amount:''); rows(); hint(); }
-    else if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const e=db.vehicleExpenses.find(x=>x.id===id); editId=id; const v=db.vehicles.find(x=>x.id===e.vehicleId)||{}; wrap.querySelector('#e_vehicle').value=(v.reg||'').toUpperCase(); wrap.querySelector('#e_date').value=e.date; wrap.querySelector('#e_type').value=e.type||''; wrap.querySelector('#e_method').value=e.method||'bank'; wrap.querySelector('#e_amt').value=e.amount||0; wrap.querySelector('#e_note').value=e.note||''; }
+    else if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const e=db.vehicleExpenses.find(x=>x.id===id); editId=id; const v=db.vehicles.find(x=>x.id===e.vehicleId)||{}; wrap.querySelector('#e_vehicle').value=(v.reg||'').toUpperCase(); wrap.querySelector('#e_date').value=e.date; wrap.querySelector('#e_type').value=e.type||''; wrap.querySelector('#e_method').value=e.method||'bank'; wrap.querySelector('#e_amt').value=e.amount||0; wrap.querySelector('#e_note').value=e.note||''; document.getElementById('app').scrollIntoView({ behavior: 'smooth' });}
   });
   function hint(){ const bal=calcBalances(); wrap.querySelector('#e_totHint').textContent='Live balance after expenses — Bank: '+fmtMoney(bal.bank)+' | Cash: '+fmtMoney(bal.cash); }
   hint();
@@ -2285,7 +2336,7 @@ function hint(){ const bal=calcBalances(); wrap.querySelector('#s_totHint').text
   };
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
     if(act==='del'){ if(!canAction('del')) return alert('No permission'); const delS=db.showroomExpenses.find(x=>x.id===id); markDeleted('showroomExpenses', id); db.showroomExpenses=db.showroomExpenses.filter(x=>x.id!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','showroomExpense',id,delS?delS.type+' '+delS.amount:''); rows(); hint(); }
-    else if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const e=db.showroomExpenses.find(x=>x.id===id); editId=id; wrap.querySelector('#s_date').value=e.date; wrap.querySelector('#s_type').value=e.type||''; wrap.querySelector('#s_method').value=e.method||'bank'; wrap.querySelector('#s_amt').value=e.amount||0; wrap.querySelector('#s_note').value=e.note||''; }
+    else if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const e=db.showroomExpenses.find(x=>x.id===id); editId=id; wrap.querySelector('#s_date').value=e.date; wrap.querySelector('#s_type').value=e.type||''; wrap.querySelector('#s_method').value=e.method||'bank'; wrap.querySelector('#s_amt').value=e.amount||0; wrap.querySelector('#s_note').value=e.note||''; document.getElementById('app').scrollIntoView({ behavior: 'smooth' });}
   });
   return wrap;
 }
@@ -2453,12 +2504,12 @@ function viewSales(){
         const partexInfo = partexVehicle ? `<br><small style="color:#53a8ff;">PX: ${partexVehicle.reg} (in stock)</small>` : '';
         const tr = document.createElement('tr'); 
         tr.innerHTML = `<td>${ddmmyyyy(s.date)}</td>
-<td>${v.reg||''}</td>
-<td>${s.buyer||''}</td>
-<td class="right">${fmtMoney(s.salePrice)}</td>
-<td>${br}${partexInfo}</td>
-${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
-<td><button data-act="inv" data-id="${s.id}">Invoice</button><button data-act="proforma" data-id="${s.id}">Finance Proforma</button>${canAction('edit')?`<button data-act="edit" data-id="${s.id}">Edit</button>`:''}${canAction('del')?` <button class="danger" data-act="del" data-id="${s.id}">Delete</button>`:''}</td>`; 
+        <td>${v.reg||''}</td>
+        <td>${s.buyer||''}</td>
+        <td class="right">${fmtMoney(s.salePrice)}</td>
+        <td>${br}${partexInfo}</td>
+        ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
+        <td><button data-act="inv" data-id="${s.id}">Invoice</button><button data-act="proforma" data-id="${s.id}">Finance Proforma</button>${canAction('edit')?`<button data-act="edit" data-id="${s.id}">Edit</button>`:''}${canAction('del')?` <button class="danger" data-act="del" data-id="${s.id}">Delete</button>`:''}</td>`; 
         body.appendChild(tr); 
       });
     }
@@ -2538,6 +2589,7 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
       wrap.querySelector('#sale_price').value=s.salePrice||0; wrap.querySelector('#sale_dep').value=s.deposit||0; wrap.querySelector('#sale_cash').value=s.cash||0; wrap.querySelector('#sale_card').value=s.card||0; wrap.querySelector('#sale_bank').value=s.bank||0; wrap.querySelector('#sale_fin').value=s.finance||0;
       wrap.querySelector('#sale_partex').value=s.partex||''; wrap.querySelector('#sale_pxReg').value=s.pxReg||''; wrap.querySelector('#sale_pxMake').value=s.pxMake||''; wrap.querySelector('#sale_pxModel').value=s.pxModel||''; wrap.querySelector('#sale_pxAllowance').value=s.pxAllowance||0;
       wrap.querySelector('#sale_finCo').value=s.financeCompany||''; wrap.querySelector('#sale_agree').value=s.agreement||''; wrap.querySelector('#sale_deliver').value=s.deliverTo||''; wrap.querySelector('#sale_keys').value=s.keys||''; wrap.querySelector('#sale_mot').value=s.mot||''; wrap.querySelector('#sale_sh').value=s.serviceHistory||''; wrap.querySelector('#sale_invNo').value=s.invNo||''; updateWarn();
+      document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
     } else if(b.dataset.act==='inv'){ printInvoice(s.id); } else if(b.dataset.act==='proforma'){ printFinanceProforma(s.id); }
   });
 
@@ -2606,8 +2658,8 @@ ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
       addAudit('update', 'sale', s.id, (db.vehicles.find(x => x.id === s.vehicleId) || {}).reg + ' inv ' + s.invNo); 
       const vM = db.vehicles.find(x => x.id === s.vehicleId); 
       if (vM) vM.mileage = s.mileage || vM.mileage; 
-      editId = null; 
-    } else { 
+      editId = null;
+      } else { 
       // New sale - mark vehicle as sold
       db.sales.unshift(s); 
       addAudit('add', 'sale', s.id, (db.vehicles.find(x => x.id === s.vehicleId) || {}).reg + ' inv ' + s.invNo); 
@@ -2851,7 +2903,8 @@ function viewCredit(){
     <select id="cr_method"><option value="bank">Bank</option><option value="cash">Cash</option></select>
     <input id="cr_amount" type="number" placeholder="Amount £">
     <input id="cr_reason" placeholder="Reason for credit/refund">
-    <button id="cr_add" class="primary">Add Credit</button>
+    <input id="cr_invoiceNo" placeholder="Invoice No">
+    <button id="cr_add" class="primary">Add/Update Credit</button>
   </div>
   <div class="row" id="cr_vehicleDetailsSection">
     <label>Make<input id="cr_make" placeholder="Vehicle Make"></label>
@@ -2871,6 +2924,7 @@ function viewCredit(){
         <th>Method</th>
         <th class="right">Amount</th>
         <th>Reason</th>
+        <th>Invoice No</th>
         <th>In Stock</th>
         <th>Actions</th>
       </tr>
@@ -2933,6 +2987,7 @@ function viewCredit(){
                    <td>${cr.method||'bank'}</td>
                    <td class="right">${fmtMoney(cr.amount)}</td>
                    <td>${cr.reason||''}</td>
+                   <td>${cr.invoiceNo || ''}</td>
                    <td>${cr.vehicle && inStock ? '✅' : ''}</td>
                    <td>
                      <button data-act="print" data-id="${cr.id}">Print Invoice</button>
@@ -2944,90 +2999,116 @@ function viewCredit(){
     });
   }
   
-  wrap.querySelector('#cr_add').onclick=()=>{
-    if(!canAction('add')) return alert('No permission');
+  wrap.querySelector('#cr_add').onclick = () => {
+  if (!canAction('add')) return alert('No permission');
+  
+  const currentReg = wrap.querySelector('#cr_vehicle').value.trim().toUpperCase();
+
+  let prevCredit = null;
+  let oldReg = null;
+  if (editId) {
+    prevCredit = (db.credits||[]).find(x => x.id === editId);
+    oldReg = prevCredit ? prevCredit.vehicle : null;
+  }
+
+  const cr = {
+    id: editId || uid(),
+    date: wrap.querySelector('#cr_date').value,
+    customer: wrap.querySelector('#cr_customer').value.trim(),
+    vehicle: currentReg,
+    type: wrap.querySelector('#cr_type').value,
+    method: wrap.querySelector('#cr_method').value,
+    amount: Number(wrap.querySelector('#cr_amount').value || 0),
+    reason: wrap.querySelector('#cr_reason').value.trim(),
+    invoiceNo: wrap.querySelector('#cr_invoiceNo')?.value.trim() || '',
+    make: wrap.querySelector('#cr_make').value.trim(),
+    model: wrap.querySelector('#cr_model').value.trim(),
+    vin: wrap.querySelector('#cr_vin').value.trim(),
+    mileage: Number(wrap.querySelector('#cr_mileage').value || 0),
+    colour: wrap.querySelector('#cr_colour').value.trim(),
+    fuel: wrap.querySelector('#cr_fuel').value.trim()
+  };
+
+  if (!cr.date || !cr.customer || !cr.amount) {
+    return alert('Date, Customer and Amount are required');
+  }
+
+  // ADD MODE: Add to stock if it's a refund & vehicle doesn't exist.
+  if (cr.type === 'refund' && cr.vehicle && !editId) {
+    if (!cr.make.trim() || !cr.model.trim()) {
+      return alert('Please provide vehicle Make and Model for refunds with vehicle REG');
+    }
     
-    const cr={
-      id: editId||uid(),
-      date: wrap.querySelector('#cr_date').value,
-      customer: wrap.querySelector('#cr_customer').value.trim(),
-      vehicle: wrap.querySelector('#cr_vehicle').value.trim().toUpperCase(),
-      type: wrap.querySelector('#cr_type').value,
-      method: wrap.querySelector('#cr_method').value,
-      amount: Number(wrap.querySelector('#cr_amount').value||0),
-      reason: wrap.querySelector('#cr_reason').value.trim(),
-      make: wrap.querySelector('#cr_make').value.trim(),
-      model: wrap.querySelector('#cr_model').value.trim(),
-      vin: wrap.querySelector('#cr_vin').value.trim(),
-      mileage: Number(wrap.querySelector('#cr_mileage').value||0),
-      colour: wrap.querySelector('#cr_colour').value.trim(),
-      fuel: wrap.querySelector('#cr_fuel').value.trim()
+    // Check if vehicle already exists in stock
+    const existingVehicle = (db.vehicles||[]).find(v => v.reg === cr.vehicle);
+    if (existingVehicle) {
+      return alert(`Vehicle ${cr.vehicle} already exists in stock`);
+    }
+    
+    const vehicle = {
+      id: uid(),
+      reg: cr.vehicle,
+      make: cr.make,
+      model: cr.model,
+      colour: cr.colour,
+      fuel: cr.fuel,
+      mileage: cr.mileage,
+      purchase: cr.amount,
+      ownerType: 'owned',
+      investor: '',
+      supplier: `Refund from ${cr.customer}`,
+      vin: cr.vin,
+      status: 'for sale',
+      createdAt: cr.date || new Date().toISOString(),
+      media: [],
+      video: ''
     };
-    
-    if(!cr.date || !cr.customer || !cr.amount) {
-      return alert('Date, Customer and Amount are required');
-    }
-    
-    // If it's a refund with a vehicle REG, automatically add to stock if details are provided
-    if(cr.type === 'refund' && cr.vehicle) {
-      if(!cr.make.trim() || !cr.model.trim()) {
-        return alert('Please provide vehicle Make and Model for refunds with vehicle REG');
+    db.vehicles.unshift(vehicle);
+    addAudit('add','vehicle',vehicle.id,`Added to stock from refund - ${vehicle.reg}`);
+  }
+
+  // EDIT MODE: If REG is changed, update vehicle in stock with oldReg
+  if (editId) {
+    db.credits = db.credits.map(x => x.id === editId ? cr : x);
+    addAudit('update','credit',cr.id,`${cr.type} for ${cr.customer} - ${fmtMoney(cr.amount)}`);
+
+    // If REG changed and there is a stock vehicle with old REG, update its REG field.
+    if (oldReg && oldReg !== currentReg) {
+      const vehicle = (db.vehicles||[]).find(v => v.reg === oldReg);
+      if (vehicle) {
+        // Ensure new REG does not conflict with another vehicle in stock
+        const regTaken = (db.vehicles||[]).some(v => v.reg === currentReg);
+        if (regTaken) {
+          alert(`Cannot update REG in stock: vehicle with REG ${currentReg} already exists.`);
+        } else {
+          vehicle.reg = currentReg;
+          addAudit('update','vehicle',vehicle.id,`Vehicle REG updated from ${oldReg} to ${currentReg} (from credit edit)`);
+        }
       }
-      
-      // Check if vehicle already exists in stock
-      const existingVehicle = (db.vehicles||[]).find(v => v.reg === cr.vehicle);
-      if(existingVehicle) {
-        return alert(`Vehicle ${cr.vehicle} already exists in stock`);
-      }
-      
-      const vehicle = {
-        id: uid(),
-        reg: cr.vehicle,
-        make: cr.make,
-        model: cr.model,
-        colour: cr.colour,
-        fuel: cr.fuel,
-        mileage: cr.mileage,
-        purchase: cr.amount, // Use refund amount as purchase price
-        ownerType: 'owned',
-        investor: '',
-        supplier: `Refund from ${cr.customer}`,
-        vin: cr.vin,
-        status: 'for sale',
-        createdAt: cr.date || new Date().toISOString(),
-        media: [],
-        video: ''
-      };
-      
-      db.vehicles.unshift(vehicle);
-      addAudit('add','vehicle',vehicle.id,`Added to stock from refund - ${vehicle.reg}`);
     }
-    
-    if(editId){
-      db.credits = db.credits.map(x => x.id === editId ? cr : x);
-      addAudit('update','credit',cr.id,`${cr.type} for ${cr.customer} - ${fmtMoney(cr.amount)}`);
-      editId = null;
-    } else {
-      db.credits = db.credits || [];
-      db.credits.unshift(cr);
-      addAudit('add','credit',cr.id,`${cr.type} for ${cr.customer} - ${fmtMoney(cr.amount)}`);
-    }
-    
-    saveDB(); 
-    try{renderAlertBell();}catch(e){}
-    renderCredits();
-    
-    // Clear form
-    wrap.querySelector('#cr_customer').value = '';
-    wrap.querySelector('#cr_vehicle').value = '';
-    wrap.querySelector('#cr_amount').value = '';
-    wrap.querySelector('#cr_reason').value = '';
-    wrap.querySelector('#cr_make').value = '';
-    wrap.querySelector('#cr_model').value = '';
-    wrap.querySelector('#cr_vin').value = '';
-    wrap.querySelector('#cr_mileage').value = '';
-    wrap.querySelector('#cr_colour').value = '';
-    wrap.querySelector('#cr_fuel').value = '';
+    editId = null;
+  } else {
+    db.credits = db.credits || [];
+    db.credits.unshift(cr);
+    addAudit('add','credit',cr.id,`${cr.type} for ${cr.customer} - ${fmtMoney(cr.amount)}`);
+  }
+
+  saveDB(); 
+  try{renderAlertBell();}catch(e){}
+  renderCredits();
+  
+  // Clear form
+  wrap.querySelector('#cr_customer').value = '';
+  wrap.querySelector('#cr_vehicle').value = '';
+  wrap.querySelector('#cr_amount').value = '';
+  wrap.querySelector('#cr_reason').value = '';
+  wrap.querySelector('#cr_invoiceNo').value = '';
+  wrap.querySelector('#cr_make').value = '';
+  wrap.querySelector('#cr_model').value = '';
+  wrap.querySelector('#cr_vin').value = '';
+  wrap.querySelector('#cr_mileage').value = '';
+  wrap.querySelector('#cr_colour').value = '';
+  wrap.querySelector('#cr_fuel').value = '';
   };
   
   wrap.addEventListener('click',(ev)=>{
@@ -3056,12 +3137,14 @@ function viewCredit(){
       wrap.querySelector('#cr_method').value=cr.method||'bank';
       wrap.querySelector('#cr_amount').value=cr.amount||0;
       wrap.querySelector('#cr_reason').value=cr.reason||'';
+      wrap.querySelector('#cr_invoiceNo').value=cr.invoiceNo||'';
       wrap.querySelector('#cr_make').value=cr.make||'';
       wrap.querySelector('#cr_model').value=cr.model||'';
       wrap.querySelector('#cr_vin').value=cr.vin||'';
       wrap.querySelector('#cr_mileage').value=cr.mileage||0;
       wrap.querySelector('#cr_colour').value=cr.colour||'';
       wrap.querySelector('#cr_fuel').value=cr.fuel||'';
+      document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
     }
     else if(act==='print'){
       printCreditInvoice(id);
@@ -3146,7 +3229,7 @@ function printCreditInvoice(creditId){
   <style>
     @page{size:A4;margin:10mm 10mm}
     body{font-family:Arial;color:#111;font-size:${fontPx}px}
-    .h{display:flex;justify-content:between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:6px}
+    .h{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:6px}
     table{width:100%;border-collapse:collapse}
     th,td{border:1px solid #000;padding:6px 8px;font-size:${fontPx}px;vertical-align:top}
     th{background:#f5f5f5;text-align:left}
@@ -3340,6 +3423,7 @@ function viewPurchaseInvoice(){
       wrap.querySelector('#pi_method').value=pi.method||'bank';
       wrap.querySelector('#pi_invoiceNo').value=pi.invoiceNo||'';
       wrap.querySelector('#pi_notes').value=pi.notes||'';
+      document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
     }
     else if(act==='print'){
       printPurchaseInvoice(id);
@@ -3488,7 +3572,7 @@ function renderBox(){ const i=Number(sel().value||0); const p=db.partners[i]; if
       if(editTxId){ p.tx=p.tx.map(x=>x.id===editTxId?t:x); addAudit('update','directorTx',t.id,(p?.name||'')+' '+t.type+' '+t.amount); editTxId=null; } else { p.tx=p.tx||[]; p.tx.unshift(t); addAudit('add','directorTx',t.id,(p?.name||'')+' '+t.type+' '+t.amount); }
       p.balance=(p.tx||[]).reduce((bal,x)=> bal+((x.type==='invest'||x.type==='profit')?+x.amount:-x.amount),0); saveDB(); try{renderAlertBell();}catch(e){}; renderBox(); };
     wrap.querySelector('#d_body').addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act; const t=(p.tx||[]).find(x=>x.id===id);
-      if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); editTxId=t.id; wrap.querySelector('#d_date').value=t.date; wrap.querySelector('#d_type').value=t.type; wrap.querySelector('#d_method').value=t.method||'bank'; wrap.querySelector('#d_amt').value=t.amount||0; wrap.querySelector('#d_note').value=t.note||''; }
+      if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); editTxId=t.id; wrap.querySelector('#d_date').value=t.date; wrap.querySelector('#d_type').value=t.type; wrap.querySelector('#d_method').value=t.method||'bank'; wrap.querySelector('#d_amt').value=t.amount||0; wrap.querySelector('#d_note').value=t.note||''; document.getElementById('app').scrollIntoView({ behavior: 'smooth' });}
       else if(act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete transaction?'))return; p.tx=p.tx.filter(x=>x.id!==id); p.balance=(p.tx||[]).reduce((bal,x)=> bal+((x.type==='invest'||x.type==='profit')?+x.amount:-x.amount),0); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','directorTx',id,(p?.name||'')); renderBox(); } });
   }
   wrap.querySelector('#d_sel').onchange=renderBox; renderBox();
@@ -3691,7 +3775,8 @@ function viewInvestors(){ if(!canTab('Investors')) return document.createElement
         wrap.querySelector('#i_type').value=t.type; 
         wrap.querySelector('#i_method').value=t.method||'bank'; 
         wrap.querySelector('#i_amt').value=t.amount||0; 
-        wrap.querySelector('#i_note').value=t.note||''; 
+        wrap.querySelector('#i_note').value=t.note||'';
+        document.getElementById('app').scrollIntoView({ behavior: 'smooth' }); 
       }
       else if(b.dataset.act==='del'){ 
         if(!canAction('del')) return alert('No permission'); 
@@ -3758,9 +3843,23 @@ function printInvoice(saleId){
 
     /* Bottom layout like your PDF */
     .sigRow{margin:18px 0 10px}
-    .sigLine{display:inline-block;min-width:260px;border-bottom:1px solid #000;height:14px;vertical-align:baseline}
-    .bottomWrap{margin-top:12px}
-    .bottomTbl td{vertical-align:bottom}
+
+  .sigLine{
+  display:inline-block;
+  width:180px;              /* ⬅ shorter line */
+  border-bottom:1px solid #000;
+  height:14px;
+  vertical-align:baseline;
+  }
+
+  .sigFlex{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  white-space:nowrap;       /* ⬅ forces single line */
+  margin-bottom:18px;
+  }
+
     .pxBox{width:62%}
     .payBox{width:38%}
     .pxInner{width:100%;border-collapse:collapse}
@@ -3780,11 +3879,11 @@ function printInvoice(saleId){
   <table class="tight">
     <tr>
       <th style="width:30%">Invoice To:</th>
-      <td>${s.buyer||''}</td>
+      <td>${s.buyer||''}<br>${s.address||''}</td>
     </tr>
     <tr>
-      <th>Deliver To</th>
-      <td>${(s.address||'').replace(/\n/g,'<br>')}</td>
+      <th>Deliver To:</th>
+      <td>${s.deliverTo||''}</td>
     </tr>
   </table>
 
@@ -3817,8 +3916,18 @@ function printInvoice(saleId){
 
   <!-- Signatures -->
   <div class="sigRow">
-    <div>Customer Date: <span class="sigLine"></span> &nbsp;&nbsp; Customer Signature: <span class="sigLine"></span></div>
-    <div style="margin-top:18px">Dealer Date: <span class="sigLine"></span> &nbsp;&nbsp; Dealer Signature: <span class="sigLine"></span></div>
+  <div class="sigFlex">
+    <span><b>Customer Date:</b></span>
+    <span class="sigLine"></span>
+    <span><b>Customer Signature:</b></span>
+    <span class="sigLine"></span>
+  </div>
+
+  <div class="sigFlex">
+    <span><b>Dealer Date:</b></span>
+    <span class="sigLine"></span>
+    <span><b>Dealer Signature:</b></span>
+    <span class="sigLine"></span>
   </div>
 
   <!-- Bottom: PART EX (left) + Payment (right) -->
@@ -3934,11 +4043,25 @@ function printFinanceProforma(saleId){
     .print-btn-proforma{margin:8px 0}
     @media print{.print-btn-proforma{display:none !important}}
 
-    /* Signature + bottom layout like your PDF */
+    /* Bottom layout like your PDF */
     .sigRow{margin:18px 0 10px}
-    .sigLine{display:inline-block;min-width:260px;border-bottom:1px solid #000;height:14px;vertical-align:baseline}
-    .bottomWrap{margin-top:12px}
-    .bottomTbl td{vertical-align:bottom}
+
+    .sigLine{
+    display:inline-block;
+    width:180px;              /* ⬅ shorter line */
+    border-bottom:1px solid #000;
+    height:14px;
+    vertical-align:baseline;
+    }
+
+    .sigFlex{
+    display:flex;
+    gap:12px;
+    align-items:center;
+    white-space:nowrap;       /* ⬅ forces single line */
+    margin-bottom:18px;
+    }
+
     .pxBox{width:62%}
     .payBox{width:38%}
     .pxInner{width:100%;border-collapse:collapse}
@@ -3948,7 +4071,7 @@ function printFinanceProforma(saleId){
     .payTbl th,.payTbl td{border:1px solid #000;padding:8px 10px;font-size:${fontPx}px}
     .payTbl th{width:70%;font-weight:700}
     .payTbl td{text-align:right}
-  </style></head><body>
+    </style></head><body>
 
   <button class="print-btn-proforma" onclick="window.print()" style="margin:8px 0">Print / Save as PDF</button>
 
@@ -3958,11 +4081,11 @@ function printFinanceProforma(saleId){
   <table class="tight">
     <tr>
       <th style="width:30%">Invoice To:</th>
-      <td>${s.financeCompany||''}<br>${(s.address||'').replace(/\n/g,'<br>')}</td>
+      <td>${s.financeCompany||''}<br>${s.address||''}</td>
     </tr>
     <tr>
-      <th>Deliver To</th>
-      <td>${(s.deliverTo||'').replace(/\n/g,'<br>')}</td>
+      <th>Deliver To:</th>
+      <td>${s.deliverTo||''}</td>
     </tr>
   </table>
 
@@ -3995,8 +4118,18 @@ function printFinanceProforma(saleId){
 
   <!-- Signatures -->
   <div class="sigRow">
-    <div>Customer Date: <span class="sigLine"></span> &nbsp;&nbsp; Customer Signature: <span class="sigLine"></span></div>
-    <div style="margin-top:18px">Dealer Date: <span class="sigLine"></span> &nbsp;&nbsp; Dealer Signature: <span class="sigLine"></span></div>
+  <div class="sigFlex">
+    <span><b>Customer Date:</b></span>
+    <span class="sigLine"></span>
+    <span><b>Customer Signature:</b></span>
+    <span class="sigLine"></span>
+  </div>
+
+  <div class="sigFlex">
+    <span><b>Dealer Date:</b></span>
+    <span class="sigLine"></span>
+    <span><b>Dealer Signature:</b></span>
+    <span class="sigLine"></span>
   </div>
 
   <!-- Bottom: PART EX (left) + Payment (right) -->
@@ -4211,8 +4344,8 @@ function alreadyPosted(k){
       + 'Showroom mgmt (flat £175 each investor car): '+fmtMoney(c.totalFlat)+'<br>'
       + 'Showroom mgmt (20% each investor car): '+fmtMoney(c.totalPct)+'<br>'
       + 'Investor 30% total: '+fmtMoney(c.totalInvestor)+'<br>'
-            + 'Showroom expenses this month (net): ' + fmtMoney(c.showroomMonthTotal) + '<br>'
-+ 'Post-sale expenses (this month on earlier sales): '+fmtMoney(c.postExpTotal)+'<br>'
+      + 'Showroom expenses this month (net): ' + fmtMoney(c.showroomMonthTotal) + '<br>'
+      + 'Post-sale expenses (this month on earlier sales): '+fmtMoney(c.postExpTotal)+'<br>'
       + '<b>Remainder for directors (50/50):</b> '+fmtMoney(c.remainder)+' ⇒ '+fmtMoney(c.directorHalf)+' each<br><br>'
       + '<div class="card small" style="margin:8px 0;padding:8px">'
       + '<b>Breakdown</b><br>'
@@ -4550,6 +4683,7 @@ function viewComplaints(){
       wrap.querySelector('#comp_assigned').value = comp.assigned || '';
       wrap.querySelector('#comp_followup').value = comp.followup || '';
       wrap.querySelector('#comp_cost').value = comp.cost || '';
+      document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
     }
     else if(act === 'del') {
       if(!canAction('del')) return alert('No permission');
