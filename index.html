@@ -2587,6 +2587,22 @@ function viewSales(){
     summary.textContent = summaryText;
   }
   
+  // Auto-fill "Date of First Reg" when entering the vehicle REG
+  const vehicleRegInput = wrap.querySelector('#sale_reg');
+  const firstRegInput = wrap.querySelector('#sale_firstReg');
+
+  if (vehicleRegInput && firstRegInput) {
+    vehicleRegInput.addEventListener('input', () => {
+      const regInput = vehicleRegInput.value.trim().toUpperCase(); // Get entered REG
+      const vehicle = (db.vehicles || []).find(v => (v.reg || '').toUpperCase() === regInput);
+      if (vehicle && vehicle.firstReg) {
+        firstRegInput.value = vehicle.firstReg; // Set the Date of First Reg field
+      } else {
+        firstRegInput.value = ''; // Clear if no matching vehicle found
+      }
+    });
+  }
+
   // Event listeners for search and filter
   wrap.querySelector('#sales_search').addEventListener('input', function(e) {
     currentFilter.search = e.target.value.trim();
