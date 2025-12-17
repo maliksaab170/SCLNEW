@@ -1146,6 +1146,26 @@ function applyAllDeletions() {
   });
 }
 
+async function readGistStarcarsJSON(gistId){
+  const r = await fetch(`https://api.github.com/gists/${gistId}`);
+  const txt = await r.text();
+  if (!r.ok) throw new Error(`Gist fetch failed ${r.status}: ${txt}`);
+
+  const j = JSON.parse(txt || '{}');
+  const file = j.files && (j.files['starcars.json'] || Object.values(j.files)[0]);
+  if (!file) throw new Error('No starcars.json in that Gist');
+
+  // ✅ IMPORTANT: handle big/truncated files
+  let content = file.content || '';
+  if (file.truncated && file.raw_url) {
+    const rr = await fetch(file.raw_url);
+    if (!rr.ok) throw new Error(`Raw fetch failed ${rr.status}`);
+    content = await rr.text();
+  }
+
+  return JSON.parse(content || '{}');
+}
+
 async function syncPull() {
   try {
     const gistId = (db.company.gistId || '').trim();
@@ -1161,7 +1181,7 @@ async function syncPull() {
     const file = j.files && (j.files['starcars.json'] || Object.values(j.files)[0]);
     if (!file || !file.content) return alert('No starcars.json in that Gist');
 
-    const incoming = JSON.parse(file.content || '{}');
+    const incoming = await readGistStarcarsJSON(gistId);
 
     recordPullActivity('pull');
 
@@ -1265,6 +1285,29 @@ async function syncPull() {
   }
 }
 
+async function readGistJSON(gistId, fileName = "starcars.json", token = ""){
+  const headers = { "Accept": "application/vnd.github+json" };
+  if (token) headers["Authorization"] = "token " + token;
+
+  const r = await fetch(`https://api.github.com/gists/${gistId}`, { headers });
+  const t = await r.text();
+  if (!r.ok) throw new Error(`Gist fetch failed ${r.status}: ${t}`);
+
+  const j = JSON.parse(t || "{}");
+  const file = j.files && (j.files[fileName] || Object.values(j.files)[0]);
+  if (!file) throw new Error(`No ${fileName} found in gist`);
+
+  // ✅ big file: file.content may be truncated
+  let content = file.content || "";
+  if (file.truncated && file.raw_url) {
+    const rr = await fetch(file.raw_url); // raw_url is public if gist is public
+    if (!rr.ok) throw new Error(`Raw gist fetch failed ${rr.status}`);
+    content = await rr.text();
+  }
+
+  return JSON.parse(content || "{}");
+}
+
 async function syncPullHard() {
   try {
     const gistId = (db.company.gistId || '').trim();
@@ -1283,7 +1326,7 @@ async function syncPullHard() {
       return alert('No starcars.json in that Gist');
     }
 
-    const incoming = JSON.parse(file.content || '{}');
+    const incoming = await readGistStarcarsJSON(gistId);
 
     recordPullActivity('pull-hard');
 
@@ -1393,24 +1436,17 @@ async function smartPush() {
       return alert('No changes detected. Nothing to push.');
     }
 
-    // (2) Fetch Existing Gist Content Before Pushing
     let remote = null;
-    try {
-      const r0 = await fetch(`https://api.github.com/gists/${gistId}`);
-      const txt0 = await r0.text();
-      if (r0.ok) {
-        const j0 = JSON.parse(txt0 || '{}');
-        const file0 = j0.files && (j0.files['starcars.json'] || Object.values(j0.files)[0]);
-        if (file0 && file0.content) {
-          remote = JSON.parse(file0.content || '{}');
-        }
-      }
-    } catch (e) {
-      console.warn('Could not read remote Gist before push:', e);
+      try {
+        remote = await readGistJSON(gistId, "starcars.json", token);
+      } catch (e) {
+      console.warn("Remote read failed:", e);
+      remote = null;
     }
 
     if (!remote) {
-      return alert('Failed to fetch remote Gist content. Consider performing a full push instead.');
+      alert("Failed to fetch remote Gist content.\n\nTry: Settings → Pull (Normal) then Push.\nIf still fails, do Full Push.");
+      return;
     }
 
     // (3) Apply Local Changes to Remote Content
@@ -1454,59 +1490,6 @@ async function smartPush() {
   } catch (e) {
     alert('Smart push failed: ' + e.message);
   }
-}
-
-// Delta Logic: Updates remote content with changes
-function applyChangesToRemote(remote, changes) {
-  const result = JSON.parse(JSON.stringify(remote)); // Deep clone existing content
-
-  Object.keys(changes).forEach((section) => {
-    if (section === 'company') {
-      // Update company settings
-      result.company = changes.company.data;
-      return;
-    }
-
-    const sectionChanges = changes[section];
-    if (!Array.isArray(sectionChanges)) return;
-
-    // Ensure the section exists in remote content
-    if (!result[section]) {
-      result[section] = [];
-    }
-
-    sectionChanges.forEach((change) => {
-      switch (change.operation) {
-        case 'add':
-          // Add new item
-          result[section].unshift(change.data);
-          break;
-
-        case 'update':
-          // Update existing item based on ID
-          const index = result[section].findIndex((item) => item.id === change.id);
-          if (index !== -1) {
-            result[section][index] = change.data;
-          }
-          break;
-
-        case 'delete':
-          // Remove item
-          result[section] = result[section].filter((item) => item.id !== change.id);
-          break;
-      }
-    });
-  });
-
-  return result;
-}
-
-// Helper: Count changes
-function countChanges(changes) {
-  return Object.keys(changes).reduce((count, key) => {
-    const items = changes[key];
-    return count + (Array.isArray(items) ? items.length : 0);
-  }, 0);
 }
 
 // Helper function to apply changes to remote data
