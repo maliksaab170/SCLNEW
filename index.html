@@ -1378,21 +1378,22 @@ function recordPushActivity() {
     saveDB();
 }
 
-async function smartPush(){
-  try{ 
-    const gistId = (db.company.gistId || '').trim(); 
+async function smartPush() {
+  try {
+    const gistId = (db.company.gistId || '').trim();
     if (!gistId) return alert('Enter Gist ID in Settings');
-    const token = (getGhToken() || '').trim(); 
+
+    const token = (getGhToken() || '').trim();
     if (!token) return alert('Enter GitHub token and Save');
 
-    // 1. Get current changes
+    // (1) Fetch the "changes" locally
     const changes = changeTracker.detectAllChanges();
-    
+
     if (!changes || Object.keys(changes).length === 0) {
-      return alert('No changes to push');
+      return alert('No changes detected. Nothing to push.');
     }
-    
-    // 2. Read current Gist
+
+    // (2) Fetch Existing Gist Content Before Pushing
     let remote = null;
     try {
       const r0 = await fetch(`https://api.github.com/gists/${gistId}`);
@@ -1408,55 +1409,104 @@ async function smartPush(){
       console.warn('Could not read remote Gist before push:', e);
     }
 
-    // 3. If no remote exists, send full backup
     if (!remote) {
-      return await syncPush(); // Fall back to full push
+      return alert('Failed to fetch remote Gist content. Consider performing a full push instead.');
     }
-    
-    // 4. Apply changes to remote
+
+    // (3) Apply Local Changes to Remote Content
     const updatedRemote = applyChangesToRemote(remote, changes);
-    
-    // 5. Push the updated remote back to Gist
-    const payload = { 
-      files: { 
-        'starcars.json': { 
-          content: JSON.stringify(updatedRemote, null, 2) 
-        } 
-      } 
+
+    // (4) Push the updated remote back to Gist (Minimal Change Payload)
+    const payload = {
+      files: {
+        'starcars.json': {
+          content: JSON.stringify(updatedRemote, null, 2),
+        },
+      },
     };
 
     const r = await fetch(`https://api.github.com/gists/${gistId}`, {
       method: 'PATCH',
       headers: {
         'content-type': 'application/json',
-        'Authorization': 'Bearer ' + token
+        Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
 
-    const txt = await r.text(); 
-    if (!r.ok){ 
-      return alert('Push failed ' + r.status + ': ' + txt); 
-    } 
-    
-    // 6. Update local snapshot to match what we just pushed
-    changeTracker.saveSnapshot();
-    changeTracker.clearChanges();
-    
-    // Record the push activity
-    recordPushActivity();
-    
-    addAudit('sync','smart-push',gistId,'Smart push: ' + countChanges(changes) + ' changes'); 
-    alert('Pushed ' + countChanges(changes) + ' changes to Gist');
-    
-    // Refresh the Settings view to show updated timestamp
-    if (currentTab === 'Settings') {
-      render();
+    const txt = await r.text();
+    if (!r.ok) {
+      return alert(`Push failed with status ${r.status}: ${txt}`);
     }
 
-  } catch(e){ 
-    alert('Smart Push failed: ' + e.message); 
-  } 
+    // (5) Clear Local Changes and Save Snapshot
+    changeTracker.saveSnapshot();
+    changeTracker.clearChanges();
+
+    addAudit(
+      'sync',
+      'smart-push',
+      gistId,
+      `Smart push completed with ${countChanges(changes)} changes.`,
+    );
+    alert(`Smart push completed: ${countChanges(changes)} changes pushed to Gist.`);
+    render();
+  } catch (e) {
+    alert('Smart push failed: ' + e.message);
+  }
+}
+
+// Delta Logic: Updates remote content with changes
+function applyChangesToRemote(remote, changes) {
+  const result = JSON.parse(JSON.stringify(remote)); // Deep clone existing content
+
+  Object.keys(changes).forEach((section) => {
+    if (section === 'company') {
+      // Update company settings
+      result.company = changes.company.data;
+      return;
+    }
+
+    const sectionChanges = changes[section];
+    if (!Array.isArray(sectionChanges)) return;
+
+    // Ensure the section exists in remote content
+    if (!result[section]) {
+      result[section] = [];
+    }
+
+    sectionChanges.forEach((change) => {
+      switch (change.operation) {
+        case 'add':
+          // Add new item
+          result[section].unshift(change.data);
+          break;
+
+        case 'update':
+          // Update existing item based on ID
+          const index = result[section].findIndex((item) => item.id === change.id);
+          if (index !== -1) {
+            result[section][index] = change.data;
+          }
+          break;
+
+        case 'delete':
+          // Remove item
+          result[section] = result[section].filter((item) => item.id !== change.id);
+          break;
+      }
+    });
+  });
+
+  return result;
+}
+
+// Helper: Count changes
+function countChanges(changes) {
+  return Object.keys(changes).reduce((count, key) => {
+    const items = changes[key];
+    return count + (Array.isArray(items) ? items.length : 0);
+  }, 0);
 }
 
 // Helper function to apply changes to remote data
@@ -2906,6 +2956,10 @@ function viewCredit(){
     <input id="cr_invoiceNo" placeholder="Invoice No">
     <button id="cr_add" class="primary">Add/Update Credit</button>
   </div>
+    <div class="row" style="margin-bottom:12px;">
+    <input id="cr_search" placeholder="Search by customer, vehicle, invoice" style="min-width:320px">
+    <button id="cr_clear_search">Clear</button>
+  </div>
   <div class="row" id="cr_vehicleDetailsSection">
     <label>Make<input id="cr_make" placeholder="Vehicle Make"></label>
     <label>Model<input id="cr_model" placeholder="Vehicle Model"></label>
@@ -2975,30 +3029,47 @@ function viewCredit(){
     }
   };
   
-  function renderCredits(){
-    body.innerHTML='';
-    (db.credits||[]).forEach(cr=>{
-      const inStock = (db.vehicles||[]).some(v => v.reg === cr.vehicle && v.status === 'for sale');
-      const tr=document.createElement('tr');
-      tr.innerHTML=`<td>${ddmmyyyy(cr.date)}</td>
-                   <td>${cr.customer||''}</td>
-                   <td>${cr.vehicle||''}</td>
-                   <td>${cr.type||''}</td>
-                   <td>${cr.method||'bank'}</td>
-                   <td class="right">${fmtMoney(cr.amount)}</td>
-                   <td>${cr.reason||''}</td>
-                   <td>${cr.invoiceNo || ''}</td>
-                   <td>${cr.vehicle && inStock ? '✅' : ''}</td>
-                   <td>
-                     <button data-act="print" data-id="${cr.id}">Print Invoice</button>
-                     ${canAction('edit')?`<button data-act="edit" data-id="${cr.id}">Edit</button>`:''}
-                     ${canAction('del')?`<button class="danger" data-act="del" data-id="${cr.id}">Delete</button>`:''}
-                     ${cr.vehicle && !inStock && cr.type === 'refund' ? `<button data-act="addToStock" data-id="${cr.id}">Add to Stock</button>` : ''}
-                   </td>`;
-      body.appendChild(tr);
+  function renderCredits() {
+    const searchTerm = (wrap.querySelector('#cr_search')?.value || '').toLowerCase().trim(); // Get search value
+    body.innerHTML = '';
+
+    // Filter credits based on the search term
+    const filtered = (db.credits || []).filter(cr => {
+        return !searchTerm || 
+               (cr.customer?.toLowerCase().includes(searchTerm)) ||  // Match customer
+               (cr.vehicle?.toLowerCase().includes(searchTerm)) ||   // Match vehicle
+               (cr.invoiceNo?.toLowerCase().includes(searchTerm));  // Match invoice
+    });
+
+    filtered.forEach(cr => {
+        const inStock = (db.vehicles||[]).some(v => v.reg === cr.vehicle && v.status === 'for sale');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${ddmmyyyy(cr.date)}</td>
+                        <td>${cr.customer||''}</td>
+                        <td>${cr.vehicle||''}</td>
+                        <td>${cr.type||''}</td>
+                        <td>${cr.method||'bank'}</td>
+                        <td class="right">${fmtMoney(cr.amount)}</td>
+                        <td>${cr.reason||''}</td>
+                        <td>${cr.invoiceNo || ''}</td>
+                        <td>${cr.vehicle && inStock ? '✅' : ''}</td>
+                        <td>
+                          <button data-act="edit" data-id="${cr.id}">Edit</button>
+                          <button class="danger" data-act="del" data-id="${cr.id}">Delete</button>
+                        </td>`;
+        body.appendChild(tr);
     });
   }
   
+  // Handle search input
+  wrap.querySelector('#cr_search').addEventListener('input', () => renderCredits());
+
+  // Handle clear search
+  wrap.querySelector('#cr_clear_search').addEventListener('click', () => {
+    wrap.querySelector('#cr_search').value = '';
+    renderCredits();
+  });
+
   wrap.querySelector('#cr_add').onclick = () => {
   if (!canAction('add')) return alert('No permission');
   
@@ -3287,6 +3358,10 @@ function viewPurchaseInvoice(){
   <div class="row">
     <label style="min-width:320px;flex:1">Notes<textarea id="pi_notes" placeholder="Additional notes"></textarea></label>
   </div>
+  <div class="row" style="margin-bottom:12px">
+    <input id="pi_search" placeholder="Search by seller, reg, invoice" style="min-width:320px">
+    <button id="pi_clear_search">Clear</button>
+  </div>
   <table class="table" style="margin-top:10px">
     <thead>
       <tr>
@@ -3309,32 +3384,51 @@ function viewPurchaseInvoice(){
   const body=wrap.querySelector('#pi_body');
   let editId=null;
   
-  function renderPurchases(){
-    body.innerHTML='';
-    (db.purchaseInvoices||[]).forEach(pi=>{
-      // Check if vehicle is in stock
-      const inStock = (db.vehicles||[]).some(v => v.reg === pi.reg && v.status === 'for sale');
-      
-      const tr=document.createElement('tr');
-      tr.innerHTML=`<td>${ddmmyyyy(pi.date)}</td>
-                   <td>${pi.supplier||''}</td>
-                   <td>${pi.reg||''}</td>
-                   <td>${pi.make||''}</td>
-                   <td>${pi.model||''}</td>
-                   <td>${pi.mileage||''}</td>
-                   <td class="right">${fmtMoney(pi.amount)}</td>
-                   <td>${pi.method||'bank'}</td>
-                   <td>${pi.invoiceNo||''}</td>
-                   <td>${inStock ? '✅' : ''}</td>
-                   <td>
-                     <button data-act="print" data-id="${pi.id}">Print Invoice</button>
-                     ${canAction('edit')?`<button data-act="edit" data-id="${pi.id}">Edit</button>`:''}
-                     ${canAction('del')?`<button class="danger" data-act="del" data-id="${pi.id}">Delete</button>`:''}
-                     ${!inStock ? `<button data-act="addToStock" data-id="${pi.id}">Add to Stock</button>` : ''}
-                   </td>`;
-      body.appendChild(tr);
-    });
-  }
+  function renderPurchases(filter = '') {
+  body.innerHTML = '';
+  
+  // Filter purchase invoices based on the search term
+  const filtered = (db.purchaseInvoices || []).filter(pi => {
+    return !filter || 
+           (pi.supplier || '').toLowerCase().includes(filter) || 
+           (pi.reg || '').toLowerCase().includes(filter) || 
+           (pi.invoiceNo || '').toLowerCase().includes(filter);
+  });
+
+  filtered.forEach(pi => {
+    // Check if vehicle is in stock
+    const inStock = (db.vehicles || []).some(v => v.reg === pi.reg && v.status === 'for sale');
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${ddmmyyyy(pi.date)}</td>
+      <td>${pi.supplier || ''}</td>
+      <td>${pi.reg || ''}</td>
+      <td>${pi.make || ''}</td>
+      <td>${pi.model || ''}</td>
+      <td>${pi.mileage || ''}</td>
+      <td class="right">${fmtMoney(pi.amount)}</td>
+      <td>${pi.method || 'bank'}</td>
+      <td>${pi.invoiceNo || ''}</td>
+      <td>${inStock ? '✅' : ''}</td>
+      <td>
+        <button data-act="print" data-id="${pi.id}">Print Invoice</button>
+        ${canAction('edit') ? `<button data-act="edit" data-id="${pi.id}">Edit</button>` : ''}
+        ${canAction('del') ? `<button class="danger" data-act="del" data-id="${pi.id}">Delete</button>` : ''}
+        ${!inStock ? `<button data-act="addToStock" data-id="${pi.id}">Add to Stock</button>` : ''}
+      </td>`;
+    body.appendChild(tr);
+  });
+}
+
+  wrap.querySelector('#pi_search').addEventListener('input', function () {
+    const searchTerm = this.value.toLowerCase().trim();
+    renderPurchases(searchTerm);
+  });
+
+  wrap.querySelector('#pi_clear_search').onclick = function () {
+    wrap.querySelector('#pi_search').value = '';
+    renderPurchases();
+  };
   
   wrap.querySelector('#pi_add').onclick=()=>{
     if(!canAction('add')) return alert('No permission');
@@ -3879,7 +3973,7 @@ function printInvoice(saleId){
   <table class="tight">
     <tr>
       <th style="width:30%">Invoice To:</th>
-      <td>${s.buyer||''}<br>${s.address||''}</td>
+      <td>${s.buyer||''}<br>${s.address||''}<br>${s.phone||''} ${s.email||''}</td>
     </tr>
     <tr>
       <th>Deliver To:</th>
@@ -3930,14 +4024,13 @@ function printInvoice(saleId){
     <span class="sigLine"></span>
   </div>
 
-  <!-- Bottom: PART EX (left) + Payment (right) -->
-  ${hasPX(s) ? `
+  ${hasPX(s) || s.deliverTo ? `
   <div class="bottomWrap">
   <table class="bottomTbl" style="width:100%;border-collapse:collapse">
     <tr>
       <td class="pxBox" style="padding-right:14px;border:none">
         <table class="pxInner">
-          <tr><th class="pxTitle" colspan="2">PART EX</th></tr>
+          <tr><th class="pxTitle" colspan="2"><b>PART EX</b></th></tr>
           <tr>
             <td style="width:50%"><b>MAKE:</b><br>${s.pxMake || '—'}</td>
             <td style="width:50%"><b>MODEL:</b><br>${s.pxModel || '—'}</td>
@@ -3958,7 +4051,7 @@ function printInvoice(saleId){
           <tr><th>Deposit</th><td>${price(s.deposit)}</td></tr>
           <tr><th>Cash</th><td>${price(s.cash)}</td></tr>
           <tr><th>Card</th><td>${price(s.card)}</td></tr>
-          <tr><th>Bank Transfer</th><td>${price(s.bank)}</td></tr>
+          <tr><th>Bank</th><td>${price(s.bank)}</td></tr>
           <tr><th>Finance</th><td>${price(s.finance)}</td></tr>
           <tr><th>Part-ex Allowance</th><td>${price(s.pxAllowance)}</td></tr>
           <tr><th>Total Paid</th><td>${price((+s.deposit||0)+(+s.cash||0)+(+s.card||0)+(+s.bank||0)+(+s.finance||0)+(+s.pxAllowance||0))}</td></tr>
@@ -3986,7 +4079,6 @@ function printInvoice(saleId){
   </table>
   </div>
   `}
-
 
   </body></html>`;
 
@@ -4132,14 +4224,13 @@ function printFinanceProforma(saleId){
     <span class="sigLine"></span>
   </div>
 
-  <!-- Bottom: PART EX (left) + Payment (right) -->
-  ${hasPX(s) ? `
+  ${hasPX(s) || s.deliverTo ? `
   <div class="bottomWrap">
   <table class="bottomTbl" style="width:100%;border-collapse:collapse">
     <tr>
       <td class="pxBox" style="padding-right:14px;border:none">
         <table class="pxInner">
-          <tr><th class="pxTitle" colspan="2">PART EX</th></tr>
+          <tr><th class="pxTitle" colspan="2"><b>PART EX</b></th></tr>
           <tr>
             <td style="width:50%"><b>MAKE:</b><br>${s.pxMake || '—'}</td>
             <td style="width:50%"><b>MODEL:</b><br>${s.pxModel || '—'}</td>
@@ -4160,7 +4251,7 @@ function printFinanceProforma(saleId){
           <tr><th>Deposit</th><td>${price(s.deposit)}</td></tr>
           <tr><th>Cash</th><td>${price(s.cash)}</td></tr>
           <tr><th>Card</th><td>${price(s.card)}</td></tr>
-          <tr><th>Bank Transfer</th><td>${price(s.bank)}</td></tr>
+          <tr><th>Bank</th><td>${price(s.bank)}</td></tr>
           <tr><th>Finance</th><td>${price(s.finance)}</td></tr>
           <tr><th>Part-ex Allowance</th><td>${price(s.pxAllowance)}</td></tr>
           <tr><th>Total Paid</th><td>${price((+s.deposit||0)+(+s.cash||0)+(+s.card||0)+(+s.bank||0)+(+s.finance||0)+(+s.pxAllowance||0))}</td></tr>
