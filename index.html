@@ -684,6 +684,22 @@ db.purchaseInvoices = db.purchaseInvoices || []; // Add purchase invoices array
 let session=JSON.parse(sessionStorage.getItem('starcars_sess')||'null'); if(!session){ showLogin(true); }
 function showLogin(show){ document.getElementById('loginOverlay').style.display=show?'grid':'none'; }
 
+function checkPullStatusOnLogin(){
+  // If you already use lastPulledAt logic, keep it consistent
+  try{
+    const t = Number(sessionStorage.getItem('starcars_last_pulled_at') || 0);
+    if(!t){
+      // lock push until first pull
+      if (typeof disablePushButton === "function") disablePushButton();
+    } else {
+      if (typeof enablePushButton === "function") enablePushButton();
+    }
+  }catch(e){
+    // never block login if something goes wrong
+    console.warn("checkPullStatusOnLogin error:", e);
+  }
+}
+
 function doLogin(){
   const u=document.getElementById('li_user').value.trim(); const p=document.getElementById('li_pass').value;
   const user=(db.users||[]).find(x=>x.username===u&&x.password===p);
@@ -697,13 +713,13 @@ function doLogin(){
     return;
   }
   session={username:user.username,role:user.role}; sessionStorage.setItem('starcars_sess',JSON.stringify(session));
-  showLogin(false); initHeader(); render();
+  showLogin(false); initHeader(); render(); checkPullStatusOnLogin();
   
   // Disable push button on login
   disablePushButton();
 }
 
-function logout(){ sessionStorage.removeItem('starcars_sess'); session=null; showLogin(true); initHeader(); }
+function logout(){sessionStorage.removeItem('starcars_sess'); sessionStorage.removeItem('starcars_pull_used'); session=null; showLogin(true); initHeader();}
 function switchUser(){ logout(); }
 function initHeader(){ const el=document.getElementById('who'); el.textContent=session?('Logged in: '+session.username+' ('+session.role+')'):'Not logged in'; refreshLogoBox(); }
 
@@ -731,6 +747,71 @@ function enablePushButton() {
     pushBtn.style.opacity = '1';
     pushBtn.style.cursor = 'pointer';
   }
+}
+
+function isPullUsed(){
+  return sessionStorage.getItem('starcars_pull_used') === 'true';
+}
+
+function markPullUsed() {
+  sessionStorage.setItem('starcars_pull_used', 'true');
+}
+
+function applyPullLockUI(){
+  // If pull is done, unlock everything
+  if (isPullUsed()){
+    document.querySelectorAll('[data-pull-lock="1"]').forEach(el=>{
+      el.disabled = false;
+      el.removeAttribute('data-pull-lock');
+      el.removeAttribute('title');
+    });
+    const note = document.getElementById('pullLockNote');
+    if (note) note.remove();
+    return;
+  }
+
+  // Not pulled yet -> lock app inputs/buttons (but NOT header/nav)
+  const app = document.getElementById('app');
+  if (!app) return;
+
+  // Show a note at the top of the current tab
+  if (!document.getElementById('pullLockNote')){
+    const note = document.createElement('div');
+    note.id = 'pullLockNote';
+    note.className = 'card';
+    note.style.borderColor = '#ff6b6b';
+    note.innerHTML = `
+      <div style="font-weight:800">⚠️ Editing locked</div>
+      <div class="small" style="margin-top:4px">
+        You must use <b>Pull</b> first on this device to avoid overwriting other PCs.
+        Go to <b>Settings → Pull (Gist → App)</b>.
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="goSettingsPull">Go to Settings</button>
+      </div>
+    `;
+    app.prepend(note);
+    note.querySelector('#goSettingsPull').onclick = () => setTab('Settings');
+  }
+
+  // Allowlist (things we still want enabled inside Settings)
+  const allowIds = new Set([
+    'c_pull',        // Pull (Normal)
+    'syncPullHard',  // Pull (Hard)
+    'c_isave',       // Save Integrations
+    'c_gistId', 'c_ghToken',
+    'c_autoSync', 'c_autoSyncSec'
+  ]);
+
+  // Disable everything editable inside #app except allowlist
+  app.querySelectorAll('button, input, select, textarea').forEach(el=>{
+    if (allowIds.has(el.id)) return;
+
+    // If element is inside Settings tab, still lock it unless allowlisted
+    el.disabled = true;
+    el.setAttribute('data-pull-lock', '1');
+    el.title = 'Locked until you Pull from Gist';
+  });
 }
 
 function refreshLogoBox(){ const lb=document.getElementById('logoBox'); const logo=(db.company.logo||'').trim(); if(logo){ lb.innerHTML='<img alt="logo" src="'+logo+'">'; } else { lb.textContent='SC'; } }
@@ -1279,6 +1360,7 @@ async function syncPull() {
     addAudit('sync', 'pull', db.company.gistId || '', 'Pulled from Gist (arrays merged by id, deletions respected)');
     alert('Pulled & merged from Gist (arrays merged by id; deletions synced)');
     enablePushButton();
+    markPullUsed();
     render();
   } catch (e) {
     alert('Pull failed: ' + e.message);
@@ -1359,6 +1441,7 @@ async function syncPullHard() {
     addAudit('sync', 'pull-hard', gistId, 'HARD pull from Gist (full replace)');
     alert('HARD Pull complete: local data replaced with Gist data.');
     enablePushButton();
+    markPullUsed();
     render();
   } catch (e) {
     alert('Hard Pull failed: ' + e.message);
@@ -1594,6 +1677,7 @@ function render(){
       }
     }, 100);
   }
+  applyPullLockUI();
 }
 
 /* ========= Finance helpers ========= */
@@ -2120,11 +2204,33 @@ function viewVehicles(){
       }
       
       // Populate form fields with DVLA data
-      if (j.make || j.raw?.make) wrap.querySelector('#v_make').value = j.make || j.raw.make || '';
-      if (j.model) wrap.querySelector('#v_model').value = j.model || '';
-      if (j.colour || j.raw?.colour) wrap.querySelector('#v_colour').value = j.colour || j.raw.colour || '';
-      if (j.fuel || j.raw?.fuelType) wrap.querySelector('#v_fuel').value = (j.fuel || j.raw.fuelType || '').toString().toUpperCase();
-      if (j.vin || j.raw?.vin) wrap.querySelector('#v_vin').value = j.vin || j.raw.vin || '';
+if (j.make || j.raw?.make) wrap.querySelector('#v_make').value = (j.make || j.raw?.make || '').trim();
+
+// DVLA VES usually does NOT supply "model" or "vin".
+// If your proxy supplies model/vin via extra source, still accept it:
+if (j.model || j.raw?.model) wrap.querySelector('#v_model').value = (j.model || j.raw?.model || '').trim();
+if (j.colour || j.raw?.colour) wrap.querySelector('#v_colour').value = (j.colour || j.raw?.colour || '').trim();
+if (j.fuel || j.raw?.fuelType) wrap.querySelector('#v_fuel').value = String(j.fuel || j.raw?.fuelType || '').toUpperCase().trim();
+if (j.vin || j.raw?.vin) wrap.querySelector('#v_vin').value = (j.vin || j.raw?.vin || '').trim();
+
+// ✅ First registration date from DVLA: monthOfFirstRegistration = YYYY-MM
+const mo =
+  j.monthOfFirstRegistration ||
+  j.raw?.monthOfFirstRegistration ||
+  j.firstRegistrationDate || j.raw?.firstRegistrationDate || '';
+
+if (mo) {
+  let iso = '';
+  const s = String(mo).trim();
+  if (/^\d{4}-\d{2}$/.test(s)) iso = s + '-01';
+  else if (/^\d{4}-\d{2}-\d{2}$/.test(s)) iso = s;
+  else {
+    const d = new Date(s);
+    if (!isNaN(d)) iso = d.toISOString().slice(0,10);
+  }
+  if (iso) wrap.querySelector('#v_firstReg').value = iso;
+}
+
       
       alert('DVLA lookup completed. Vehicle details filled.\n\nFields found: ' + 
         Object.keys(validation.fieldsFound).filter(k => validation.fieldsFound[k]).join(', '));
