@@ -572,9 +572,7 @@ let changeTracker = {
     const changes = {};
     
     // Track array changes
-    const sections = ['vehicles', 'sales', 'vehicleExpenses', 'showroomExpenses', 
-                     'credits', 'purchaseInvoices', 'complaints', 'investors', 
-                     'partners', 'todo', 'users', 'audit'];
+    const sections = ['vehicles', 'sales', 'expenses', 'vehicleExpenses', 'showroomExpenses', 'credits', 'purchaseInvoices', 'complaints', 'investors', 'partners', 'todo', 'users', 'audit'];
     
     sections.forEach(section => {
       const currentArr = current[section] || [];
@@ -670,7 +668,9 @@ db.company=db.company||{
   vatNumber:'',companyNumber:'',terms:'All vehicles supplied under CRA 2015. See full T&Cs.',
   logo:'',dvlaProxy:'',dvlaKey:'',dvsaKey:'',dvsaProxy:'',gistId:'',
   openingBank:0,openingCash:0,
-  invoiceFontPx:12, logoMaxW:140, logoMaxH:80
+  invoiceFontPx:12,
+termsFontPx:8,
+logoMaxW:140, logoMaxH:80
 };
 db.vehicles=db.vehicles||[]; db.vehicleExpenses=db.vehicleExpenses||[]; db.showroomExpenses=db.showroomExpenses||[]; db.sales=db.sales||[]; db.credits=db.credits||[]; db.complaints = db.complaints || [];
 db.partners=db.partners||[{id:'p1',name:'Director A',balance:0,tx:[]},{id:'p2',name:'Director B',balance:0,tx:[]}];
@@ -1353,11 +1353,21 @@ async function syncPull() {
     // Ensure font sizes are numeric
     db.company = db.company || {};
     if (db.company.invoiceFontPx != null) db.company.invoiceFontPx = Number(db.company.invoiceFontPx || 12);
-    if (db.company.termsFontPx  != null) db.company.termsFontPx  = Number(db.company.termsFontPx  || 10);
+    if (db.company.termsFontPx  != null) db.company.termsFontPx  = Number(db.company.termsFontPx  || 8);
     ensureIdsEverywhere();
     dedupeVehiclesByReg();
     dedupeSalesById();
     saveDB();
+
+    try {
+      if (window.changeTracker) {
+        changeTracker.saveSnapshot();
+        changeTracker.clearChanges();
+      }
+    } catch (e) {
+      console.warn('Snapshot reset after pull failed', e);
+    }
+
     try { renderAlertBell(); } catch (_) {}
     addAudit('sync', 'pull', db.company.gistId || '', 'Pulled from Gist (arrays merged by id, deletions respected)');
     alert('Pulled & merged from Gist (arrays merged by id; deletions synced)');
@@ -1667,10 +1677,7 @@ function setTab(t){ currentTab=t; render(); }
 function renderNav(){ const nav=document.getElementById('nav'); nav.innerHTML=''; TABS.forEach(t=>{ if(!canTab(t)) return; if(t==='Settings'&&!canSettings()) return; const b=document.createElement('button'); b.textContent=t; if(t===currentTab) b.classList.add('active'); b.onclick=()=>setTab(t); nav.appendChild(b); }); }
 
 function ensureIdsEverywhere(){
-  const sections = [
-    'vehicles','sales','vehicleExpenses','showroomExpenses','credits','complaints',
-    'investors','partners','todo','users','purchaseInvoices','audit'
-  ];
+  const sections = ['vehicles','sales','expenses','vehicleExpenses','showroomExpenses','credits','complaints','investors','partners','todo','users','purchaseInvoices','audit'];
   sections.forEach(sec=>{
     if (!Array.isArray(db[sec])) return;
     db[sec].forEach(item=>{
@@ -3444,7 +3451,7 @@ function printCreditInvoice(creditId){
 
   const co = db.company || {};
   const fontPx  = Number(co.invoiceFontPx || 12);
-  const termsPx = Number(co.termsFontPx || 10);
+  const termsPx = Number(co.termsFontPx || 8);
 
   const title = cr.type === 'credit_note' ? 'CREDIT NOTE' : 'REFUND RECEIPT';
   const refNo = 'CR' + (cr.id || '').slice(-6).toUpperCase();
@@ -3733,7 +3740,7 @@ function printPurchaseInvoice(purchaseId){
 
   const co = db.company || {};
   const fontPx  = Number(co.invoiceFontPx || 12);
-  const termsPx = Number(co.termsFontPx || 10);
+  const termsPx = Number(co.termsFontPx || 8);
 
   const refNo = 'PI' + (pi.id || '').slice(-6).toUpperCase();
 
@@ -4076,7 +4083,7 @@ function printInvoice(saleId){
   const v  = db.vehicles.find(x => x.id === s.vehicleId) || {};
   const co = db.company || {};
   const fontPx  = Number(co.invoiceFontPx || 12);
-  const termsPx = Number(co.termsFontPx || 10);
+  const termsPx = Number(co.termsFontPx || 8);
 
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Invoice</title>
   <style>
@@ -4136,10 +4143,11 @@ function printInvoice(saleId){
       <th style="width:30%">Invoice To:</th>
       <td>${s.buyer||''}<br>${s.address||''}<br>${s.phone||''} ${s.email||''}</td>
     </tr>
+    ${String(s.deliverTo||'').trim() ? `
     <tr>
       <th>Deliver To:</th>
       <td>${s.deliverTo||''}</td>
-    </tr>
+    </tr>` : ``}
   </table>
 
   <!-- Vehicle block -->
@@ -4164,7 +4172,7 @@ function printInvoice(saleId){
   </table>
 
   <!-- Terms -->
-  <div style="margin-top:10px">
+  <div style="margin-top:8px">
     <div style="font-weight:700;margin-bottom:4px">Terms:</div>
     <div class="terms">${String(co.terms||'').replace(/\n/g,'<br>')}</div>
   </div>
@@ -4253,7 +4261,7 @@ function printFinanceProforma(saleId){
   const v  = db.vehicles.find(x => x.id === s.vehicleId) || {};
   const co = db.company || {};
   const fontPx  = Number(co.invoiceFontPx || 12);
-  const termsPx = Number(co.termsFontPx || 10);
+  const termsPx = Number(co.termsFontPx || 8);
 
   const logo = (co.logo||'').trim()
     ? `<img src="${co.logo}" style="max-width:${Number(co.logoMaxW||140)}px;max-height:${Number(co.logoMaxH||80)}px;object-fit:contain">`
@@ -4336,10 +4344,11 @@ function printFinanceProforma(saleId){
       <th style="width:30%">Invoice To:</th>
       <td>${s.financeCompany||''}<br>${s.address||''}</td>
     </tr>
+    ${String(s.deliverTo||'').trim() ? `
     <tr>
       <th>Deliver To:</th>
       <td>${s.deliverTo||''}</td>
-    </tr>
+    </tr>` : ``}
   </table>
 
   <!-- Vehicle block -->
@@ -5068,7 +5077,7 @@ function viewSettings(){
     <div class="row"><textarea id="c_finTerms" placeholder="Finance-specific Terms (optional) — used on the Finance Proforma only if filled.">${db.company.financeTerms||''}</textarea></div>
     <div class="row">
       <label class="small">Invoice Font Size px <input id="c_invFont" type="number" min="9" max="18" value="${db.company.invoiceFontPx||12}"></label>
-      <label class="small">Terms Font Size px <input id="c_termsFont" type="number" min="8" max="14" value="${db.company.termsFontPx||10}"></label>
+      <label class="small">Terms Font Size px <input id="c_termsFont" type="number" min="8" max="14" value="${db.company.termsFontPx||8}"></label>
       <label class="small">Logo Max-W px <input id="c_logoW" type="number" min="80" max="300" value="${db.company.logoMaxW||140}"></label>
       <label class="small">Logo Max-H px <input id="c_logoH" type="number" min="50" max="200" value="${db.company.logoMaxH||80}"></label>
     </div>
@@ -5123,7 +5132,7 @@ function viewSettings(){
         db.company.terms=document.getElementById('c_terms').value;
         db.company.financeTerms=document.getElementById('c_finTerms').value;
         db.company.invoiceFontPx=Number(document.getElementById('c_invFont').value||12);
-        db.company.termsFontPx=Number(document.getElementById('c_termsFont').value||10);
+        db.company.termsFontPx=Number(document.getElementById('c_termsFont').value||8);
         db.company.logoMaxW=Number(document.getElementById('c_logoW').value||140);
         db.company.logoMaxH=Number(document.getElementById('c_logoH').value||80);
         db.company.dvlaProxy=document.getElementById('c_dvlaProxy').value||'';
