@@ -1354,7 +1354,9 @@ async function syncPull() {
     db.company = db.company || {};
     if (db.company.invoiceFontPx != null) db.company.invoiceFontPx = Number(db.company.invoiceFontPx || 12);
     if (db.company.termsFontPx  != null) db.company.termsFontPx  = Number(db.company.termsFontPx  || 10);
-
+    ensureIdsEverywhere();
+    dedupeVehiclesByReg();
+    dedupeSalesById();
     saveDB();
     try { renderAlertBell(); } catch (_) {}
     addAudit('sync', 'pull', db.company.gistId || '', 'Pulled from Gist (arrays merged by id, deletions respected)');
@@ -1395,19 +1397,7 @@ async function syncPullHard() {
     const gistId = (db.company.gistId || '').trim();
     if (!gistId) return alert('Enter Gist ID in Settings');
 
-    const r = await fetch(`https://api.github.com/gists/${gistId}`);
-    const txt = await r.text();
-    if (!r.ok) {
-      return alert('Gist fetch failed ' + r.status + ': ' + txt);
-    }
-
-    const j = JSON.parse(txt || '{}');
-    const file =
-      j.files && (j.files['starcars.json'] || Object.values(j.files)[0]);
-    if (!file || !file.content) {
-      return alert('No starcars.json in that Gist');
-    }
-
+    // ✅ IMPORTANT: use the safe reader that handles big/truncated gists
     const incoming = await readGistStarcarsJSON(gistId);
 
     recordPullActivity('pull-hard');
@@ -1419,16 +1409,22 @@ async function syncPullHard() {
     db.company = db.company || {};
     db.vehicles = db.vehicles || [];
     db.sales = db.sales || [];
-    db.expenses = db.expenses || [];
+    db.vehicleExpenses = db.vehicleExpenses || [];
+    db.showroomExpenses = db.showroomExpenses || [];
+    db.credits = db.credits || [];
+    db.complaints = db.complaints || [];
     db.investors = db.investors || [];
-    db.investorPayments = db.investorPayments || [];
-    db.warrantySales = db.warrantySales || [];
+    db.partners = db.partners || [];
+    db.todo = db.todo || [];
+    db.purchaseInvoices = db.purchaseInvoices || [];
     db.audit = db.audit || [];
     db.users = db.users || [];
-    db.company.autoSyncEnabled = db.company.autoSyncEnabled ?? false;   // default OFF
-    db.company.autoSyncSeconds = db.company.autoSyncSeconds || 120;     // default 120s
+    db.deleted = db.deleted || {};
 
-    // Normalise user permissions if helper exists
+    db.company.autoSyncEnabled = db.company.autoSyncEnabled ?? false;
+    db.company.autoSyncSeconds = db.company.autoSyncSeconds || 120;
+
+    // Normalise permissions
     if (typeof normalizePerms === 'function') {
       db.users = (db.users || []).map(u => {
         u.perms = normalizePerms(u.perms);
@@ -1436,9 +1432,19 @@ async function syncPullHard() {
       });
     }
 
+    // ✅ Ensure every record has an id (prevents duplicates)
+    ensureIdsEverywhere();
+
+    // ✅ Deduplicate (fix any duplicates already inside the gist)
+    dedupeVehiclesByReg();
+    dedupeSalesById();
+
+    // Apply deletions (if any)
+    if (typeof applyAllDeletions === 'function') applyAllDeletions();
+
     saveDB();
     try { renderAlertBell(); } catch (_) {}
-    addAudit('sync', 'pull-hard', gistId, 'HARD pull from Gist (full replace)');
+    addAudit('sync', 'pull-hard', gistId, 'HARD pull from Gist (full replace, safe raw_url, dedupe)');
     alert('HARD Pull complete: local data replaced with Gist data.');
     enablePushButton();
     markPullUsed();
@@ -1659,6 +1665,56 @@ function countChanges(changes) {
 const TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','To-Do','Users','Settings']; let currentTab=TABS[0];
 function setTab(t){ currentTab=t; render(); }
 function renderNav(){ const nav=document.getElementById('nav'); nav.innerHTML=''; TABS.forEach(t=>{ if(!canTab(t)) return; if(t==='Settings'&&!canSettings()) return; const b=document.createElement('button'); b.textContent=t; if(t===currentTab) b.classList.add('active'); b.onclick=()=>setTab(t); nav.appendChild(b); }); }
+
+function ensureIdsEverywhere(){
+  const sections = [
+    'vehicles','sales','vehicleExpenses','showroomExpenses','credits','complaints',
+    'investors','partners','todo','users','purchaseInvoices','audit'
+  ];
+  sections.forEach(sec=>{
+    if (!Array.isArray(db[sec])) return;
+    db[sec].forEach(item=>{
+      if (item && !item.id) item.id = uid();
+    });
+  });
+}
+
+function dedupeVehiclesByReg(){
+  if (!Array.isArray(db.vehicles)) return;
+  const seen = new Set();
+  const out = [];
+  // keep newest first if createdAt exists
+  const arr = db.vehicles.slice().sort((a,b)=>{
+    const da = (a && (a.createdAt || a.updatedAt)) ? String(a.createdAt || a.updatedAt) : '';
+    const dbb = (b && (b.createdAt || b.updatedAt)) ? String(b.createdAt || b.updatedAt) : '';
+    return dbb.localeCompare(da);
+  });
+
+  for(const v of arr){
+    const reg = String(v?.reg || '').toUpperCase().replace(/\s+/g,'').trim();
+    if(!reg){ out.push(v); continue; }
+    if(seen.has(reg)) continue;
+    seen.add(reg);
+    out.push(v);
+  }
+  db.vehicles = out;
+}
+
+function dedupeSalesById(){
+  if (!Array.isArray(db.sales)) return;
+  const byId = Object.create(null);
+  for (const s of db.sales){
+    if (!s) continue;
+    const id = s.id || uid();
+    s.id = id;
+    byId[id] = s;
+  }
+  db.sales = Object.values(byId).sort((a,b)=>{
+    const da = String(a.date || '');
+    const dbb = String(b.date || '');
+    return dbb.localeCompare(da);
+  });
+}
 
 function render(){
   if(!session){ showLogin(true); return; }
