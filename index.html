@@ -1363,6 +1363,7 @@ async function syncPull() {
     alert('Pulled & merged from Gist (arrays merged by id; deletions synced)');
     enablePushButton();
     markPullUsed();
+    if (!changeTracker.lastSnapshot) changeTracker.saveSnapshot();
     render();
   } catch (e) {
     alert('Pull failed: ' + e.message);
@@ -1448,6 +1449,7 @@ async function syncPullHard() {
     alert('HARD Pull complete: local data replaced with Gist data.');
     enablePushButton();
     markPullUsed();
+    if (!changeTracker.lastSnapshot) changeTracker.saveSnapshot();
     render();
   } catch (e) {
     alert('Hard Pull failed: ' + e.message);
@@ -2347,7 +2349,6 @@ if (motBtn) {
         return;
       }
 
-
       const vehicle = data[0];
       const tests = vehicle.motTests || [];
       const latest = tests[0];
@@ -2644,7 +2645,7 @@ function viewSales(){
   wrap.querySelector('#sales_month').value = currentFilter.month;
   
   function getFilteredSales() {
-    let sales = db.sales || [];
+    let sales = (db.sales || []).filter(s => !s.refunded);
     
     // Apply month filter if specified
     if (currentFilter.month) {
@@ -2986,7 +2987,7 @@ function viewSold(){
   }
   
   function getFilteredSales() {
-    let sales = db.sales || [];
+    let sales = (db.sales || []).filter(s => !s.refunded);
     
     // Apply month filter if specified
     if (currentFilter.month) {
@@ -3123,35 +3124,44 @@ function viewSold(){
 /* ========= Credit ========= */
 function viewCredit(){
   if(!canTab('Credit')) return document.createElement('div'); 
-  const wrap=document.createElement('div'); wrap.className='card';
+  const wrap=document.createElement('div'); 
+  wrap.className='card';
+
   wrap.innerHTML=`<h2>Credit Notes & Refunds</h2>
   <div class="row">
     <input id="cr_date" type="date">
     <input id="cr_customer" placeholder="Customer Name">
-    <input id="cr_vehicle" placeholder="Vehicle REG (if applicable)">
+    <input id="cr_vehicle" placeholder="Vehicle REG (type reg to auto-load sale)">
     <button id="cr_dvla">DVLA Lookup</button>
     <select id="cr_type">
-      <option value="refund">Refund</option>
+      <option value="refund">Refund (Return)</option>
       <option value="credit_note">Credit Note</option>
     </select>
     <select id="cr_method"><option value="bank">Bank</option><option value="cash">Cash</option></select>
-    <input id="cr_amount" type="number" placeholder="Amount £">
+    <input id="cr_amount" type="number" placeholder="Refund Paid £">
     <input id="cr_reason" placeholder="Reason for credit/refund">
-    <input id="cr_invoiceNo" placeholder="Invoice No">
+    <input id="cr_invoiceNo" placeholder="Invoice No (auto)">
     <button id="cr_add" class="primary">Add/Update Credit</button>
   </div>
-    <div class="row" style="margin-bottom:12px;">
+
+  <div class="row" style="margin:10px 0 12px;">
+    <div class="small" id="cr_saleHint" style="opacity:.85"></div>
+  </div>
+
+  <div class="row" style="margin-bottom:12px;">
     <input id="cr_search" placeholder="Search by customer, vehicle, invoice" style="min-width:320px">
     <button id="cr_clear_search">Clear</button>
   </div>
+
   <div class="row" id="cr_vehicleDetailsSection">
     <label>Make<input id="cr_make" placeholder="Vehicle Make"></label>
     <label>Model<input id="cr_model" placeholder="Vehicle Model"></label>
     <label>VIN<input id="cr_vin" placeholder="Vehicle VIN"></label>
-    <label>Mileage<input id="cr_mileage" type="number" placeholder="Mileage"></label>
+    <label>Return Mileage<input id="cr_mileage" type="number" placeholder="Mileage on return"></label>
     <label>Colour<input id="cr_colour" placeholder="Vehicle Colour"></label>
     <label>Fuel<input id="cr_fuel" placeholder="Fuel Type"></label>
   </div>
+
   <table class="table" style="margin-top:10px">
     <thead>
       <tr>
@@ -3160,27 +3170,105 @@ function viewCredit(){
         <th>Vehicle</th>
         <th>Type</th>
         <th>Method</th>
-        <th class="right">Amount</th>
+        <th class="right">Refund Paid</th>
         <th>Reason</th>
         <th>Invoice No</th>
-        <th>In Stock</th>
+        <th>Returned To Stock</th>
         <th>Actions</th>
       </tr>
     </thead>
     <tbody id="cr_body"></tbody>
   </table>`;
-  
-  const body=wrap.querySelector('#cr_body');
-  let editId=null;
-  
-  // DVLA Lookup for Credit tab - Updated to populate individual fields
+
+  const body = wrap.querySelector('#cr_body');
+  let editId = null;
+
+  // This holds the SOLD sale we auto-found from REG
+  let linkedSale = null;
+  let linkedVehicle = null;
+
+  // Default date = today
+  wrap.querySelector('#cr_date').value = new Date().toISOString().slice(0,10);
+
+  function money(n){ return fmtMoney(Number(n||0)); }
+
+  function findLatestSaleByReg(reg){
+    reg = (reg||'').trim().toUpperCase();
+    if(!reg) return null;
+
+    // Find vehicle by reg (even if sold)
+    const v = (db.vehicles||[]).find(x => (x.reg||'').toUpperCase() === reg);
+    if(!v) return null;
+
+    // Find latest sale for that vehicleId
+    const sales = (db.sales||[]).filter(s => s.vehicleId === v.id);
+    if(!sales.length) return null;
+
+    sales.sort((a,b)=> String(b.date||'').localeCompare(String(a.date||'')));
+    return { sale: sales[0], vehicle: v };
+  }
+
+  function setSaleHint(){
+    const hint = wrap.querySelector('#cr_saleHint');
+    if(!linkedSale || !linkedVehicle){
+      hint.textContent = 'Tip: Type a REG that was sold and it will auto-load the sold invoice + price + buyer.';
+      return;
+    }
+    hint.textContent =
+      `Linked SOLD: ${linkedVehicle.reg} | Inv ${linkedSale.invNo||''} | Sold ${money(linkedSale.salePrice)} | Sold mileage ${linkedSale.mileage||0} | Buyer: ${linkedSale.buyer||''}`;
+  }
+
+  function loadFromReg(){
+    const reg = (wrap.querySelector('#cr_vehicle').value||'').trim().toUpperCase();
+    linkedSale = null; 
+    linkedVehicle = null;
+
+    // Clear auto fields first
+    wrap.querySelector('#cr_invoiceNo').value = '';
+    // Customer stays if user typed it, but we will overwrite if we find a sale.
+
+    if(!reg){
+      setSaleHint();
+      return;
+    }
+
+    const res = findLatestSaleByReg(reg);
+    if(!res){
+      setSaleHint();
+      return;
+    }
+
+    linkedSale = res.sale;
+    linkedVehicle = res.vehicle;
+
+    // Auto-fill from sale + vehicle
+    wrap.querySelector('#cr_customer').value = linkedSale.buyer || wrap.querySelector('#cr_customer').value || '';
+    wrap.querySelector('#cr_invoiceNo').value = linkedSale.invNo || '';
+    wrap.querySelector('#cr_make').value = linkedVehicle.make || '';
+    wrap.querySelector('#cr_model').value = linkedVehicle.model || '';
+    wrap.querySelector('#cr_vin').value = linkedVehicle.vin || '';
+    wrap.querySelector('#cr_colour').value = linkedVehicle.colour || '';
+    wrap.querySelector('#cr_fuel').value = linkedVehicle.fuel || '';
+    // Put sold mileage as default return mileage (user can change)
+    wrap.querySelector('#cr_mileage').value = Number(linkedSale.mileage||linkedVehicle.mileage||0);
+
+    setSaleHint();
+  }
+
+  // Auto-load when REG changes
+  wrap.querySelector('#cr_vehicle').addEventListener('input', () => {
+    // Avoid re-running on every keystroke if you want: keep as-is for now
+    loadFromReg();
+  });
+
+  // DVLA Lookup for Credit tab (unchanged logic from your file, just kept here)
   wrap.querySelector('#cr_dvla').onclick = async () => {
     const reg = (wrap.querySelector('#cr_vehicle').value || '').trim().toUpperCase();
     if (!reg) return alert('Enter REG first');
-    
+
     const url = db.company.dvlaProxy || '';
     if (!url) return alert('Add DVLA Proxy URL in Settings.');
-    
+
     try {
       const rsp = await fetch(url, {
         method: 'POST',
@@ -3190,263 +3278,238 @@ function viewCredit(){
           apiKey: (db.company.dvlaKey || db.company.dvsaKey || '')
         })
       });
-      
+
       const txt = await rsp.text();
       if (!rsp.ok) {
         alert('Proxy error ' + rsp.status + ': ' + txt);
         return;
       }
-      
+
       const j = JSON.parse(txt || '{}');
-      
-      // Populate individual fields from DVLA data
+
       if (j.make || j.raw?.make) wrap.querySelector('#cr_make').value = j.make || j.raw.make || '';
       if (j.model) wrap.querySelector('#cr_model').value = j.model || '';
       if (j.colour || j.raw?.colour) wrap.querySelector('#cr_colour').value = j.colour || j.raw.colour || '';
       if (j.fuel || j.raw?.fuelType) wrap.querySelector('#cr_fuel').value = (j.fuel || j.raw.fuelType || '').toString().toUpperCase();
       if (j.vin || j.raw?.vin) wrap.querySelector('#cr_vin').value = j.vin || j.raw.vin || '';
-      
+
       alert('DVLA lookup completed. Vehicle details filled.');
-      
     } catch (err) {
       alert('DVLA lookup failed: ' + err.message);
     }
   };
-  
-  function renderCredits() {
-    const searchTerm = (wrap.querySelector('#cr_search')?.value || '').toLowerCase().trim(); // Get search value
+
+  function renderCredits(){
+    const searchTerm = (wrap.querySelector('#cr_search')?.value || '').toLowerCase().trim();
     body.innerHTML = '';
 
-    // Filter credits based on the search term
     const filtered = (db.credits || []).filter(cr => {
-        return !searchTerm || 
-               (cr.customer?.toLowerCase().includes(searchTerm)) ||  // Match customer
-               (cr.vehicle?.toLowerCase().includes(searchTerm)) ||   // Match vehicle
-               (cr.invoiceNo?.toLowerCase().includes(searchTerm));  // Match invoice
+      return !searchTerm ||
+        (cr.customer||'').toLowerCase().includes(searchTerm) ||
+        (cr.vehicle||'').toLowerCase().includes(searchTerm) ||
+        (cr.invoiceNo||'').toLowerCase().includes(searchTerm);
     });
 
     filtered.forEach(cr => {
-        const inStock = (db.vehicles||[]).some(v => v.reg === cr.vehicle && v.status === 'for sale');
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${ddmmyyyy(cr.date)}</td>
-                        <td>${cr.customer||''}</td>
-                        <td>${cr.vehicle||''}</td>
-                        <td>${cr.type||''}</td>
-                        <td>${cr.method||'bank'}</td>
-                        <td class="right">${fmtMoney(cr.amount)}</td>
-                        <td>${cr.reason||''}</td>
-                        <td>${cr.invoiceNo || ''}</td>
-                        <td>${cr.vehicle && inStock ? '✅' : ''}</td>
-                        <td>
-                          <button data-act="edit" data-id="${cr.id}">Edit</button>
-                          <button class="danger" data-act="del" data-id="${cr.id}">Delete</button>
-                        </td>`;
-        body.appendChild(tr);
+      const inStock = !!(cr.vehicle && (db.vehicles||[]).some(v => (v.reg||'') === cr.vehicle && v.status === 'for sale'));
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${ddmmyyyy(cr.date)}</td>
+        <td>${cr.customer||''}</td>
+        <td>${cr.vehicle||''}</td>
+        <td>${cr.type||''}</td>
+        <td>${cr.method||'bank'}</td>
+        <td class="right">${fmtMoney(cr.amount)}</td>
+        <td>${cr.reason||''}</td>
+        <td>${cr.invoiceNo||''}</td>
+        <td>${cr.type==='refund' && inStock ? '✅' : ''}</td>
+        <td>
+          <button data-act="edit" data-id="${cr.id}">Edit</button>
+          <button class="danger" data-act="del" data-id="${cr.id}">Delete</button>
+        </td>`;
+      body.appendChild(tr);
     });
   }
-  
-  // Handle search input
-  wrap.querySelector('#cr_search').addEventListener('input', () => renderCredits());
 
-  // Handle clear search
+  wrap.querySelector('#cr_search').addEventListener('input', renderCredits);
   wrap.querySelector('#cr_clear_search').addEventListener('click', () => {
     wrap.querySelector('#cr_search').value = '';
     renderCredits();
   });
 
+  function clearForm(){
+    wrap.querySelector('#cr_customer').value = '';
+    wrap.querySelector('#cr_vehicle').value = '';
+    wrap.querySelector('#cr_amount').value = '';
+    wrap.querySelector('#cr_reason').value = '';
+    wrap.querySelector('#cr_invoiceNo').value = '';
+    wrap.querySelector('#cr_make').value = '';
+    wrap.querySelector('#cr_model').value = '';
+    wrap.querySelector('#cr_vin').value = '';
+    wrap.querySelector('#cr_mileage').value = '';
+    wrap.querySelector('#cr_colour').value = '';
+    wrap.querySelector('#cr_fuel').value = '';
+    linkedSale = null;
+    linkedVehicle = null;
+    setSaleHint();
+  }
+
+  // MAIN: Add / Update credit
   wrap.querySelector('#cr_add').onclick = () => {
-  if (!canAction('add')) return alert('No permission');
-  
-  const currentReg = wrap.querySelector('#cr_vehicle').value.trim().toUpperCase();
+    if (!canAction('add')) return alert('No permission');
 
-  let prevCredit = null;
-  let oldReg = null;
-  if (editId) {
-    prevCredit = (db.credits||[]).find(x => x.id === editId);
-    oldReg = prevCredit ? prevCredit.vehicle : null;
-  }
+    const reg = (wrap.querySelector('#cr_vehicle').value || '').trim().toUpperCase();
+    const type = wrap.querySelector('#cr_type').value;
 
-  const cr = {
-    id: editId || uid(),
-    date: wrap.querySelector('#cr_date').value,
-    customer: wrap.querySelector('#cr_customer').value.trim(),
-    vehicle: currentReg,
-    type: wrap.querySelector('#cr_type').value,
-    method: wrap.querySelector('#cr_method').value,
-    amount: Number(wrap.querySelector('#cr_amount').value || 0),
-    reason: wrap.querySelector('#cr_reason').value.trim(),
-    invoiceNo: wrap.querySelector('#cr_invoiceNo')?.value.trim() || '',
-    make: wrap.querySelector('#cr_make').value.trim(),
-    model: wrap.querySelector('#cr_model').value.trim(),
-    vin: wrap.querySelector('#cr_vin').value.trim(),
-    mileage: Number(wrap.querySelector('#cr_mileage').value || 0),
-    colour: wrap.querySelector('#cr_colour').value.trim(),
-    fuel: wrap.querySelector('#cr_fuel').value.trim()
-  };
+    // Ensure we refresh linkage (in case user pasted reg)
+    loadFromReg();
 
-  if (!cr.date || !cr.customer || !cr.amount) {
-    return alert('Date, Customer and Amount are required');
-  }
+    const refundPaid = Number(wrap.querySelector('#cr_amount').value || 0);
 
-  // ADD MODE: Add to stock if it's a refund & vehicle doesn't exist.
-  if (cr.type === 'refund' && cr.vehicle && !editId) {
-    if (!cr.make.trim() || !cr.model.trim()) {
-      return alert('Please provide vehicle Make and Model for refunds with vehicle REG');
-    }
-    
-    // Check if vehicle already exists in stock
-    const existingVehicle = (db.vehicles||[]).find(v => v.reg === cr.vehicle);
-    if (existingVehicle) {
-      return alert(`Vehicle ${cr.vehicle} already exists in stock`);
-    }
-    
-    const vehicle = {
-      id: uid(),
-      reg: cr.vehicle,
-      make: cr.make,
-      model: cr.model,
-      colour: cr.colour,
-      fuel: cr.fuel,
-      mileage: cr.mileage,
-      purchase: cr.amount,
-      ownerType: 'owned',
-      investor: '',
-      supplier: `Refund from ${cr.customer}`,
-      vin: cr.vin,
-      status: 'for sale',
-      createdAt: cr.date || new Date().toISOString(),
-      media: [],
-      video: ''
+    const cr = {
+      id: editId || uid(),
+      date: wrap.querySelector('#cr_date').value,
+      customer: wrap.querySelector('#cr_customer').value.trim(),
+      vehicle: reg,
+      type: type,
+      method: wrap.querySelector('#cr_method').value,
+      amount: refundPaid,
+      reason: wrap.querySelector('#cr_reason').value.trim(),
+      invoiceNo: wrap.querySelector('#cr_invoiceNo').value.trim(),
+
+      // NEW: link back to the sale + keep a snapshot
+      saleId: linkedSale ? linkedSale.id : null,
+      soldPrice: linkedSale ? Number(linkedSale.salePrice||0) : 0,
+      soldInvNo: linkedSale ? (linkedSale.invNo||'') : '',
+      soldMileage: linkedSale ? Number(linkedSale.mileage||0) : 0,
+      returnMileage: Number(wrap.querySelector('#cr_mileage').value || 0),
+
+      // NEW: expense link id (so we don't create duplicates)
+      costAdjustExpenseId: (editId ? (db.credits||[]).find(x=>x.id===editId)?.costAdjustExpenseId : null) || null
     };
-    db.vehicles.unshift(vehicle);
-    addAudit('add','vehicle',vehicle.id,`Added to stock from refund - ${vehicle.reg}`);
-  }
 
-  // EDIT MODE: If REG is changed, update vehicle in stock with oldReg
-  if (editId) {
-    db.credits = db.credits.map(x => x.id === editId ? cr : x);
-    addAudit('update','credit',cr.id,`${cr.type} for ${cr.customer} - ${fmtMoney(cr.amount)}`);
+    if(!cr.date || !cr.customer || !cr.type || (!cr.amount && cr.type==='refund')){
+      return alert('Date + Customer + Refund Paid are required.');
+    }
 
-    // If REG changed and there is a stock vehicle with old REG, update its REG field.
-    if (oldReg && oldReg !== currentReg) {
-      const vehicle = (db.vehicles||[]).find(v => v.reg === oldReg);
-      if (vehicle) {
-        // Ensure new REG does not conflict with another vehicle in stock
-        const regTaken = (db.vehicles||[]).some(v => v.reg === currentReg);
-        if (regTaken) {
-          alert(`Cannot update REG in stock: vehicle with REG ${currentReg} already exists.`);
-        } else {
-          vehicle.reg = currentReg;
-          addAudit('update','vehicle',vehicle.id,`Vehicle REG updated from ${oldReg} to ${currentReg} (from credit edit)`);
+    // If REFUND: return to stock + add negative expense to reduce cost
+    if(type === 'refund' && reg){
+      const v = (db.vehicles||[]).find(x => (x.reg||'').toUpperCase() === reg);
+      if(v){
+        // Return to stock
+        v.status = 'for sale';
+        if(cr.returnMileage) v.mileage = cr.returnMileage;
+
+        // If we have a linked sale price, calculate "kept amount"
+        const soldPrice = cr.soldPrice || 0;
+        const kept = soldPrice - refundPaid; // e.g. 8399 - 8099 = 300
+
+        // Only apply adjustment if we actually know sold price and kept > 0
+        if(soldPrice > 0 && kept !== 0){
+          db.vehicleExpenses = db.vehicleExpenses || [];
+          let ex = cr.costAdjustExpenseId ? (db.vehicleExpenses||[]).find(e=>e.id===cr.costAdjustExpenseId) : null;
+
+          const expObj = {
+            id: ex ? ex.id : uid(),
+            vehicleId: v.id,
+            date: cr.date,
+            type: 'Credit/Return Adjustment',
+            method: cr.method || 'bank',
+            amount: -Number(kept), // negative reduces total cost
+            note: `Credit return: sold ${soldPrice}, refund paid ${refundPaid}, kept ${kept}. Inv ${cr.invoiceNo||cr.soldInvNo||''}`
+          };
+
+          if(ex){
+            db.vehicleExpenses = db.vehicleExpenses.map(e => e.id===ex.id ? expObj : e);
+          }else{
+            db.vehicleExpenses.unshift(expObj);
+          }
+          cr.costAdjustExpenseId = expObj.id;
         }
       }
     }
-    editId = null;
-  } else {
-    db.credits = db.credits || [];
-    db.credits.unshift(cr);
-    addAudit('add','credit',cr.id,`${cr.type} for ${cr.customer} - ${fmtMoney(cr.amount)}`);
-  }
 
-  saveDB(); 
-  try{renderAlertBell();}catch(e){}
-  renderCredits();
-  
-  // Clear form
-  wrap.querySelector('#cr_customer').value = '';
-  wrap.querySelector('#cr_vehicle').value = '';
-  wrap.querySelector('#cr_amount').value = '';
-  wrap.querySelector('#cr_reason').value = '';
-  wrap.querySelector('#cr_invoiceNo').value = '';
-  wrap.querySelector('#cr_make').value = '';
-  wrap.querySelector('#cr_model').value = '';
-  wrap.querySelector('#cr_vin').value = '';
-  wrap.querySelector('#cr_mileage').value = '';
-  wrap.querySelector('#cr_colour').value = '';
-  wrap.querySelector('#cr_fuel').value = '';
+    // Mark the original sale as refunded so it does not appear in sales/sold/reports
+    if (type === 'refund' && linkedSale && linkedSale.id) {
+      const sale = (db.sales||[]).find(s => s.id === linkedSale.id);
+      if (sale) {
+        sale.refunded = true;
+        saveDB();
+      }
+    }
+
+    if(editId){
+      db.credits = (db.credits||[]).map(x => x.id===editId ? cr : x);
+      addAudit('update','credit',cr.id,`${cr.type} for ${cr.customer} - ${fmtMoney(cr.amount)}`);
+      editId = null;
+    }else{
+      db.credits = db.credits || [];
+      db.credits.unshift(cr);
+      addAudit('add','credit',cr.id,`${cr.type} for ${cr.customer} - ${fmtMoney(cr.amount)}`);
+    }
+
+    saveDB();
+    try{renderAlertBell();}catch(e){}
+    renderCredits();
+    clearForm();
   };
-  
+
   wrap.addEventListener('click',(ev)=>{
-    const b=ev.target.closest('button'); 
-    if(!b) return; 
+    const b=ev.target.closest('button');
+    if(!b) return;
+
     const id=b.dataset.id, act=b.dataset.act;
-    
+
     if(act==='del'){
       if(!canAction('del')) return alert('No permission');
       if(!confirm('Delete this credit/refund?')) return;
-      const delCr=db.credits.find(x=>x.id===id);
-      db.credits=db.credits.filter(x=>x.id!==id);
-      saveDB(); 
+
+      const delCr = (db.credits||[]).find(x=>x.id===id);
+
+      // Also delete linked adjustment expense (if any)
+      if(delCr && delCr.costAdjustExpenseId){
+        db.vehicleExpenses = (db.vehicleExpenses||[]).filter(e => e.id !== delCr.costAdjustExpenseId);
+      }
+
+      db.credits = (db.credits||[]).filter(x=>x.id!==id);
+
+      saveDB();
       try{renderAlertBell();}catch(e){}
       addAudit('delete','credit',id,delCr?`${delCr.type} for ${delCr.customer}`:'');
       renderCredits();
     }
-    else if(act==='edit'){
+
+    if(act==='edit'){
       if(!canAction('edit')) return alert('No permission');
-      const cr=db.credits.find(x=>x.id===id);
+      const cr = (db.credits||[]).find(x=>x.id===id);
+      if(!cr) return;
+
       editId=id;
-      wrap.querySelector('#cr_date').value=cr.date;
-      wrap.querySelector('#cr_customer').value=cr.customer||'';
-      wrap.querySelector('#cr_vehicle').value=cr.vehicle||'';
-      wrap.querySelector('#cr_type').value=cr.type||'refund';
-      wrap.querySelector('#cr_method').value=cr.method||'bank';
-      wrap.querySelector('#cr_amount').value=cr.amount||0;
-      wrap.querySelector('#cr_reason').value=cr.reason||'';
-      wrap.querySelector('#cr_invoiceNo').value=cr.invoiceNo||'';
-      wrap.querySelector('#cr_make').value=cr.make||'';
-      wrap.querySelector('#cr_model').value=cr.model||'';
-      wrap.querySelector('#cr_vin').value=cr.vin||'';
-      wrap.querySelector('#cr_mileage').value=cr.mileage||0;
-      wrap.querySelector('#cr_colour').value=cr.colour||'';
-      wrap.querySelector('#cr_fuel').value=cr.fuel||'';
+
+      wrap.querySelector('#cr_date').value = cr.date || '';
+      wrap.querySelector('#cr_customer').value = cr.customer || '';
+      wrap.querySelector('#cr_vehicle').value = cr.vehicle || '';
+      wrap.querySelector('#cr_type').value = cr.type || 'refund';
+      wrap.querySelector('#cr_method').value = cr.method || 'bank';
+      wrap.querySelector('#cr_amount').value = Number(cr.amount||0);
+      wrap.querySelector('#cr_reason').value = cr.reason || '';
+      wrap.querySelector('#cr_invoiceNo').value = cr.invoiceNo || '';
+
+      wrap.querySelector('#cr_make').value = cr.make || '';
+      wrap.querySelector('#cr_model').value = cr.model || '';
+      wrap.querySelector('#cr_vin').value = cr.vin || '';
+      wrap.querySelector('#cr_mileage').value = Number(cr.returnMileage||cr.mileage||0);
+      wrap.querySelector('#cr_colour').value = cr.colour || '';
+      wrap.querySelector('#cr_fuel').value = cr.fuel || '';
+
+      // Reload linkage hint
+      loadFromReg();
+
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
     }
-    else if(act==='print'){
-      printCreditInvoice(id);
-    }
-    else if(act==='addToStock'){
-      const cr=db.credits.find(x=>x.id===id);
-      if(!cr || !cr.vehicle) return;
-      
-      // Check if vehicle already exists in stock
-      const existingVehicle = (db.vehicles||[]).find(v => v.reg === cr.vehicle);
-      if(existingVehicle) {
-        return alert(`Vehicle ${cr.vehicle} already exists in stock`);
-      }
-      
-      // Use existing vehicle details from the credit record
-      if(!cr.make || !cr.model) {
-        return alert('Vehicle Make and Model are required to add to stock');
-      }
-      
-      const vehicle = {
-        id: uid(),
-        reg: cr.vehicle,
-        make: cr.make,
-        model: cr.model,
-        colour: cr.colour || '',
-        fuel: cr.fuel || '',
-        mileage: cr.mileage || 0,
-        purchase: cr.amount,
-        ownerType: 'owned',
-        investor: '',
-        supplier: `Refund from ${cr.customer}`,
-        vin: cr.vin || '',
-        status: 'for sale',
-        createdAt: cr.date || new Date().toISOString(),
-        media: [],
-        video: ''
-      };
-      
-      db.vehicles.unshift(vehicle);
-      saveDB();
-      try{renderAlertBell();}catch(e){}
-      addAudit('add','vehicle',vehicle.id,`Added to stock from refund - ${vehicle.reg}`);
-      alert(`Vehicle ${cr.vehicle} added to stock`);
-      renderCredits();
-    }
   });
-  
+
+  setSaleHint();
   renderCredits();
   return wrap;
 }
@@ -4159,10 +4222,12 @@ function printInvoice(saleId){
       <th style="width:30%">Invoice To:</th>
       <td>${s.buyer||''}<br>${s.address||''}<br>${s.phone||''} ${s.email||''}</td>
     </tr>
+    ${s.deliverTo && s.deliverTo.trim() ? `
     <tr>
       <th>Deliver To:</th>
       <td>${s.deliverTo||''}</td>
     </tr>
+    ` : ``}
   </table>
 
   <!-- Vehicle block -->
@@ -4208,7 +4273,7 @@ function printInvoice(saleId){
     <span class="sigLine"></span>
   </div>
 
-  ${hasPX(s) || s.deliverTo ? `
+  ${hasPX(s) ? `
   <div class="bottomWrap">
   <table class="bottomTbl" style="width:100%;border-collapse:collapse">
     <tr>
@@ -4357,12 +4422,14 @@ function printFinanceProforma(saleId){
   <table class="tight">
     <tr>
       <th style="width:30%">Invoice To:</th>
-      <td>${s.financeCompany||''}<br>${s.address||''}</td>
+      <td>${s.buyer||''}<br>${s.address||''}<br>${s.phone||''} ${s.email||''}</td></td>
     </tr>
+    ${s.deliverTo && s.deliverTo.trim() ? `
     <tr>
       <th>Deliver To:</th>
       <td>${s.deliverTo||''}</td>
     </tr>
+    ` : ``}
   </table>
 
   <!-- Vehicle block -->
@@ -4408,7 +4475,7 @@ function printFinanceProforma(saleId){
     <span class="sigLine"></span>
   </div>
 
-  ${hasPX(s) || s.deliverTo ? `
+  ${hasPX(s) ? `
   <div class="bottomWrap">
   <table class="bottomTbl" style="width:100%;border-collapse:collapse">
     <tr>
@@ -4537,7 +4604,7 @@ function viewReports(){
   /* Month Close */
   function calcMonthClose(k){
     const showroomMonthTotal = (db.showroomExpenses||[]).filter(e=>ymStr(e.date)===k).reduce((t,e)=>t+Number(e.amount||0),0);
-    const sold=(db.sales||[]).filter(s=>ymStr(s.date)===k);
+    const sold=(db.sales||[]).filter(s=>ymStr(s.date)===k && !s.refunded);
     const items=sold.map(s=>{
       const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
       const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,x)=>t+Number(x.amount||0),0);
@@ -4960,15 +5027,24 @@ function viewComplaints(){
       wrap.querySelector('#comp_cost').value = comp.cost || '';
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
     }
+    
     else if(act === 'del') {
       if(!canAction('del')) return alert('No permission');
       if(!confirm('Delete this complaint?')) return;
+
+      const delComp = db.complaints.find(x => x.id === id);
+
+      // ADD THIS LINE to track the deletion for syncing:
+      markDeleted('complaints', id);
+
       db.complaints = db.complaints.filter(x => x.id !== id);
+
       saveDB();
       try{renderAlertBell();}catch(e){}
       addAudit('delete', 'complaint', id, `${comp.customer} - ${comp.type}`);
       renderComplaints();
     }
+
   });
   
   // Filter handlers
@@ -5083,7 +5159,7 @@ function viewSettings(){
     <div class="row"><input id="c_name" placeholder="Company name" value="${db.company.name||''}"></div>
     <div class="row"><input id="c_addr" placeholder="Address" value="${db.company.address||''}" style="min-width:420px"></div>
     <div class="row"><input id="c_phone" placeholder="Phone" value="${db.company.phone||''}"><input id="c_email" placeholder="Email" value="${db.company.email||''}"></div>
-    <div class="row"><input id="c_vat" placeholder="VAT Number" value="${db.company.vatNumber||''}"><input id="c_co" placeholder="Company Number" value="${db.company.companyNumber||''}"></div>
+    <div class="row"><input id="c_vat" placeholder="VAT Number" value="${db.company.vatNumber||''}"><input id="c_co" placeholder="Company Number" value="${db.company.companyNumber||''}"><input id="c_fca" placeholder="FCA Number" value="${db.company.fcaNumber||''}"></div>
     <div class="row"><input id="c_logo" placeholder="Logo URL (optional)" value="${db.company.logo||''}"></div>
     <div class="row"><label>Upload Logo<input id="c_logoUpload" type="file" accept="image/*"></label><span class="small">Stored locally as data-URL</span></div>
     <div class="row"><label class="small">Opening Bank £ <input id="c_bank" type="number" value="${db.company.openingBank||0}"></label><label class="small">Opening Cash £ <input id="c_cash" type="number" value="${db.company.openingCash||0}"></label></div>
@@ -5136,11 +5212,12 @@ function viewSettings(){
     wrap.querySelector('#c_save').onclick=()=>{
         db.company.name=document.getElementById('c_name').value;
         db.company.address=document.getElementById('c_addr').value;
-        db.company.phone=document.getElementById('c_phone').value; // Fixed selector
-        db.company.email=document.getElementById('c_email').value; // Fixed selector
-        db.company.vatNumber=document.getElementById('c_vat').value; // Fixed selector
-        db.company.companyNumber=document.getElementById('c_co').value; // Fixed selector
-        db.company.logo=document.getElementById('c_logo').value; // Fixed selector
+        db.company.phone=document.getElementById('c_phone').value;
+        db.company.email=document.getElementById('c_email').value;
+        db.company.vatNumber=document.getElementById('c_vat').value;
+        db.company.companyNumber=document.getElementById('c_co').value;
+        db.company.fcaNumber = document.getElementById('c_fca').value;
+        db.company.logo=document.getElementById('c_logo').value;
         db.company.openingBank=Number(document.getElementById('c_bank').value||0);
         db.company.openingCash=Number(document.getElementById('c_cash').value||0);
         db.company.terms=document.getElementById('c_terms').value;
