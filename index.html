@@ -1357,6 +1357,7 @@ async function syncPull() {
     ensureIdsEverywhere();
     dedupeVehiclesByReg();
     dedupeSalesById();
+    dedupeShowroomExpenses();
     saveDB();
     try { renderAlertBell(); } catch (_) {}
     addAudit('sync', 'pull', db.company.gistId || '', 'Pulled from Gist (arrays merged by id, deletions respected)');
@@ -1432,15 +1433,12 @@ async function syncPullHard() {
         return u;
       });
     }
-
-    // ✅ Ensure every record has an id (prevents duplicates)
+    
     ensureIdsEverywhere();
-
-    // ✅ Deduplicate (fix any duplicates already inside the gist)
     dedupeVehiclesByReg();
     dedupeSalesById();
+    dedupeShowroomExpenses();
 
-    // Apply deletions (if any)
     if (typeof applyAllDeletions === 'function') applyAllDeletions();
 
     saveDB();
@@ -1716,6 +1714,39 @@ function dedupeSalesById(){
     const dbb = String(b.date || '');
     return dbb.localeCompare(da);
   });
+}
+
+function dedupeShowroomExpenses(){
+  if (!Array.isArray(db.showroomExpenses)) return;
+
+  const seen = new Set();
+  const out = [];
+
+  // newest first if dates exist
+  const arr = db.showroomExpenses.slice().sort((a,b)=>{
+    const da = String(a?.date || a?.ts || a?.createdAt || a?.updatedAt || '');
+    const dbb = String(b?.date || b?.ts || b?.createdAt || b?.updatedAt || '');
+    return dbb.localeCompare(da);
+  });
+
+  for (const x of arr){
+    if (!x) continue;
+
+    // fingerprint to detect duplicates even if ids are different
+    const key = [
+      String(x.date||'').trim(),
+      String(x.type||'').trim().toLowerCase(),
+      String(x.method||'').trim().toLowerCase(),
+      Number(x.amount||0).toFixed(2),
+      String(x.note||x.desc||'').trim().toLowerCase()
+    ].join('|');
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(x);
+  }
+
+  db.showroomExpenses = out;
 }
 
 function render(){
@@ -2521,12 +2552,32 @@ function viewShowroom(){ if(!canTab('Showroom')) return document.createElement('
   <input id="s_amt" type="number" placeholder="Amount"><input id="s_note" placeholder="Note"><button id="s_add" class="primary">Add</button></div>
   <div class="small" id="s_totHint"></div>
   <table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Type</th><th>Method</th><th class="right">Amount</th><th>Note</th><th>Actions</th></tr></thead><tbody id="s_body"></tbody></table>`;
-  const body=wrap.querySelector('#s_body'); let editId=null;
-  function rows(){ body.innerHTML=''; (db.showroomExpenses||[]).forEach(e=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${ddmmyyyy(e.date)}</td><td>${e.type||''}${e.amount<0?' (credit)':''}</td><td>${e.method||'bank'}</td><td class=\"right\">${e.amount<0?'<span class=\"bad\">'+fmtMoney(e.amount)+'</span>':fmtMoney(e.amount)}</td><td>${e.note||''}</td>
-  <td>${canAction('edit')?`<button data-act="edit" data-id="${e.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${e.id}">Delete</button>`:''}</td>`; body.appendChild(tr); }); }
+  const body=wrap.querySelector('#s_body'); let editId=null; const sxMonth = wrap.querySelector('#sx_month'); if (sxMonth) sxMonth.value = new Date().toISOString().slice(0,7);
+  
+  function rows(){
+    body.innerHTML='';
+
+    const m = (wrap.querySelector('#sx_month')?.value || '').slice(0,7);
+    const list = (db.showroomExpenses || [])
+      .filter(e => !m || ymStr(e.date) === m)       // ✅ show only selected month; if empty show all
+      .sort((a,b) => (b.date||'').localeCompare(a.date||'')); // newest first
+
+    list.forEach(e=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${ddmmyyyy(e.date)}</td>
+        <td>${e.type||''}${e.amount<0?' (credit)':''}</td>
+        <td>${e.method||'bank'}</td>
+        <td class="right">${e.amount<0?'<span class="bad">'+fmtMoney(e.amount)+'</span>':fmtMoney(e.amount)}</td>
+        <td>${e.note||''}</td>
+        <td>
+          ${canAction('edit')?`<button data-act="edit" data-id="${e.id}">Edit</button>`:''}
+          ${canAction('del')?`<button class="danger" data-act="del" data-id="${e.id}">Delete</button>`:''}
+        </td>`;
+      body.appendChild(tr);
+    });
+  }
   rows();
-  
-  
+  wrap.querySelector('#sx_month')?.addEventListener('change', rows);
   
   // Guarded Showroom Export (single source of truth)
   (function(){
