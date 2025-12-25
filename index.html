@@ -1356,6 +1356,7 @@ async function syncPull() {
     if (db.company.termsFontPx  != null) db.company.termsFontPx  = Number(db.company.termsFontPx  || 10);
     ensureIdsEverywhere();
     dedupeVehiclesByReg();
+    relinkVehicleRefsByReg();
     dedupeSalesById();
     dedupeShowroomExpenses();
     saveDB();
@@ -1364,7 +1365,7 @@ async function syncPull() {
     alert('Pulled & merged from Gist (arrays merged by id; deletions synced)');
     enablePushButton();
     markPullUsed();
-    if (!changeTracker.lastSnapshot) changeTracker.saveSnapshot();
+    changeTracker.saveSnapshot();
     render();
   } catch (e) {
     alert('Pull failed: ' + e.message);
@@ -1436,6 +1437,7 @@ async function syncPullHard() {
     
     ensureIdsEverywhere();
     dedupeVehiclesByReg();
+    relinkVehicleRefsByReg();
     dedupeSalesById();
     dedupeShowroomExpenses();
 
@@ -1447,7 +1449,7 @@ async function syncPullHard() {
     alert('HARD Pull complete: local data replaced with Gist data.');
     enablePushButton();
     markPullUsed();
-    if (!changeTracker.lastSnapshot) changeTracker.saveSnapshot();
+    changeTracker.saveSnapshot();
     render();
   } catch (e) {
     alert('Hard Pull failed: ' + e.message);
@@ -1698,6 +1700,67 @@ function dedupeVehiclesByReg(){
     out.push(v);
   }
   db.vehicles = out;
+}
+
+function normReg(x){
+  return String(x||'').toUpperCase().replace(/\s+/g,'').trim();
+}
+
+function relinkVehicleRefsByReg(){
+  // Build reg -> kept vehicleId map from CURRENT db.vehicles (after dedupe)
+  const regToId = Object.create(null);
+  (db.vehicles || []).forEach(v=>{
+    const r = normReg(v && v.reg);
+    if (r && v && v.id) regToId[r] = v.id;
+  });
+
+  // Helper: if record has vehicleId, try relink by reg field (or by lookup)
+  const fixList = (arrName, getRegFn) => {
+    if (!Array.isArray(db[arrName])) return;
+    let changed = 0;
+    db[arrName].forEach(rec=>{
+      const reg = normReg(getRegFn(rec));
+      if (!reg) return;
+      const newVid = regToId[reg];
+      if (newVid && rec.vehicleId && rec.vehicleId !== newVid){
+        rec.vehicleId = newVid;
+        changed++;
+      }
+      // If vehicleId missing but reg exists, attach it
+      if (newVid && !rec.vehicleId){
+        rec.vehicleId = newVid;
+        changed++;
+      }
+    });
+    return changed;
+  };
+
+  // SALES: infer reg from linked vehicle OR from fields if present
+  fixList('sales', (s)=>{
+    // try direct from vehicleId first
+    const v = (db.vehicles||[]).find(x=>x.id===s.vehicleId);
+    return (v && v.reg) || s.reg || '';
+  });
+
+  // VEHICLE EXPENSES: by vehicleId -> vehicle.reg
+  fixList('vehicleExpenses', (e)=>{
+    const v = (db.vehicles||[]).find(x=>x.id===e.vehicleId);
+    return (v && v.reg) || e.reg || '';
+  });
+
+  // CREDITS: you store reg in UI as typed; but record may have vehicleId too
+  fixList('credits', (c)=> c.reg || c.vehicleReg || '');
+
+  // COMPLAINTS (if you store reg on complaint records)
+  fixList('complaints', (c)=> c.reg || c.vehicleReg || '');
+
+  // PURCHASE INVOICES (if they reference vehicles)
+  fixList('purchaseInvoices', (p)=> p.reg || p.vehicleReg || '');
+
+  // optional: keep db.sales consistent newest-first
+  if (Array.isArray(db.sales)){
+    db.sales.sort((a,b)=> String(b.date||'').localeCompare(String(a.date||'')));
+  }
 }
 
 function dedupeSalesById(){
@@ -1968,6 +2031,8 @@ function viewVehicles(){
   </div>
 
   <div class="row" style="display: flex; align-items: center; gap: 12px; margin-top: 12px;">
+    <button id="veh_mot_refresh" type="button">Update MOT Expiry (All)</button>
+    <span id="veh_mot_progress" class="small" style="margin-left:auto;"></span>
     <input id="veh_search" placeholder="Search reg/make/model/supplier">
     <label class="small" style="display: flex; align-items: center; margin: 0;">
       <input type="checkbox" id="veh_instock" checked> In stock only
@@ -2335,6 +2400,7 @@ if (mo) {
   const motBtn = wrap.querySelector('#v_mot');
 if (motBtn) {
   motBtn.onclick = async () => {
+
     const reg = (wrap.querySelector('#v_reg').value || '').trim().toUpperCase();
     if (!reg) return alert('Enter REG first');
 
@@ -2400,6 +2466,21 @@ if (motBtn) {
         }
       }
 
+      if (vehicle.make) {
+        const makeInput = wrap.querySelector('#v_make');
+        if (makeInput) makeInput.value = vehicle.make;
+      }
+
+      if (vehicle.primaryColour) {
+        const colourInput = wrap.querySelector('#v_colour');
+        if (colourInput) colourInput.value = vehicle.primaryColour.toUpperCase();
+      }
+
+      if (vehicle.fuelType) {
+        const fuelInput = wrap.querySelector('#v_fuel');
+        if (fuelInput) fuelInput.value = vehicle.fuelType.toUpperCase();
+      }
+
       if (vehicle.model) {
         const modelInput = wrap.querySelector('#v_model');
         if (modelInput) modelInput.value = vehicle.model;
@@ -2429,6 +2510,7 @@ if (motBtn) {
           found.lastMotDate = latest.completedDate || '';
           found.lastMotExpiry = latest.expiryDate || '';
           found.lastMotMileage = latest.odometerValue || '';
+          found.updatedAt = new Date().toISOString();
           saveDB();
         }
       }
@@ -2440,7 +2522,101 @@ if (motBtn) {
       btn.disabled = false;
     }
   };
-}
+
+  // ===== Bulk MOT refresh (All vehicles) =====
+    function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+    async function fetchLatestMot(reg){
+      const url = db.company.dvsaProxy || '';
+      if (!url) throw new Error('Add DVSA / MOT Proxy URL in Settings first.');
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reg })
+      });
+
+      const text = await res.text();
+      if (!res.ok) throw new Error('DVSA error ' + res.status + ': ' + text);
+
+      let data;
+      try { data = JSON.parse(text); } catch(e){ throw new Error('DVSA returned invalid JSON'); }
+
+      // ✅ Accept both array and single-object formats
+      if (!Array.isArray(data)) {
+        if (data && typeof data === 'object' && data.motTests) data = [data];
+        else if (Array.isArray(data.data)) data = data.data; // if your worker wraps: {data:[...]}
+      }
+
+      if (!Array.isArray(data) || !data.length) return null;
+
+      const vehicle = data[0];
+      const tests = vehicle.motTests || [];
+      const latest = tests[0] || null;
+
+      return { vehicle, latest };
+    }
+
+    const bulkBtn = wrap.querySelector('#veh_mot_refresh');
+    const progEl = wrap.querySelector('#veh_mot_progress');
+
+    if (bulkBtn) {
+      bulkBtn.onclick = async () => {
+        if (!confirm('Update MOT expiry for ALL vehicles? (This will take a few minutes)')) return;
+
+        try {
+          bulkBtn.disabled = true;
+
+          const list = (db.vehicles || [])
+            .filter(v => String(v.reg || '').trim())
+            // default: only update in-stock vehicles (status not sold)
+            .filter(v => String(v.status || '').toLowerCase() !== 'sold');
+
+          let ok = 0, fail = 0, skipped = 0;
+
+          for (let i = 0; i < list.length; i++) {
+            const v = list[i];
+            const reg = String(v.reg || '').trim().toUpperCase();
+
+            if (progEl) progEl.textContent = `Checking ${i + 1}/${list.length}: ${reg}`;
+
+            try {
+              const out = await fetchLatestMot(reg);
+
+              if (!out || !out.latest) { skipped++; }
+              else {
+                const latest = out.latest;
+
+                v.lastMotDate = latest.completedDate || v.lastMotDate || '';
+                v.lastMotExpiry = latest.expiryDate || v.lastMotExpiry || '';
+                v.lastMotMileage = latest.odometerValue || v.lastMotMileage || '';
+
+                // ✅ auto-fill main motExpiry so your warnings/filters work everywhere
+                if (!v.motExpiry && v.lastMotExpiry) v.motExpiry = v.lastMotExpiry;
+
+                ok++;
+              }
+            } catch (e) {
+              fail++;
+            }
+
+            // ✅ throttle to avoid DVSA/proxy rate limits
+            await sleep(1200);
+          }
+
+          saveDB();
+          try { renderAlertBell(); } catch(e) {}
+
+          alert(`MOT refresh complete.\n\nUpdated: ${ok}\nSkipped (no tests): ${skipped}\nFailed: ${fail}`);
+        } finally {
+          if (progEl) progEl.textContent = '';
+          bulkBtn.disabled = false;
+          // refresh the table view
+          try { rows(); } catch(e) {}
+        }
+      };
+    }
+  }
 
   wrap.querySelector('#v_add').onclick=()=>{ if(!canAction('add')) return alert('No permission');
   const reg=(wrap.querySelector('#v_reg').value||'').toUpperCase().trim(); if(!reg){ alert('Reg is required'); return; }
@@ -2477,7 +2653,8 @@ if (motBtn) {
   originalSaleId: wrap.querySelector('#v_originalSaleId') ? wrap.querySelector('#v_originalSaleId').value : (db.vehicles.find(x=>x.id===editId)?.originalSaleId || null),
   vin:wrap.querySelector('#v_vin').value.trim(), 
   motExpiry: wrap.querySelector('#v_motExpiry').value || '', // ADDED THIS LINE
-  status:wrap.querySelector('#v_status').value, 
+  status:wrap.querySelector('#v_status').value,
+  updatedAt: new Date().toISOString(),
   createdAt:(db.vehicles.find(x=>x.id===editId)?.createdAt)||new Date().toISOString(), 
   lastMotExpiry: (db.vehicles.find(x=>x.id===editId)?.lastMotExpiry) || '', // Preserve DVSA lookup data
   };
@@ -3612,7 +3789,7 @@ function printCreditInvoice(creditId){
 
   const headerHTML = `<div class="h"><div>${logo}</div>
     <div style="text-align:right"><h2 style="margin:0">${title}</h2><div>Ref #: ${refNo}</div><div>Date: ${ddmmyyyy(cr.date||'')}</div></div></div>
-    <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''}</div>`;
+    <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''} • FCA #: ${co.fcaNumber||''}</div>`;
 
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
   <style>
@@ -3900,7 +4077,7 @@ function printPurchaseInvoice(purchaseId){
 
   const headerHTML = `<div class="h"><div>${logo}</div>
     <div style="text-align:right"><h2 style="margin:0">PURCHASE INVOICE</h2><div>Ref #: ${refNo}</div><div>Date: ${ddmmyyyy(pi.date||'')}</div></div></div>
-    <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''}</div>`;
+    <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''} • FCA #: ${co.fcaNumber||''}</div>`;
 
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Purchase Invoice</title>
   <style>
@@ -4223,7 +4400,7 @@ function invoiceHeaderHTML(title, refNo, date){
   const timeStr = now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
   return `<div class="h"><div>${logo}</div>
     <div style="text-align:right"><h2 style="margin:0">${title}</h2><div>Invoice #: ${refNo||''}</div><div>Date: ${ddmmyyyy(date||'')}</div><div>Time: ${timeStr}</div></div></div>
-    <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''}</div>`;
+    <div style="margin-top:6px"><b>${co.name||'Star Cars London Ltd'}</b><br>${co.address||''}<br>P: ${co.phone||''} ${co.email||''}<br>COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''} • FCA #: ${co.fcaNumber||''}</div>`;
 }
 
 function printInvoice(saleId){
@@ -4433,7 +4610,7 @@ function printFinanceProforma(saleId){
     <b>${co.name||'Star Cars London Ltd'}</b><br>
     ${co.address||''}<br>
     P: ${co.phone||''} ${co.email||''}<br>
-    COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''}
+    COMPANY #: ${co.companyNumber||''} • VAT #: ${co.vatNumber||''} • FCA #: ${co.fcaNumber||''}
   </div>`;
 
   const financeTerms = (co.financeTerms || co.terms || '');
