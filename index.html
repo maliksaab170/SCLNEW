@@ -189,6 +189,8 @@ window.restoreJSONMerge = function () {
           window.addAudit('import', 'backup', '', 'Merged JSON backup (id-merge)');
         }
         alert('Merged from backup');
+        markPullUsed();
+        applyPullLockUI && applyPullLockUI();
         if (typeof window.render === 'function') window.render();
       } catch (e) {
         alert('Bad JSON: ' + (e.message || e));
@@ -218,6 +220,8 @@ window.restoreJSONMerge = function () {
           try{ window.renderAlertBell && window.renderAlertBell(); }catch(_){}
           if (typeof window.addAudit === "function") window.addAudit("import","backup","","Replaced from JSON backup");
           alert("Replaced from backup");
+          markPullUsed();
+          applyPullLockUI && applyPullLockUI();
           window.render && window.render();
         }catch(e){ alert("Bad JSON: " + (e.message||e)); }
       };
@@ -995,6 +999,8 @@ function restoreJSONMerge() {
           addAudit('import', 'backup', '', 'Merged JSON backup (id-merge)');
         }
         alert('Merged from backup');
+        markPullUsed();
+        applyPullLockUI && applyPullLockUI();
         if (typeof render === 'function') render();
       } catch (e) {
         alert('Bad JSON: ' + (e.message || e));
@@ -1064,6 +1070,8 @@ function restoreJSONReplace() {
           addAudit('import', 'backup', '', 'Replaced from JSON backup');
         }
         alert('Replaced from backup');
+        markPullUsed();
+        applyPullLockUI && applyPullLockUI();
         if (typeof render === 'function') render();
       } catch (e) {
         alert('Bad JSON: ' + (e.message || e));
@@ -1570,6 +1578,8 @@ async function smartPush() {
     changeTracker.saveSnapshot();
     changeTracker.clearChanges();
 
+    recordPushActivity();
+
     addAudit(
       'sync',
       'smart-push',
@@ -2031,7 +2041,7 @@ function viewVehicles(){
   </div>
 
   <div class="row" style="display: flex; align-items: center; gap: 12px; margin-top: 12px;">
-    <button id="veh_mot_refresh" type="button">Update MOT Expiry (All)</button>
+    <button id="veh_mot_refresh" type="button">Update MOT Expiry (Stock)</button>
     <span id="veh_mot_progress" class="small" style="margin-left:auto;"></span>
     <input id="veh_search" placeholder="Search reg/make/model/supplier">
     <label class="small" style="display: flex; align-items: center; margin: 0;">
@@ -2592,7 +2602,7 @@ if (motBtn) {
                 v.lastMotMileage = latest.odometerValue || v.lastMotMileage || '';
 
                 // ✅ auto-fill main motExpiry so your warnings/filters work everywhere
-                if (!v.motExpiry && v.lastMotExpiry) v.motExpiry = v.lastMotExpiry;
+                v.motExpiry = latest.expiryDate || v.motExpiry || '';
 
                 ok++;
               }
@@ -2658,6 +2668,11 @@ if (motBtn) {
   createdAt:(db.vehicles.find(x=>x.id===editId)?.createdAt)||new Date().toISOString(), 
   lastMotExpiry: (db.vehicles.find(x=>x.id===editId)?.lastMotExpiry) || '', // Preserve DVSA lookup data
   };
+    if (!v.motExpiry) {
+      v.lastMotExpiry = '';
+      v.lastMotDate = '';
+      v.lastMotMileage = '';
+    }
     if(editId){ const i=db.vehicles.findIndex(x=>x.id===editId); db.vehicles[i]=v; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); editId=null; }
     else { db.vehicles.unshift(v); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); }
     rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_vin','v_motExpiry'].forEach(k=>document.getElementById(k).value='');
