@@ -287,7 +287,49 @@ window.restoreJSONMerge = function () {
 /* ========= Core utils ========= */
 const DBKEY='starcars_db_v48u'; const GHTOKENKEY='starcars_github_token';
 function loadDB(){ try{ return JSON.parse(localStorage.getItem(DBKEY)||'{}'); }catch(e){ return {}; } }
-function saveDB(){ localStorage.setItem(DBKEY, JSON.stringify(db)); }
+function saveDB(){
+  try {
+    // Normal save
+    localStorage.setItem(DBKEY, JSON.stringify(db));
+  } catch (e) {
+    console.error('saveDB quota error:', e);
+
+    // If localStorage is full, try to free the old snapshot key first
+    try {
+      localStorage.removeItem('starcars_last_snapshot');
+    } catch (_) {}
+
+    try {
+      // Make a slim copy of DB for storage
+      const slim = JSON.parse(JSON.stringify(db || {}));
+
+      // Trim very large audit log to keep newest 1000 entries
+      if (Array.isArray(slim.audit) && slim.audit.length > 1000) {
+        slim.audit = slim.audit.slice(0, 1000);
+      }
+
+      // (Optional) you can also trim deleted map if it gets huge
+      if (slim.deleted && typeof slim.deleted === 'object') {
+        Object.keys(slim.deleted).forEach(section => {
+          const entries = Object.entries(slim.deleted[section] || {});
+          if (entries.length > 1000) {
+            // keep latest 1000 deletions
+            entries.sort((a,b)=>String(b[1]).localeCompare(String(a[1])));
+            const trimmed = entries.slice(0,1000);
+            const newMap = {};
+            trimmed.forEach(([id, ts]) => newMap[id] = ts);
+            slim.deleted[section] = newMap;
+          }
+        });
+      }
+
+      localStorage.setItem(DBKEY, JSON.stringify(slim));
+      alert('Local storage was nearly full.\nOld history was trimmed but your main data was saved.');
+    } catch (e2) {
+      alert('Save failed due to browser storage limit:\n' + (e2.message || e2));
+    }
+  }
+}
 function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
 function fmtMoney(n){ n=Number(n||0); const s=n<0?'-':''; n=Math.abs(n); return s+'£'+n.toFixed(2); }
 function ddmmyyyy(d){
@@ -525,21 +567,21 @@ let changeTracker = {
   lastSnapshot: null,
   changes: {},
   init: function() {
-    // Load last snapshot from localStorage
-    try {
-      this.lastSnapshot = JSON.parse(localStorage.getItem('starcars_last_snapshot') || 'null');
-    } catch(e) {
-      this.lastSnapshot = null;
-    }
-    
-    // Initialize changes object
+    // Start with no persisted snapshot to save space in localStorage
+    this.lastSnapshot = null;
     this.changes = {};
+
+    // Clean up old big snapshot key from previous versions (one-time)
+    try {
+      localStorage.removeItem('starcars_last_snapshot');
+    } catch(e) {
+      console.warn('Could not remove old snapshot key:', e);
+    }
   },
   
   saveSnapshot: function() {
-    // Save current state as snapshot
+    // Keep snapshot only in memory (not in localStorage) to avoid quota issues
     this.lastSnapshot = JSON.parse(JSON.stringify(window.db || {}));
-    localStorage.setItem('starcars_last_snapshot', JSON.stringify(this.lastSnapshot));
   },
   
   trackChange: function(section, id, operation, data) {
@@ -993,6 +1035,12 @@ function restoreJSONMerge() {
           applyAllDeletions();
         }
 
+        ensureIdsEverywhere();
+        dedupeVehiclesByReg();
+        relinkVehicleRefsByReg();
+        dedupeSalesById();
+        dedupeAllExpensesAndCredits();
+
         saveDB();
         try { renderAlertBell(); } catch (_) {}
         if (typeof addAudit === 'function') {
@@ -1063,6 +1111,12 @@ function restoreJSONReplace() {
         if (typeof applyAllDeletions === 'function') {
           applyAllDeletions();
         }
+
+        ensureIdsEverywhere();
+        dedupeVehiclesByReg();
+        relinkVehicleRefsByReg();
+        dedupeSalesById();
+        dedupeAllExpensesAndCredits();
 
         saveDB();
         try { renderAlertBell(); } catch (_) {}
@@ -1235,19 +1289,23 @@ function applyAllDeletions() {
   });
 }
 
-async function readGistStarcarsJSON(gistId){
-  const r = await fetch(`https://api.github.com/gists/${gistId}`);
+async function readGistStarcarsJSON(gistId, token = "") {
+  // Safe reader that supports private gists (Authorization) and large/truncated files
+  const headers = { "Accept": "application/vnd.github+json" };
+  if (token) headers["Authorization"] = "token " + token;
+
+  const r = await fetch(`https://api.github.com/gists/${gistId}`, { headers });
   const txt = await r.text();
   if (!r.ok) throw new Error(`Gist fetch failed ${r.status}: ${txt}`);
 
-  const j = JSON.parse(txt || '{}');
+  const j = JSON.parse(txt || "{}");
   const file = j.files && (j.files['starcars.json'] || Object.values(j.files)[0]);
   if (!file) throw new Error('No starcars.json in that Gist');
 
-  // ✅ IMPORTANT: handle big/truncated files
+  // Handle big/truncated files
   let content = file.content || '';
   if (file.truncated && file.raw_url) {
-    const rr = await fetch(file.raw_url);
+    const rr = await fetch(file.raw_url, { headers });
     if (!rr.ok) throw new Error(`Raw fetch failed ${rr.status}`);
     content = await rr.text();
   }
@@ -1366,7 +1424,7 @@ async function syncPull() {
     dedupeVehiclesByReg();
     relinkVehicleRefsByReg();
     dedupeSalesById();
-    dedupeShowroomExpenses();
+    dedupeAllExpensesAndCredits();
     saveDB();
     try { renderAlertBell(); } catch (_) {}
     addAudit('sync', 'pull', db.company.gistId || '', 'Pulled from Gist (arrays merged by id, deletions respected)');
@@ -1447,7 +1505,7 @@ async function syncPullHard() {
     dedupeVehiclesByReg();
     relinkVehicleRefsByReg();
     dedupeSalesById();
-    dedupeShowroomExpenses();
+    dedupeAllExpensesAndCredits();
 
     if (typeof applyAllDeletions === 'function') applyAllDeletions();
 
@@ -1528,34 +1586,55 @@ async function smartPush() {
     const token = (getGhToken() || '').trim();
     if (!token) return alert('Enter GitHub token and Save');
 
-    // (1) Fetch the "changes" locally
-    const changes = changeTracker.detectAllChanges();
+    // Detect changes vs last snapshot
+    const detected = changeTracker.detectAllChanges();
+    let changes = detected;
+    let useFullPush = false;
 
-    if (!changes || Object.keys(changes).length === 0) {
-      return alert('No changes detected. Nothing to push.');
+    if (!detected || Object.keys(detected).length === 0) {
+      // Nothing detected – offer to force a FULL push
+      const ok = confirm(
+        'No changes detected against the last snapshot.\n\n' +
+        'Press OK to FORCE a FULL push of your current data to Gist.\n' +
+        'Press Cancel to stop.'
+      );
+      if (!ok) return;
+      useFullPush = true;
     }
 
-    let remote = null;
+    let payloadData;
+
+    if (useFullPush) {
+      // FULL PUSH: send the current local DB as starcars.json
+      payloadData = db;
+    } else {
+      // Smart diff push – read remote (with token), apply changes, then send back
+      let remote = null;
       try {
         remote = await readGistJSON(gistId, "starcars.json", token);
       } catch (e) {
-      console.warn("Remote read failed:", e);
-      remote = null;
+        console.warn("Remote read failed:", e);
+        remote = null;
+      }
+
+      if (!remote) {
+        alert(
+          "Failed to fetch remote Gist content.\n\n" +
+          "Try: Settings → Pull (Normal) then Push again.\n" +
+          "If still fails, do a Full Push."
+        );
+        return;
+      }
+
+      const updatedRemote = applyChangesToRemote(remote, changes);
+      payloadData = updatedRemote;
     }
 
-    if (!remote) {
-      alert("Failed to fetch remote Gist content.\n\nTry: Settings → Pull (Normal) then Push.\nIf still fails, do Full Push.");
-      return;
-    }
-
-    // (3) Apply Local Changes to Remote Content
-    const updatedRemote = applyChangesToRemote(remote, changes);
-
-    // (4) Push the updated remote back to Gist (Minimal Change Payload)
+    // (2) Push to Gist — include Accept + API version + token
     const payload = {
       files: {
         'starcars.json': {
-          content: JSON.stringify(updatedRemote, null, 2),
+          content: JSON.stringify(payloadData, null, 2),
         },
       },
     };
@@ -1564,32 +1643,50 @@ async function smartPush() {
       method: 'PATCH',
       headers: {
         'content-type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        Authorization: 'token ' + token
       },
       body: JSON.stringify(payload),
     });
 
     const txt = await r.text();
     if (!r.ok) {
-      return alert(`Push failed with status ${r.status}: ${txt}`);
+      console.error('Push failed response:', r.status, txt);
+      // try to parse JSON error to show more detail
+      let errMsg = `Push failed with status ${r.status}`;
+      try {
+        const j = JSON.parse(txt || '{}');
+        if (j && j.message) errMsg += ': ' + j.message;
+      } catch (_) {
+        errMsg += ': ' + txt;
+      }
+      return alert(errMsg);
     }
 
-    // (5) Clear Local Changes and Save Snapshot
+    // Success: reset snapshot + change log
     changeTracker.saveSnapshot();
     changeTracker.clearChanges();
 
     recordPushActivity();
 
-    addAudit(
-      'sync',
-      'smart-push',
-      gistId,
-      `Smart push completed with ${countChanges(changes)} changes.`,
-    );
-    alert(`Smart push completed: ${countChanges(changes)} changes pushed to Gist.`);
+    if (useFullPush) {
+      addAudit('sync', 'smart-push', gistId, 'Smart push FULL DB (no diff found, forced).');
+      alert('Full push completed: all current data sent to Gist.');
+    } else {
+      addAudit(
+        'sync',
+        'smart-push',
+        gistId,
+        `Smart push completed with ${countChanges(changes)} changes.`
+      );
+      alert(`Smart push completed: ${countChanges(changes)} changes pushed to Gist.`);
+    }
+
     render();
   } catch (e) {
     alert('Smart push failed: ' + e.message);
+    console.error('smartPush exception', e);
   }
 }
 
@@ -1795,17 +1892,15 @@ function dedupeShowroomExpenses(){
   const seen = new Set();
   const out = [];
 
-  // newest first if dates exist
   const arr = db.showroomExpenses.slice().sort((a,b)=>{
     const da = String(a?.date || a?.ts || a?.createdAt || a?.updatedAt || '');
     const dbb = String(b?.date || b?.ts || b?.createdAt || b?.updatedAt || '');
-    return dbb.localeCompare(da);
+    return dbb.localeCompare(da); // newest first
   });
 
   for (const x of arr){
     if (!x) continue;
 
-    // fingerprint to detect duplicates even if ids are different
     const key = [
       String(x.date||'').trim(),
       String(x.type||'').trim().toLowerCase(),
@@ -1820,6 +1915,78 @@ function dedupeShowroomExpenses(){
   }
 
   db.showroomExpenses = out;
+}
+
+function dedupeVehicleExpenses(){
+  if (!Array.isArray(db.vehicleExpenses)) return;
+
+  const seen = new Set();
+  const out = [];
+
+  const arr = db.vehicleExpenses.slice().sort((a,b)=>{
+    const da = String(a?.date || a?.ts || a?.createdAt || a?.updatedAt || '');
+    const dbb = String(b?.date || b?.ts || b?.createdAt || b?.updatedAt || '');
+    return dbb.localeCompare(da); // newest first
+  });
+
+  for (const x of arr){
+    if (!x) continue;
+
+    const key = [
+      String(x.vehicleId || '').trim(),
+      String(x.date||'').trim(),
+      String(x.type||'').trim().toLowerCase(),
+      String(x.method||'').trim().toLowerCase(),
+      Number(x.amount||0).toFixed(2),
+      String(x.note||'').trim().toLowerCase()
+    ].join('|');
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(x);
+  }
+
+  db.vehicleExpenses = out;
+}
+
+function dedupeCredits(){
+  if (!Array.isArray(db.credits)) return;
+
+  const seen = new Set();
+  const out = [];
+
+  const arr = db.credits.slice().sort((a,b)=>{
+    const da = String(a?.date || a?.ts || a?.createdAt || a?.updatedAt || '');
+    const dbb = String(b?.date || b?.ts || b?.createdAt || b?.updatedAt || '');
+    return dbb.localeCompare(da); // newest first
+  });
+
+  for (const x of arr){
+    if (!x) continue;
+
+    const key = [
+      String(x.date||'').trim(),
+      String(x.customer||'').trim().toLowerCase(),
+      String(x.vehicle||x.reg||'').trim().toUpperCase(),
+      String(x.type||'').trim().toLowerCase(),
+      String(x.method||'').trim().toLowerCase(),
+      Number(x.amount||0).toFixed(2),
+      String(x.reason||'').trim().toLowerCase(),
+      String(x.invoiceNo||'').trim().toLowerCase()
+    ].join('|');
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(x);
+  }
+
+  db.credits = out;
+}
+
+function dedupeAllExpensesAndCredits(){
+  dedupeShowroomExpenses();
+  dedupeVehicleExpenses();
+  dedupeCredits();
 }
 
 function render(){
@@ -2016,11 +2183,12 @@ function viewVehicles(){
   if(!canTab('Vehicles')) return document.createElement('div'); const wrap=document.createElement('div'); wrap.className='card';
   wrap.innerHTML=`<h2>Vehicles</h2>
   <div class="row">
-    <label>REG *<input id="v_reg" placeholder="AB12CDE"><button id="v_dvla" type="button">DVLA Lookup</button><button id="v_mot" type="button">DVSA Lookup</button></label>
+    <label>REG *<input id="v_reg" placeholder="AB12CDE"><button id="v_mot" type="button">DVSA Lookup</button></label>
     <label>Make<input id="v_make"></label>
     <label>Model<input id="v_model"></label>
     <label>Colour<input id="v_colour"></label>
     <label>Fuel<input id="v_fuel" placeholder="PETROL/DIESEL/EV"></label>
+    <label>Engine Size<input id="v_engineSize" placeholder="e.g. 1998"></label>
     <label>Mileage<input id="v_mileage" type="number" placeholder="0"></label>
     <label>Purchase £<input id="v_purchase" type="number" placeholder="0"></label>
     <label>Purchase Date<input id="v_purchaseDate" type="date"></label>
@@ -2070,7 +2238,7 @@ function viewVehicles(){
     <button onclick="exportVehiclesCSV()">Export CSV</button>
   </div>
 
-  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
+  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>Engine Size</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
   
   // Populate investor dropdown from db.investors
@@ -2109,7 +2277,7 @@ function viewVehicles(){
     
     // Apply search filter
     if (q) {
-      const hay = ((v.reg || '') + ' ' + (v.make || '') + ' ' + (v.model || '')).toLowerCase();
+      const hay = ((v.reg || '') + ' ' + (v.make || '') + ' ' + (v.model || '') + ' ' + (v.supplier || '')).toLowerCase();
       if (!hay.includes(q)) return;
     }
     
@@ -2153,6 +2321,7 @@ function viewVehicles(){
     <td>${v.colour||''}</td>
     <td>${v.mileage||''}</td>
     <td>${v.fuel||''}</td>
+    <td>${v.engineSize||''}</td>
     <td>${ddmmyyyy(v.firstReg||'')}</td>
     <td>${ddmmyyyy(v.purchaseDate||'')}</td>
     <td>${v.ownerType||'owned'}</td>
@@ -2253,7 +2422,7 @@ function viewVehicles(){
       editId=id;
       
       // Populate all standard fields
-      ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase',
+      ['v_reg','v_make','v_model','v_colour','v_fuel','v_engineSize','v_mileage','v_purchase',
        'v_purchaseDate','v_firstReg','v_ownerType','v_supplier','v_status','v_vin','v_motExpiry','v_video']
       .forEach(k => {
         const el = wrap.querySelector('#' + k);
@@ -2328,87 +2497,8 @@ function viewVehicles(){
     }
   });
 
-  // DVLA Lookup for Vehicles tab
-  wrap.querySelector('#v_dvla').onclick = async () => {
-    const reg = (wrap.querySelector('#v_reg').value || '').trim().toUpperCase();
-    if (!reg) return alert('Enter REG first');
-    
-    const url = db.company.dvlaProxy || '';
-    if (!url) return alert('Add DVLA Proxy URL in Settings first.');
-    
-    const btn = wrap.querySelector('#v_dvla');
-    const originalText = btn.textContent;
-    btn.textContent = 'Checking DVLA...';
-    btn.disabled = true;
-    
-    try {
-      const rsp = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          reg: reg,
-          apiKey: (db.company.dvlaKey || db.company.dvsaKey || '')
-        })
-      });
-      
-      const txt = await rsp.text();
-      if (!rsp.ok) {
-        alert('DVLA error ' + rsp.status + ': ' + txt);
-        return;
-      }
-      
-      const j = JSON.parse(txt || '{}');
-      
-      // Validate the response
-      const validation = validateDVLAResponse(j);
-      
-      if (!validation.isValid) {
-        alert('DVLA lookup failed: No valid vehicle data found');
-        return;
-      }
-      
-      // Populate form fields with DVLA data
-if (j.make || j.raw?.make) wrap.querySelector('#v_make').value = (j.make || j.raw?.make || '').trim();
-
-// DVLA VES usually does NOT supply "model" or "vin".
-// If your proxy supplies model/vin via extra source, still accept it:
-if (j.model || j.raw?.model) wrap.querySelector('#v_model').value = (j.model || j.raw?.model || '').trim();
-if (j.colour || j.raw?.colour) wrap.querySelector('#v_colour').value = (j.colour || j.raw?.colour || '').trim();
-if (j.fuel || j.raw?.fuelType) wrap.querySelector('#v_fuel').value = String(j.fuel || j.raw?.fuelType || '').toUpperCase().trim();
-if (j.vin || j.raw?.vin) wrap.querySelector('#v_vin').value = (j.vin || j.raw?.vin || '').trim();
-
-// ✅ First registration date from DVLA: monthOfFirstRegistration = YYYY-MM
-const mo =
-  j.monthOfFirstRegistration ||
-  j.raw?.monthOfFirstRegistration ||
-  j.firstRegistrationDate || j.raw?.firstRegistrationDate || '';
-
-if (mo) {
-  let iso = '';
-  const s = String(mo).trim();
-  if (/^\d{4}-\d{2}$/.test(s)) iso = s + '-01';
-  else if (/^\d{4}-\d{2}-\d{2}$/.test(s)) iso = s;
-  else {
-    const d = new Date(s);
-    if (!isNaN(d)) iso = d.toISOString().slice(0,10);
-  }
-  if (iso) wrap.querySelector('#v_firstReg').value = iso;
-}
-
-      
-      alert('DVLA lookup completed. Vehicle details filled.\n\nFields found: ' + 
-        Object.keys(validation.fieldsFound).filter(k => validation.fieldsFound[k]).join(', '));
-      
-    } catch (err) {
-      alert('DVLA lookup failed: ' + err.message);
-    } finally {
-      btn.textContent = originalText;
-      btn.disabled = false;
-    }
-  };
-
   const motBtn = wrap.querySelector('#v_mot');
-if (motBtn) {
+  if (motBtn) {
   motBtn.onclick = async () => {
 
     const reg = (wrap.querySelector('#v_reg').value || '').trim().toUpperCase();
@@ -2499,6 +2589,11 @@ if (motBtn) {
       if (latest?.expiryDate) {
         const motInput = wrap.querySelector('#v_motExpiry');
         if (motInput) motInput.value = latest.expiryDate;
+      }
+
+      if (vehicle.engineSize) {
+        const engineSizeInput = wrap.querySelector('#v_engineSize');
+        if (engineSizeInput) engineSizeInput.value = vehicle.engineSize;
       }
 
       let msg = `Reg: ${vehicle.registration}\nMake/Model: ${vehicle.make || ''} ${vehicle.model || ''}\n\n`;
@@ -2638,6 +2733,7 @@ if (motBtn) {
     model:wrap.querySelector('#v_model').value.trim(), 
     colour:wrap.querySelector('#v_colour').value.trim(), 
     fuel:wrap.querySelector('#v_fuel').value.trim(),
+    engineSize:wrap.querySelector('#v_engineSize') ? wrap.querySelector('#v_engineSize').value.trim() : '',
     mileage:Number(wrap.querySelector('#v_mileage').value||0), 
     purchase:Number(wrap.querySelector('#v_purchase').value||0), 
     purchaseDate:wrap.querySelector('#v_purchaseDate').value,
@@ -2675,7 +2771,7 @@ if (motBtn) {
     }
     if(editId){ const i=db.vehicles.findIndex(x=>x.id===editId); db.vehicles[i]=v; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); editId=null; }
     else { db.vehicles.unshift(v); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); }
-    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_vin','v_motExpiry'].forEach(k=>document.getElementById(k).value='');
+    rows(); ['v_reg','v_make','v_model','v_colour','v_fuel','v_engineSize','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_vin','v_motExpiry'].forEach(k=>document.getElementById(k).value='');
     
     // Clean up hidden fields
     ['v_supplierNote', 'v_originalSaleId'].forEach(field => {
