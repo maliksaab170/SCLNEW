@@ -2501,131 +2501,162 @@ function viewVehicles(){
   if (motBtn) {
   motBtn.onclick = async () => {
 
-    const reg = (wrap.querySelector('#v_reg').value || '').trim().toUpperCase();
-    if (!reg) return alert('Enter REG first');
+  const reg = (wrap.querySelector('#v_reg').value || '').trim().toUpperCase();
+  if (!reg) return alert('Enter REG first');
 
-    // FIXED: only use DVSA proxy (not DVLA)
-    const url = db.company.dvsaProxy || '';
-    if (!url) return alert('Add DVSA / MOT Proxy URL in Settings first.');
+  // Use DVSA proxy (not DVLA) URL from settings
+  const url = db.company.dvsaProxy || '';
+  if (!url) return alert('Add DVSA / MOT Proxy URL in Settings first.');
 
-    const btn = motBtn;
-    const originalText = btn.textContent;
-    btn.textContent = 'Checking MOT...';
-    btn.disabled = true;
+  const btn = motBtn;
+  const originalText = btn.textContent;
+  btn.textContent = 'Checking MOT...';
+  btn.disabled = true;
 
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ reg })
-      });
-
-      const text = await res.text();
-      if (!res.ok) throw new Error('DVSA error ' + res.status + ': ' + text);
-
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        alert("DVSA returned invalid JSON");
-        return;
-      }
-
-      /* ✅ FIX: normalize object → array */
-      if (!Array.isArray(data)) {
-        if (data && typeof data === "object" && data.motTests) {
-          data = [data]; // wrap single vehicle into array
+  // small helper to read a field from multiple possible paths
+  const pick = (obj, ...paths) => {
+    for (const p of paths) {
+      if (!obj) continue;
+      // allow nested path arrays like ['raw','make'] or simple string 'make'
+      if (Array.isArray(p)) {
+        let cur = obj;
+        let ok = true;
+        for (const k of p) {
+          if (cur && (k in cur)) cur = cur[k]; else { ok = false; break; }
         }
-      }
-
-      if (!Array.isArray(data)) {
-        alert(
-          "MOT proxy returned wrong format.\n\nGot:\n" +
-          JSON.stringify(data, null, 2).slice(0, 500)
-        );
-        return;
-      }
-
-      const vehicle = data[0];
-      const tests = vehicle.motTests || [];
-      const latest = tests[0];
-
-      if (vehicle.registrationDate) {
-        // try YYYY-MM-DD, or support YYYY-MM
-        let val = '';
-        const s = String(vehicle.registrationDate).trim();
-        if (/^\d{4}-\d{2}$/.test(s)) val = s + '-01';
-        else if (/^\d{4}-\d{2}-\d{2}$/.test(s)) val = s;
-        else {
-          const d = new Date(s);
-          if (!isNaN(d)) val = d.toISOString().slice(0,10);
-        }
-        if (val) {
-          const firstRegInput = wrap.querySelector('#v_firstReg');
-          if (firstRegInput) firstRegInput.value = val;
-        }
-      }
-
-      if (vehicle.make) {
-        const makeInput = wrap.querySelector('#v_make');
-        if (makeInput) makeInput.value = vehicle.make;
-      }
-
-      if (vehicle.primaryColour) {
-        const colourInput = wrap.querySelector('#v_colour');
-        if (colourInput) colourInput.value = vehicle.primaryColour.toUpperCase();
-      }
-
-      if (vehicle.fuelType) {
-        const fuelInput = wrap.querySelector('#v_fuel');
-        if (fuelInput) fuelInput.value = vehicle.fuelType.toUpperCase();
-      }
-
-      if (vehicle.model) {
-        const modelInput = wrap.querySelector('#v_model');
-        if (modelInput) modelInput.value = vehicle.model;
-      }
-
-      if (latest?.expiryDate) {
-        const motInput = wrap.querySelector('#v_motExpiry');
-        if (motInput) motInput.value = latest.expiryDate;
-      }
-
-      if (vehicle.engineSize) {
-        const engineSizeInput = wrap.querySelector('#v_engineSize');
-        if (engineSizeInput) engineSizeInput.value = vehicle.engineSize;
-      }
-
-      let msg = `Reg: ${vehicle.registration}\nMake/Model: ${vehicle.make || ''} ${vehicle.model || ''}\n\n`;
-
-      if (latest) {
-        msg += `Last MOT: ${latest.completedDate}\n`;
-        msg += `Result: ${latest.testResult}\n`;
-        msg += `Expiry: ${latest.expiryDate}\n`;
-        msg += `Mileage: ${latest.odometerValue} ${latest.odometerUnit}\n`;
+        if (ok && cur != null) return cur;
       } else {
-        msg += 'No MOT tests found.\n';
+        if (p in obj && obj[p] != null) return obj[p];
       }
-
-      alert(msg);
-
-      if (latest) {
-        const found = (db.vehicles || []).find(v => (v.reg || '').toUpperCase() === reg);
-        if (found) {
-          found.lastMotDate = latest.completedDate || '';
-          found.lastMotExpiry = latest.expiryDate || '';
-          found.lastMotMileage = latest.odometerValue || '';
-          found.updatedAt = new Date().toISOString();
-          saveDB();
-        }
-      }
-
-    } catch (e) {
-      alert('MOT lookup failed: ' + e.message);
-    } finally {
-      btn.textContent = originalText;
-      btn.disabled = false;
     }
+    return undefined;
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reg })
+    });
+
+    const text = await res.text();
+    if (!res.ok) throw new Error('DVSA error ' + res.status + ': ' + text);
+
+    let data;
+    try { data = JSON.parse(text); } catch (e) { alert("DVSA returned invalid JSON"); return; }
+
+    // Accept several possible shapes:
+    // - array of vehicle objects
+    // - single vehicle object with motTests
+    // - object that wraps with .data or .vehicle
+    if (!Array.isArray(data)) {
+      if (data && typeof data === 'object') {
+        if (Array.isArray(data.data)) data = data.data;
+        else if (data.vehicle) data = [data.vehicle];
+        else if (data.motTests || data.registration) data = [data];
+        else if (data.results && Array.isArray(data.results)) data = data.results;
+      }
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      alert(
+        "MOT proxy returned wrong format or no data.\n\nGot:\n" +
+        JSON.stringify(data, null, 2).slice(0, 500)
+      );
+      return;
+    }
+
+    const vehicle = data[0];
+
+    // tests list may be nested differently; prefer vehicle.motTests or vehicle.tests or vehicle.testsData
+    const tests = pick(vehicle, 'motTests', 'tests', ['data','motTests']) || [];
+    const latest = Array.isArray(tests) && tests.length ? tests[0] : null;
+
+    // robust field picking: top-level, raw.*, alternative names
+    const makeVal = pick(vehicle, 'make', ['raw','make'], 'vehicleMake', 'manufacturer');
+    const modelVal = pick(vehicle, 'model', ['raw','model'], 'product', 'vehicleModel');
+    const colourVal = pick(vehicle, 'primaryColour', 'colour', ['raw','colour'], 'vehicleColour');
+    const fuelVal = pick(vehicle, 'fuelType', 'fuel', ['raw','fuelType']);
+    const engineVal = pick(vehicle, 'engineSize', 'engine_size', ['raw','engineSize']);
+    const regReturned = pick(vehicle, 'registration', 'reg', 'registrationNumber');
+    const vinVal = pick(vehicle, 'vin', ['raw','vin'], 'vehicleIdentificationNumber');
+
+    // first reg handling (various formats)
+    if (pick(vehicle, 'registrationDate', ['raw','registrationDate'], 'firstRegistration')) {
+      let s = pick(vehicle, 'registrationDate', ['raw','registrationDate'], 'firstRegistration');
+      let val = '';
+      s = String(s || '').trim();
+      if (/^\d{4}-\d{2}$/.test(s)) val = s + '-01';
+      else if (/^\d{4}-\d{2}-\d{2}$/.test(s)) val = s;
+      else {
+        const d = new Date(s);
+        if (!isNaN(d)) val = d.toISOString().slice(0,10);
+      }
+      if (val) {
+        const firstRegInput = wrap.querySelector('#v_firstReg');
+        if (firstRegInput) firstRegInput.value = val;
+      }
+    }
+
+    // only set inputs when we have a useful fallback. This attempts to fill missing fields
+    // rather than only when the primary key is present.
+    const setIfEmpty = (selector, value) => {
+      if (!value && value !== 0) return;
+      const el = wrap.querySelector(selector);
+      if (!el) return;
+      // if field empty, or current value is clearly placeholder, overwrite
+      if (!el.value || String(el.value).trim() === '') el.value = String(value);
+    };
+
+    // Set fields using fallbacks
+    setIfEmpty('#v_make', makeVal);
+    // model may be in make+model combined; if model missing but vehicle.modelName exists, use it
+    setIfEmpty('#v_model', modelVal || pick(vehicle, 'modelName', ['raw','modelName']));
+    setIfEmpty('#v_colour', colourVal ? String(colourVal).toUpperCase() : undefined);
+    setIfEmpty('#v_fuel', fuelVal ? String(fuelVal).toUpperCase() : undefined);
+    setIfEmpty('#v_engineSize', engineVal ? String(engineVal) : undefined);
+    setIfEmpty('#v_vin', vinVal);
+
+    // Last MOT details
+    if (latest) {
+      if (latest.completedDate) {
+        const motInput = wrap.querySelector('#v_motExpiry');
+        if (motInput && (!motInput.value || motInput.value === '')) motInput.value = latest.expiryDate || latest.expiry || '';
+      }
+      // Also store lastMot* values on found vehicle if it exists in DB
+      const found = (db.vehicles || []).find(v => (v.reg || '').toUpperCase() === reg);
+      if (found) {
+        if (latest.completedDate) found.lastMotDate = latest.completedDate || found.lastMotDate || '';
+        if (latest.expiryDate || latest.expiry) {
+          found.lastMotExpiry = latest.expiryDate || latest.expiry || found.lastMotExpiry || '';
+          // Keep motExpiry in sync for filters/warnings (fallback)
+          if (!found.motExpiry) found.motExpiry = found.lastMotExpiry;
+        }
+        if (latest.odometerValue || latest.odometer) found.lastMotMileage = latest.odometerValue || latest.odometer || found.lastMotMileage || '';
+        found.updatedAt = new Date().toISOString();
+        saveDB();
+      }
+    }
+
+    // Build friendly message
+    let msg = `Reg: ${regReturned || reg}\nMake/Model: ${makeVal || ''} ${modelVal || ''}\n\n`;
+    if (latest) {
+      msg += `Last MOT: ${latest.completedDate || latest.testDate || ''}\n`;
+      msg += `Result: ${latest.testResult || latest.result || ''}\n`;
+      msg += `Expiry: ${latest.expiryDate || latest.expiry || ''}\n`;
+      msg += `Mileage: ${latest.odometerValue || latest.odometer || ''} ${latest.odometerUnit || latest.odometerUnit || ''}\n`;
+    } else {
+      msg += 'No MOT tests found.\n';
+    }
+
+    alert(msg);
+
+  } catch (e) {
+    alert('MOT lookup failed: ' + (e && e.message ? e.message : e));
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
   };
 
   // ===== Bulk MOT refresh (All vehicles) =====
