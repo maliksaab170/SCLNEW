@@ -2598,24 +2598,20 @@ function viewVehicles(){
       }
     }
 
-    // only set inputs when we have a useful fallback. This attempts to fill missing fields
-    // rather than only when the primary key is present.
-    const setIfEmpty = (selector, value) => {
-      if (!value && value !== 0) return;
+    const setField = (selector, value, force = false) => {
+      if (value == null || value === '') return;
       const el = wrap.querySelector(selector);
       if (!el) return;
-      // if field empty, or current value is clearly placeholder, overwrite
-      if (!el.value || String(el.value).trim() === '') el.value = String(value);
+      // If force=true, always overwrite. Otherwise overwrite only if empty.
+      if (force || !el.value || String(el.value).trim() === '') el.value = String(value);
     };
 
-    // Set fields using fallbacks
-    setIfEmpty('#v_make', makeVal);
-    // model may be in make+model combined; if model missing but vehicle.modelName exists, use it
-    setIfEmpty('#v_model', modelVal || pick(vehicle, 'modelName', ['raw','modelName']));
-    setIfEmpty('#v_colour', colourVal ? String(colourVal).toUpperCase() : undefined);
-    setIfEmpty('#v_fuel', fuelVal ? String(fuelVal).toUpperCase() : undefined);
-    setIfEmpty('#v_engineSize', engineVal ? String(engineVal) : undefined);
-    setIfEmpty('#v_vin', vinVal);
+    setField('#v_make', makeVal, true);
+    setField('#v_model', modelVal || pick(vehicle, 'modelName', ['raw','modelName']), true);
+    setField('#v_colour', colourVal ? String(colourVal).toUpperCase() : undefined, true);
+    setField('#v_fuel', fuelVal ? String(fuelVal).toUpperCase() : undefined, true);
+    setField('#v_engineSize', engineVal ? String(engineVal) : undefined, true);
+    setField('#v_vin', vinVal, true);
 
     // Last MOT details
     if (latest) {
