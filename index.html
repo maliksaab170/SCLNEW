@@ -3011,7 +3011,7 @@ function viewSales(){
     <label>Agreement #<input id="sale_agree" placeholder="Agreement #"></label>
     <label>Deliver To<input id="sale_deliver" placeholder="Name/address"></label>
     <label>Keys<input id="sale_keys" placeholder="e.g. 2 keys"></label>
-    <label>MOT Expiry<input id="sale_mot" placeholder="e.g. 2025-11-30"></label>
+    <label>MOT Expiry<input id="sale_mot" type="date" placeholder="e.g. 2025-11-30"></label>
     <label>Service History<input id="sale_sh" placeholder="Full / Part / None"></label>
     <label>Invoice # (optional)<input id="sale_invNo" placeholder="Leave blank for auto"></label>
     <button id="sale_add" class="primary">Record / Update</button>
@@ -3145,17 +3145,26 @@ function viewSales(){
   // Auto-fill "Date of First Reg" when entering the vehicle REG
   const vehicleRegInput = wrap.querySelector('#sale_reg');
   const firstRegInput = wrap.querySelector('#sale_firstReg');
+  const saleMotInput = wrap.querySelector('#sale_mot');
 
-  if (vehicleRegInput && firstRegInput) {
+    if (vehicleRegInput && firstRegInput) {
     vehicleRegInput.addEventListener('input', () => {
-      const regInput = vehicleRegInput.value.trim().toUpperCase(); // Get entered REG
-      const vehicle = (db.vehicles || []).find(v => (v.reg || '').toUpperCase() === regInput);
-      if (vehicle && vehicle.firstReg) {
-        firstRegInput.value = vehicle.firstReg; // Set the Date of First Reg field
+    const regInput = vehicleRegInput.value.trim().toUpperCase(); // Get entered REG
+    const vehicle = (db.vehicles || []).find(v => (v.reg || '').toUpperCase() === regInput);
+    if (vehicle && vehicle.firstReg) {
+      firstRegInput.value = vehicle.firstReg; // Set the Date of First Reg field
+    } else {
+      firstRegInput.value = ''; // Clear if no matching vehicle found
+    }
+
+    if (saleMotInput) {
+      if (vehicle && (vehicle.motExpiry || vehicle.lastMotExpiry)) {
+        saleMotInput.value = vehicle.motExpiry || vehicle.lastMotExpiry || '';
       } else {
-        firstRegInput.value = ''; // Clear if no matching vehicle found
+        saleMotInput.value = '';
       }
-    });
+    }
+  });
   }
 
   // Event listeners for search and filter
@@ -4241,7 +4250,7 @@ function printPurchaseInvoice(purchaseId){
 
   <h3>Vehicle Details</h3>
   <table class="tight">
-    <tr><th>Registration</th><td>${pi.reg||''}</td></tr>
+    <tr><th>Registration</th><td><b>${pi.reg||''}</b></td></tr>
     <tr><th>Make</th><td>${pi.make||''}</td></tr>
     <tr><th>Model</th><td>${pi.model||''}</td></tr>
     <tr><th>VIN</th><td>${pi.vin||''}</td></tr>
@@ -4623,7 +4632,7 @@ function printInvoice(saleId){
       <td>
         <b>${v.make||''} ${v.model||''}</b><br>
         Colour: ${v.colour||''}<br>
-        REG: ${v.reg||''} &nbsp; VIN: ${v.vin||''}<br>
+        REG: <b>${v.reg||''}</b> &nbsp; VIN: ${v.vin||''}<br>
         Mileage: ${(s.mileage||v.mileage||'')} &nbsp; First Reg: ${ddmmyyyy(s.firstReg||'')}
       </td>
     </tr>
@@ -4825,7 +4834,7 @@ function printFinanceProforma(saleId){
       <td>
         <b>${v.make||''} ${v.model||''}</b><br>
         Colour: ${v.colour||''}<br>
-        REG: ${v.reg||''} &nbsp; VIN: ${v.vin||''}<br>
+        REG: <b>${v.reg||''}</b> &nbsp; VIN: ${v.vin||''}<br>
         Mileage: ${(s.mileage||v.mileage||'')} &nbsp; First Reg: ${ddmmyyyy(s.firstReg||'')}
       </td>
     </tr>
