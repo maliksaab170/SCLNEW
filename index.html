@@ -3245,6 +3245,16 @@ function viewSales(){
     if (!invNoValue && !editId) {
       invNoValue = getNextInvoiceNo();
     }
+
+    if (invNoValue) {
+      const duplicate = (db.sales || []).find(sale => (sale.invNo || '').trim() === invNoValue && sale.id !== editId);
+      if (duplicate) {
+        // Focus the invoice input so user can change it
+        const invEl = wrap.querySelector('#sale_invNo');
+        if (invEl) invEl.focus();
+        return alert('Invoice number already in use. Please choose a different Invoice #.');
+      }
+    }
   
     const price = Number(wrap.querySelector('#sale_price').value || 0);
     const s = { 
@@ -5160,8 +5170,17 @@ function viewComplaints(){
   <div class="row">
     <input id="comp_date" type="date">
     <input id="comp_customer" placeholder="Customer Name *" style="min-width:180px">
-    <input id="comp_vehicle" placeholder="Vehicle REG" style="min-width:180px">
-    <input id="comp_mileage" type="number" placeholder="Mileage at first complaint">
+    
+    <datalist id="comp_reg_list">
+      ${(db.vehicles||[]).map(v => {
+        const reg = (v.reg||'').toUpperCase();
+        const m = v.make||'';
+        const mo = v.model||'';
+        return `<option value="${reg}">${reg} — ${m} ${mo}</option>`;
+      }).join('')}
+    </datalist>
+    <input id="comp_vehicle" list="comp_reg_list" placeholder="Vehicle REG" style="min-width:180px">
+    
     <input id="comp_type" placeholder="Complaint Type" style="min-width:180px">
     <select id="comp_severity">
       <option value="low">Low</option>
@@ -5170,13 +5189,33 @@ function viewComplaints(){
       <option value="urgent">Urgent</option>
     </select>
   </div>
+
+  <div class="row small" id="comp_saleHint" style="margin-top:4px;margin-bottom:8px;color:var(--mut)"></div>
+
   <div class="row">
-    <textarea id="comp_details" placeholder="Complaint details * (what problem they reported)" style="flex:1;min-height:80px"></textarea>
+    <textarea id="comp_details" placeholder="Complaint details *" style="flex:1;min-height:80px"></textarea>
   </div>
   <div class="row">
     <textarea id="comp_resolution" placeholder="Resolution taken / plan" style="flex:1;min-height:80px"></textarea>
   </div>
-  <div class="row">
+
+  <!-- LOG FIELDS -->
+  <div class="row" style="flex-wrap:wrap;gap:8px">
+    <input id="comp_mileageNow" type="number" placeholder="Mileage now" style="max-width:150px">
+    <button id="comp_autofill" type="button">Auto-fill from sale</button>
+    <input id="comp_mechBook" type="datetime-local" placeholder="Booked with mechanic">
+    <input id="comp_mechName" placeholder="Mechanic / Garage name">
+    <input id="comp_delivered" type="datetime-local" placeholder="Delivered to mechanic">
+    <input id="comp_work" placeholder="Work carried out / fault found" style="flex:1;min-width:200px">
+  </div>
+
+  <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
+    <input id="comp_collected" type="datetime-local" placeholder="Customer collected">
+    <input id="comp_collectedMileage" type="number" placeholder="Mileage at collection" style="max-width:170px">
+    <input id="comp_handler" placeholder="Staff dealing with complaint">
+  </div>
+
+  <div class="row" style="margin-top:10px">
     <select id="comp_status">
       <option value="new">New</option>
       <option value="investigating">Investigating</option>
@@ -5184,52 +5223,12 @@ function viewComplaints(){
       <option value="closed">Closed</option>
       <option value="escalated">Escalated</option>
     </select>
-    <input id="comp_assigned" placeholder="Assigned to (staff name)">
+    <input id="comp_assigned" placeholder="Assigned to (optional)">
     <input id="comp_followup" type="date" placeholder="Follow-up date">
     <input id="comp_cost" type="number" placeholder="Cost £ (if any)">
     <button id="comp_add" class="primary">Add / Update</button>
   </div>
-
-  <h3 style="margin-top:18px">Complaint Timeline / Work Log</h3>
-  <div class="small" style="margin-bottom:4px">
-    Use this to record every step: customer call, booked with mechanic, car delivered, job done, customer collected, etc.
-  </div>
-  <div class="row">
-    <input id="log_date" type="datetime-local">
-    <select id="log_stage" style="min-width:200px">
-      <option value="">Stage (select or type)</option>
-      <option value="Customer called to complain">Customer called to complain</option>
-      <option value="Booked with mechanic">Booked with mechanic</option>
-      <option value="Vehicle delivered to mechanic">Vehicle delivered to mechanic</option>
-      <option value="Work in progress">Work in progress</option>
-      <option value="Repair completed">Repair completed</option>
-      <option value="Customer updated">Customer updated</option>
-      <option value="Customer collected vehicle">Customer collected vehicle</option>
-      <option value="Other">Other</option>
-    </select>
-    <input id="log_mileage" type="number" placeholder="Mileage at this step">
-    <input id="log_handler" placeholder="Handled by / Mechanic">
-  </div>
-  <div class="row">
-    <textarea id="log_notes" placeholder="Notes (what was agreed, what problem, what findings, parts used, etc.)" style="flex:1;min-height:70px"></textarea>
-    <button id="log_add" style="align-self:flex-start;margin-left:8px">Add to Log</button>
-  </div>
-  <table class="table" style="margin-top:8px">
-    <thead>
-      <tr>
-        <th>Date/Time</th>
-        <th>Stage</th>
-        <th>Mileage</th>
-        <th>Handled By</th>
-        <th>Notes</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody id="log_body">
-      <tr><td colspan="6" class="small" style="text-align:center;padding:10px">Select a complaint and click Edit to see and add log entries.</td></tr>
-    </tbody>
-  </table>
-
+  
   <div class="row" style="margin-top:16px;margin-bottom:8px">
     <input id="comp_search" placeholder="Search customer/reg/details." style="flex:1">
     <select id="comp_filter_status">
@@ -5248,14 +5247,15 @@ function viewComplaints(){
       <option value="urgent">Urgent</option>
     </select>
     <button id="comp_clear">Clear Filters</button>
-    <button id="comp_print_list">Print / Export</button>
+    <button id="comp_export">Export CSV</button>
+    <button id="comp_print">Print</button>
   </div>
   
   <table class="table" style="margin-top:10px">
     <thead>
       <tr>
         <th>Date</th>
-        <th>Customer</th>
+        <th>Customer / Summary</th>
         <th>Vehicle</th>
         <th>Type</th>
         <th>Severity</th>
@@ -5268,107 +5268,72 @@ function viewComplaints(){
     </thead>
     <tbody id="comp_body"></tbody>
   </table>`;
-  
-  // Initialise arrays
+
+  // ===== Helpers =====
   db.complaints = db.complaints || [];
-  db.todo = db.todo || [];
-  
   const body = wrap.querySelector('#comp_body');
-  const logBody = wrap.querySelector('#log_body');
   let editId = null;
 
-  // === Helper: find vehicle by reg (for storing link + mileage) ===
-  function findVehicleIdByRegLocal(reg){
-    const r = normReg(reg);
-    if(!r) return null;
-    const v = (db.vehicles || []).find(x => normReg(x.reg) === r);
-    return v ? v.id : null;
+  function findSaleByReg(reg){
+    reg = (reg||'').toUpperCase().trim();
+    if(!reg) return null;
+    const v = (db.vehicles||[]).find(x => (x.reg||'').toUpperCase() === reg) || null;
+    if(!v) return null;
+    const sale = (db.sales||[]).find(s => s.vehicleId === v.id && !s.refunded) || null;
+    return { vehicle: v, sale };
   }
 
-  // ===== Helper: find latest sale for a REG =====
-  function findLatestSaleByRegForCompl(reg){
-    const clean = normReg(reg);
-    if(!clean) return null;
-    let bestSale = null;
-    let bestVehicle = null;
-
-    (db.sales || []).forEach(s => {
-      const v = (db.vehicles || []).find(x => x.id === s.vehicleId) || {};
-      const sr = normReg(v.reg || s.reg || '');
-      if(!sr || sr !== clean) return;
-      if(!bestSale || String(s.date || '') > String(bestSale.date || '')){
-        bestSale = s;
-        bestVehicle = v;
-      }
-    });
-
-    if(!bestSale) return null;
-    return { sale: bestSale, vehicle: bestVehicle };
-  }
-
-  // Auto-fill customer + mileage when REG is typed
-  function autoFillComplaintFromReg(){
-    const regInput = wrap.querySelector('#comp_vehicle');
-    if(!regInput) return;
-    const reg = (regInput.value || '').trim().toUpperCase();
-    if(!reg) return;
-
-    const res = findLatestSaleByRegForCompl(reg);
-    if(!res) return;
-
-    const sale = res.sale;
-    const vehicle = res.vehicle || {};
-    
-    const custEl = wrap.querySelector('#comp_customer');
-    if(custEl && !custEl.value.trim()){
-      custEl.value = sale.buyer || '';
-    }
-
-    const mileEl = wrap.querySelector('#comp_mileage');
-    if(mileEl && !mileEl.value){
-      const m = Number(sale.mileage || vehicle.mileage || vehicle.lastMotMileage || 0);
-      mileEl.value = m || '';
-    }
-  }
-
-  const regField = wrap.querySelector('#comp_vehicle');
-  if(regField){
-    regField.addEventListener('change', autoFillComplaintFromReg);
-    regField.addEventListener('blur', autoFillComplaintFromReg);
-  }
-
-  // ===== TIMELINE RENDER =====
-  function renderLog(comp){
-    logBody.innerHTML = '';
-    if(!comp || !Array.isArray(comp.log) || !comp.log.length){
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td colspan="6" class="small" style="text-align:center;padding:10px">No log entries yet. Use the fields above to add steps.</td>`;
-      logBody.appendChild(tr);
+  function buildSaleHint(reg, comp){
+    const hintEl = wrap.querySelector('#comp_saleHint');
+    const found = findSaleByReg(reg);
+    if(!found || !found.sale){
+      hintEl.textContent = reg ? `No sale found for ${reg} (may be unsold / purchase only).` : '';
       return;
     }
+    const v = found.vehicle;
+    const s = found.sale;
+    const buyer = s.buyer || (comp && comp.customer) || '';
+    const soldDate = s.date ? ddmmyyyy(s.date) : '';
+    const soldMileage = Number(s.mileage || 0);
+    const compMileage = Number((comp && comp.mileageNow) || wrap.querySelector('#comp_mileageNow').value || 0) || 0;
 
-    // Sort by date/time ascending (oldest first)
-    const entries = comp.log.slice().sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')));
+    let daysSinceSale = '';
+    if (s.date) {
+      const dSale = new Date(s.date);
+      const dComp = comp && comp.date ? new Date(comp.date) : new Date();
+      const diff = Math.round((dComp - dSale) / (1000*60*60*24));
+      daysSinceSale = isNaN(diff) ? '' : `${diff} days`;
+    }
 
-    entries.forEach(entry => {
-      const tr = document.createElement('tr');
-      const d = entry.date ? entry.date.replace('T',' ') : '';
-      tr.innerHTML = `
-        <td>${d}</td>
-        <td>${entry.stage || ''}</td>
-        <td>${entry.mileage || ''}</td>
-        <td>${entry.handler || ''}</td>
-        <td>${(entry.notes || '').replace(/\n/g,'<br>')}</td>
-        <td><button class="danger" data-act="log_del" data-cid="${comp.id}" data-lid="${entry.id}">Delete</button></td>
-      `;
-      logBody.appendChild(tr);
-    });
+    // Optional warranty months from Settings (db.company.defaultWarrantyMonths)
+    let warrantyText = '';
+    const wMonths = Number((db.company || {}).defaultWarrantyMonths || 0);
+    if (s.date && wMonths > 0){
+      const d = new Date(s.date);
+      d.setMonth(d.getMonth() + wMonths);
+      const iso = d.toISOString().slice(0,10);
+      warrantyText = `• Warranty approx until ${ddmmyyyy(iso)} (${wMonths} months)`;
+    }
+
+    let bits = [];
+    if (soldDate) bits.push(`Sold: ${soldDate}${daysSinceSale ? ' ('+daysSinceSale+' before complaint)' : ''}`);
+    if (soldMileage) bits.push(`Mileage at sale: ${soldMileage.toLocaleString()} miles`);
+    if (compMileage) {
+      const diffMiles = soldMileage ? (compMileage - soldMileage) : null;
+      bits.push(`Mileage now: ${compMileage.toLocaleString()} miles` + (diffMiles!=null ? ` (${diffMiles.toLocaleString()} since sale)` : ''));
+    }
+    if (warrantyText) bits.push(warrantyText);
+
+    const line = `Logging for: ${buyer || 'Unknown'} — ${(v.reg||'').toUpperCase()} (${v.make||''} ${v.model||''})`;
+    hintEl.innerHTML = line + (bits.length ? `<br><span style="color:var(--mut);font-size:12px">${bits.join(' • ')}</span>` : '');
   }
 
-  // ===== FILTERED COMPLAINTS (shared for table + print) =====
-  function getFilteredComplaints(filter = {}) {
+  function renderComplaints(filter = {}) {
+    body.innerHTML = '';
+    
     let complaints = db.complaints || [];
     
+    // Filters
     if (filter.search) {
       const searchTerm = filter.search.toLowerCase();
       complaints = complaints.filter(c => 
@@ -5378,67 +5343,34 @@ function viewComplaints(){
         (c.resolution || '').toLowerCase().includes(searchTerm)
       );
     }
-    
     if (filter.status) {
       complaints = complaints.filter(c => c.status === filter.status);
     }
-    
     if (filter.severity) {
       complaints = complaints.filter(c => c.severity === filter.severity);
     }
-
-    complaints.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
-    return complaints;
-  }
-  
-  // ===== TABLE RENDER (with overdue + bell) =====
-  function renderComplaints(filter = {}) {
-    body.innerHTML = '';
     
-    const complaints = getFilteredComplaints(filter);
-    if (!complaints.length) {
+    // Sort by date (newest first)
+    complaints.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    
+    if (complaints.length === 0) {
       const tr = document.createElement('tr');
       tr.innerHTML = `<td colspan="10" class="small" style="text-align: center; padding: 20px;">No complaints found${filter.search ? ' for "' + filter.search + '"' : ''}</td>`;
       body.appendChild(tr);
       return;
     }
-
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    const todos = db.todo || [];
     
     complaints.forEach(c => {
       const tr = document.createElement('tr');
-
-      let followHtml = '';
-      let isOverdue = false;
-      if (c.followup) {
-        const fd = new Date(c.followup);
-        fd.setHours(0,0,0,0);
-        const statusLower = String(c.status || '').toLowerCase();
-        isOverdue = fd < today && !['resolved', 'closed'].includes(statusLower);
-        followHtml = ddmmyyyy(c.followup) || '';
-        if (isOverdue) {
-          followHtml += ' <span style="color:#c00;font-weight:600">⚠ overdue</span>';
-        }
-      }
-
-      const hasOpenTodo = todos.some(t => t.entity === 'complaint' && t.entityId === c.id && !t.done);
-      const statusLabel = (c.status || '') + (hasOpenTodo ? ' 🔔' : '');
-
-      if (isOverdue) {
-        tr.style.background = 'rgba(255,0,0,0.06)';
-      }
-
       tr.innerHTML = `
         <td>${ddmmyyyy(c.date)}</td>
         <td>${c.customer || ''}<br><small style="color:var(--mut)">${(c.details || '').substring(0, 50)}${(c.details || '').length > 50 ? '...' : ''}</small></td>
         <td>${c.vehicle || ''}</td>
         <td>${c.type || ''}</td>
         <td>${c.severity || ''}</td>
-        <td>${statusLabel}</td>
+        <td>${c.status || ''}</td>
         <td>${c.assigned || ''}</td>
-        <td>${followHtml}</td>
+        <td>${ddmmyyyy(c.followup)}</td>
         <td class="right">${c.cost ? fmtMoney(c.cost) : ''}</td>
         <td>
           <button data-act="view" data-id="${c.id}" title="View Details">View</button>
@@ -5449,22 +5381,24 @@ function viewComplaints(){
       body.appendChild(tr);
     });
   }
-  
-  // ===== ADD / UPDATE COMPLAINT (with auto To-Do + keep log) =====
+
+  // Initial table
+  renderComplaints();
+
+  // Add/Update complaint
   wrap.querySelector('#comp_add').onclick = () => {
     if(!canAction('add')) return alert('No permission');
     
-    const regVal = (wrap.querySelector('#comp_vehicle').value || '').trim().toUpperCase();
-    const existing = editId ? db.complaints.find(x => x.id === editId) : null;
-    const compId = editId || uid();
+    const compReg = (wrap.querySelector('#comp_vehicle').value || '').toUpperCase().trim();
+    const current = editId ? (db.complaints||[]).find(x => x.id === editId) : null;
+
+    const baseDate = wrap.querySelector('#comp_date').value || (current && current.date) || new Date().toISOString().split('T')[0];
 
     const comp = {
-      id: compId,
-      date: wrap.querySelector('#comp_date').value || new Date().toISOString().split('T')[0],
+      id: editId || uid(),
+      date: baseDate,
       customer: wrap.querySelector('#comp_customer').value.trim(),
-      vehicle: regVal,
-      vehicleId: findVehicleIdByRegLocal(regVal),
-      mileageAtComplaint: Number(wrap.querySelector('#comp_mileage').value || 0) || null,
+      vehicle: compReg,
       type: wrap.querySelector('#comp_type').value,
       severity: wrap.querySelector('#comp_severity').value,
       details: wrap.querySelector('#comp_details').value.trim(),
@@ -5473,44 +5407,35 @@ function viewComplaints(){
       assigned: wrap.querySelector('#comp_assigned').value.trim(),
       followup: wrap.querySelector('#comp_followup').value,
       cost: Number(wrap.querySelector('#comp_cost').value || 0),
-      log: (existing && Array.isArray(existing.log)) ? existing.log : [],   // keep timeline
-      createdAt: existing ? existing.createdAt : new Date().toISOString(),
+
+      // LOG FIELDS
+      mileageNow: Number(wrap.querySelector('#comp_mileageNow').value || 0),
+      mechanicBooked: wrap.querySelector('#comp_mechBook').value,
+      mechanicName: wrap.querySelector('#comp_mechName').value.trim(),
+      deliveredDate: wrap.querySelector('#comp_delivered').value,
+      workDone: wrap.querySelector('#comp_work').value.trim(),
+      collectedDate: wrap.querySelector('#comp_collected').value,
+      collectedMileage: Number(wrap.querySelector('#comp_collectedMileage').value || 0),
+      handler: wrap.querySelector('#comp_handler').value.trim(),
+
+      createdAt: editId && current ? current.createdAt : new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    
+
+    // Snapshot sale info when adding (optional but useful)
+    const found = findSaleByReg(compReg);
+    if (found && found.sale){
+      comp.saleId = found.sale.id;
+      comp.saleDate = found.sale.date || '';
+      comp.saleMileage = Number(found.sale.mileage || 0);
+      comp.salePrice = Number(found.sale.salePrice || 0);
+      comp.saleInvNo = found.sale.invNo || '';
+    }
+
     if(!comp.customer || !comp.details) {
       return alert('Customer name and complaint details are required');
     }
 
-    // === AUTO NOTIFICATION / To-Do for follow-up ===
-    db.todo = db.todo || [];
-    let followTask = db.todo.find(t => t.entity === 'complaint' && t.entityId === comp.id);
-    const statusLower = String(comp.status || '').toLowerCase();
-    const hasFollow = !!comp.followup;
-
-    if (!hasFollow || statusLower === 'resolved' || statusLower === 'closed') {
-      if (followTask) followTask.done = true;
-    } else {
-      const text = `Complaint follow-up: ${comp.customer} ${comp.vehicle} (${comp.type || ''})`;
-      if (followTask) {
-        followTask.date = comp.followup;
-        followTask.text = text;
-        followTask.assignedTo = comp.assigned || '';
-        followTask.done = false;
-      } else {
-        followTask = {
-          id: uid(),
-          date: comp.followup,
-          text,
-          assignedTo: comp.assigned || '',
-          entity: 'complaint',
-          entityId: comp.id,
-          done: false
-        };
-        db.todo.unshift(followTask);
-      }
-    }
-    
     if(editId) {
       db.complaints = db.complaints.map(x => x.id === editId ? comp : x);
       addAudit('update', 'complaint', comp.id, `${comp.customer} - ${comp.type} - ${comp.status}`);
@@ -5518,137 +5443,308 @@ function viewComplaints(){
     } else {
       db.complaints.unshift(comp);
       addAudit('add', 'complaint', comp.id, `${comp.customer} - ${comp.type} - ${comp.severity}`);
+
+      // Auto notification: create TODO when urgent/escalated
+      if (comp.severity === 'urgent' || comp.status === 'escalated') {
+        db.todo = db.todo || [];
+        const task = {
+          id: uid(),
+          date: comp.date,
+          text: `URGENT complaint: ${comp.customer} / ${comp.vehicle} — ${comp.type}`,
+          assignedTo: comp.assigned || '',
+          entity: 'complaint',
+          entityId: comp.id,
+          done: false
+        };
+        db.todo.unshift(task);
+        addAudit('add', 'todo', task.id, task.text);
+      }
     }
     
     saveDB();
     try{renderAlertBell();}catch(e){}
     renderComplaints();
-    renderLog(null); // clear timeline section
-    
-    // Clear form after save
+
+    // Clear form
     wrap.querySelector('#comp_customer').value = '';
     wrap.querySelector('#comp_vehicle').value = '';
-    wrap.querySelector('#comp_mileage').value = '';
     wrap.querySelector('#comp_type').value = '';
     wrap.querySelector('#comp_details').value = '';
     wrap.querySelector('#comp_resolution').value = '';
-    wrap.querySelector('#comp_status').value = 'new';
     wrap.querySelector('#comp_assigned').value = '';
     wrap.querySelector('#comp_followup').value = '';
     wrap.querySelector('#comp_cost').value = '';
-    wrap.querySelector('#comp_severity').value = 'medium';
-    wrap.querySelector('#log_date').value = '';
-    wrap.querySelector('#log_stage').value = '';
-    wrap.querySelector('#log_mileage').value = '';
-    wrap.querySelector('#log_handler').value = '';
-    wrap.querySelector('#log_notes').value = '';
+    wrap.querySelector('#comp_mileageNow').value = '';
+    wrap.querySelector('#comp_mechBook').value = '';
+    wrap.querySelector('#comp_mechName').value = '';
+    wrap.querySelector('#comp_delivered').value = '';
+    wrap.querySelector('#comp_work').value = '';
+    wrap.querySelector('#comp_collected').value = '';
+    wrap.querySelector('#comp_collectedMileage').value = '';
+    wrap.querySelector('#comp_handler').value = '';
+    wrap.querySelector('#comp_saleHint').textContent = '';
   };
 
-  // ===== ADD LOG ENTRY =====
-  wrap.querySelector('#log_add').onclick = () => {
-    if(!canAction('edit')) return alert('No permission');
-    if(!editId) return alert('Select a complaint and click Edit before adding log entries.');
-
-    const comp = db.complaints.find(x => x.id === editId);
-    if(!comp) return alert('Complaint not found');
-
-    comp.log = comp.log || [];
-
-    const dateVal = wrap.querySelector('#log_date').value || new Date().toISOString().slice(0,16);
-    const stageVal = wrap.querySelector('#log_stage').value || 'Other';
-    const mileageVal = wrap.querySelector('#log_mileage').value || '';
-    const handlerVal = wrap.querySelector('#log_handler').value || '';
-    const notesVal = wrap.querySelector('#log_notes').value || '';
-
-    comp.log.push({
-      id: uid(),
-      date: dateVal,
-      stage: stageVal,
-      mileage: mileageVal,
-      handler: handlerVal,
-      notes: notesVal
+  // Search / filter / clear
+  wrap.querySelector('#comp_search').addEventListener('input', () => {
+    renderComplaints({
+      search: wrap.querySelector('#comp_search').value,
+      status: wrap.querySelector('#comp_filter_status').value,
+      severity: wrap.querySelector('#comp_filter_severity').value
     });
-
-    comp.updatedAt = new Date().toISOString();
-
-    saveDB();
-    addAudit('update','complaint_log',comp.id,`Log: ${stageVal}`);
-    renderLog(comp);
-
-    // Clear log inputs except handler (often same person)
-    wrap.querySelector('#log_date').value = '';
-    wrap.querySelector('#log_stage').value = '';
-    wrap.querySelector('#log_mileage').value = '';
-    wrap.querySelector('#log_notes').value = '';
+  });
+  wrap.querySelector('#comp_filter_status').addEventListener('change', () => {
+    renderComplaints({
+      search: wrap.querySelector('#comp_search').value,
+      status: wrap.querySelector('#comp_filter_status').value,
+      severity: wrap.querySelector('#comp_filter_severity').value
+    });
+  });
+  wrap.querySelector('#comp_filter_severity').addEventListener('change', () => {
+    renderComplaints({
+      search: wrap.querySelector('#comp_search').value,
+      status: wrap.querySelector('#comp_filter_status').value,
+      severity: wrap.querySelector('#comp_filter_severity').value
+    });
+  });
+  wrap.querySelector('#comp_clear').onclick = () => {
+    wrap.querySelector('#comp_search').value = '';
+    wrap.querySelector('#comp_filter_status').value = '';
+    wrap.querySelector('#comp_filter_severity').value = '';
+    renderComplaints();
   };
-  
-  // ===== ROW BUTTONS =====
-  wrap.addEventListener('click', (ev) => {
-    const b = ev.target.closest('button');
-    if(!b) return;
 
-    const act = b.dataset.act;
-
-    // Log delete
-    if(act === 'log_del'){
-      if(!canAction('edit')) return alert('No permission');
-      const cid = b.dataset.cid;
-      const lid = b.dataset.lid;
-      const comp = db.complaints.find(x => x.id === cid);
-      if(!comp || !Array.isArray(comp.log)) return;
-      comp.log = comp.log.filter(e => e.id !== lid);
-      comp.updatedAt = new Date().toISOString();
-      saveDB();
-      addAudit('update','complaint_log',cid,'Log entry deleted');
-      if(editId === cid) renderLog(comp);
+  // Auto-fill from sale
+  wrap.querySelector('#comp_autofill').onclick = () => {
+    const reg = (wrap.querySelector('#comp_vehicle').value || '').toUpperCase().trim();
+    if (!reg) return alert('Enter vehicle REG first.');
+    const found = findSaleByReg(reg);
+    if (!found || !found.sale) {
+      alert('No sale found for this REG.');
       return;
     }
+    const s = found.sale;
+    if (!wrap.querySelector('#comp_customer').value.trim()) {
+      wrap.querySelector('#comp_customer').value = s.buyer || '';
+    }
+    // Put the mileage at sale as a starting point (you can then overwrite with current mileage)
+    if (!wrap.querySelector('#comp_mileageNow').value) {
+      wrap.querySelector('#comp_mileageNow').value = s.mileage || 0;
+    }
+    buildSaleHint(reg, {
+      date: wrap.querySelector('#comp_date').value || new Date().toISOString().slice(0,10),
+      mileageNow: Number(wrap.querySelector('#comp_mileageNow').value || 0)
+    });
+  };
 
+  // Update hint when REG changes
+  wrap.querySelector('#comp_vehicle').addEventListener('change', () => {
+    const reg = (wrap.querySelector('#comp_vehicle').value || '').toUpperCase().trim();
+    if (!reg) {
+      wrap.querySelector('#comp_saleHint').textContent = '';
+      return;
+    }
+    buildSaleHint(reg, {
+      date: wrap.querySelector('#comp_date').value || new Date().toISOString().slice(0,10),
+      mileageNow: Number(wrap.querySelector('#comp_mileageNow').value || 0)
+    });
+  });
+
+  // Export CSV
+  wrap.querySelector('#comp_export').onclick = () => {
+    const rows = (db.complaints||[]).map(c => ([
+      c.date || '',
+      c.customer || '',
+      c.vehicle || '',
+      c.type || '',
+      c.severity || '',
+      c.status || '',
+      c.assigned || '',
+      c.followup || '',
+      c.cost || 0,
+      c.mileageNow || '',
+      c.mechanicBooked || '',
+      c.mechanicName || '',
+      c.deliveredDate || '',
+      c.workDone || '',
+      c.collectedDate || '',
+      c.collectedMileage || '',
+      c.handler || '',
+      c.saleDate || '',
+      c.saleMileage || '',
+      c.salePrice || '',
+      c.saleInvNo || ''
+    ]));
+
+    const header = [
+      'Complaint Date','Customer','Vehicle REG','Type','Severity','Status','Assigned',
+      'Follow-up','Cost','Mileage Now','Mechanic Booked','Mechanic Name',
+      'Delivered Date','Work Done','Collected Date','Collected Mileage',
+      'Handled By','Sale Date','Sale Mileage','Sale Price','Sale Invoice'
+    ];
+
+    const csv = [header].concat(rows)
+      .map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(','))
+      .join('\n');
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download = 'complaints_'+new Date().toISOString().slice(0,10)+'.csv';
+    a.click();
+  };
+
+  // Print summary
+  wrap.querySelector('#comp_print').onclick = () => {
+    const list = db.complaints || [];
+    if (!list.length) {
+      alert('No complaints to print.');
+      return;
+    }
+    let html = `<!doctype html><html><head><meta charset="utf-8"><title>Customer Complaints</title>
+    <style>
+      body{font-family:Arial;font-size:11px;color:#111}
+      table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #000;padding:4px 6px;vertical-align:top}
+      th{background:#f0f0f0}
+      h2{margin:0 0 10px 0}
+      .small{font-size:10px;color:#666}
+      .no-print{margin:8px 0}
+      @media print{.no-print{display:none}}
+    </style>
+    </head><body>
+    <button class="no-print" onclick="window.print()">Print / Save PDF</button>
+    <h2>Customer Complaints Log</h2>
+    <table><thead><tr>
+      <th>Date</th><th>Customer</th><th>Vehicle</th><th>Summary</th><th>Status</th>
+      <th>Severity</th><th>Handler</th><th>Log (mileage/mechanic)</th>
+    </tr></thead><tbody>`;
+
+    list.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0)).forEach(c => {
+      const reg = (c.vehicle||'').toUpperCase();
+      const found = findSaleByReg(reg);
+      const v = found && found.vehicle ? found.vehicle : {};
+      const s = found && found.sale ? found.sale : null;
+
+      const soldBit = s && s.date ? `Sold ${ddmmyyyy(s.date)}${s.mileage ? ' @ ' + s.mileage + ' miles' : ''}` : '';
+      const mileageBit = (c.mileageNow || c.collectedMileage) ? 
+        `Mileage now: ${c.mileageNow||''} • At collection: ${c.collectedMileage||''}` : '';
+      const mechBit = (c.mechanicName || c.workDone) ? 
+        `${c.mechanicName||''} — ${c.workDone||''}` : '';
+      
+      html += `<tr>
+        <td>${ddmmyyyy(c.date)}</td>
+        <td>${c.customer||''}</td>
+        <td>${reg}<br><span class="small">${v.make||''} ${v.model||''}</span></td>
+        <td>${(c.details||'').replace(/\n/g,'<br>')}</td>
+        <td>${c.status||''}</td>
+        <td>${c.severity||''}</td>
+        <td>${c.handler || c.assigned || ''}</td>
+        <td class="small">
+          ${soldBit ? soldBit + '<br>' : ''}
+          ${mileageBit ? mileageBit + '<br>' : ''}
+          ${c.mechanicBooked ? 'Booked: '+c.mechanicBooked+'<br>' : ''}
+          ${c.deliveredDate ? 'Delivered: '+c.deliveredDate+'<br>' : ''}
+          ${c.collectedDate ? 'Collected: '+c.collectedDate+'<br>' : ''}
+          ${mechBit}
+        </td>
+      </tr>`;
+    });
+
+    html += '</tbody></table></body></html>';
+    openPrintable(html);
+  };
+
+  // Row buttons (view/edit/delete)
+  wrap.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if(!b || !b.dataset.act) return;
     const id = b.dataset.id;
-    if(!id || !act) return;
-
-    const comp = db.complaints.find(x => x.id === id);
+    const act = b.dataset.act;
+    const comp = (db.complaints||[]).find(x => x.id === id);
     if(!comp) return;
     
     if(act === 'view') {
-      const logHtml = (comp.log || []).length
-        ? comp.log.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))).map(l => `
-          <div style="margin-bottom:6px;border-bottom:1px solid #ddd;padding-bottom:4px">
-            <b>${(l.date || '').replace('T',' ')}</b> | Mileage: ${l.mileage || 'N/A'} | Stage: ${l.stage || ''}
-            <br>Handled by: ${l.handler || 'N/A'}
-            <br>${(l.notes || '').replace(/\n/g,'<br>')}
-          </div>
-        `).join('') : 'No log recorded';
+      const reg = (comp.vehicle||'').toUpperCase();
+      const found = findSaleByReg(reg);
+      const v = found && found.vehicle ? found.vehicle : {};
+      const s = found && found.sale ? found.sale : null;
+
+      let headerRow = '';
+      if (s && v) {
+        const buyer = s.buyer || comp.customer || '';
+        const soldDate = s.date ? ddmmyyyy(s.date) : '';
+        const soldMileage = Number(s.mileage || 0);
+
+        const compMileage = Number(comp.mileageNow || comp.collectedMileage || 0) || 0;
+        let daysSinceSale = '';
+        if (s.date) {
+          const dSale = new Date(s.date);
+          const dComp = comp.date ? new Date(comp.date) : new Date();
+          const diff = Math.round((dComp - dSale) / (1000*60*60*24));
+          daysSinceSale = isNaN(diff) ? '' : `${diff} days`;
+        }
+        const diffMiles = (compMileage && soldMileage) ? (compMileage - soldMileage) : null;
+
+        // warranty from settings
+        let warrantyText = '';
+        const wMonths = Number((db.company||{}).defaultWarrantyMonths || 0);
+        if (s.date && wMonths > 0) {
+          const d = new Date(s.date);
+          d.setMonth(d.getMonth()+wMonths);
+          const iso = d.toISOString().slice(0,10);
+          warrantyText = `• Warranty approx until ${ddmmyyyy(iso)} (${wMonths} months)`;
+        }
+
+        let bits = [];
+        if (soldDate) bits.push(`Sold: ${soldDate}${daysSinceSale ? ' ('+daysSinceSale+' before complaint)' : ''}`);
+        if (soldMileage) bits.push(`Mileage at sale: ${soldMileage.toLocaleString()} miles`);
+        if (compMileage) bits.push(`Mileage now: ${compMileage.toLocaleString()} miles` + (diffMiles!=null ? ` (${diffMiles.toLocaleString()} since sale)` : ''));
+        if (warrantyText) bits.push(warrantyText);
+
+        const headerLine = `Logging for: ${buyer || 'Unknown'} — ${reg} (${v.make||''} ${v.model||''})`;
+        headerRow = `<tr><td colspan="2" style="padding:8px 4px;background:#0f1628;color:#cbd4ff;font-size:12px;border-bottom:1px solid var(--line);">
+            ${headerLine}<br>
+            <span style="color:#cbd4ffb3;font-size:11px">${bits.join(' • ')}</span>
+          </td></tr>`;
+      }
 
       const html = `
         <div style="padding:10px;max-width:700px">
           <h3>Complaint Details</h3>
           <table style="width:100%;border-collapse:collapse">
-            <tr><th style="text-align:left;padding:8px 4px;width:140px">Date:</th><td style="padding:8px 4px">${ddmmyyyy(comp.date)}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px">Customer:</th><td style="padding:8px 4px">${comp.customer}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px">Vehicle:</th><td style="padding:8px 4px">${comp.vehicle || 'N/A'}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px">Mileage at complaint:</th><td style="padding:8px 4px">${comp.mileageAtComplaint || ''}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px">Type:</th><td style="padding:8px 4px">${comp.type || ''}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px">Severity:</th><td style="padding:8px 4px">${comp.severity || ''}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px">Status:</th><td style="padding:8px 4px">${comp.status || ''}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px">Assigned:</th><td style="padding:8px 4px">${comp.assigned || 'Not assigned'}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px">Follow-up:</th><td style="padding:8px 4px">${ddmmyyyy(comp.followup) || 'Not set'}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px">Cost:</th><td style="padding:8px 4px">${comp.cost ? fmtMoney(comp.cost) : 'None'}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px;vertical-align:top">Details:</th><td style="padding:8px 4px">${(comp.details || '').replace(/\n/g, '<br>')}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px;vertical-align:top">Resolution:</th><td style="padding:8px 4px">${(comp.resolution || '').replace(/\n/g, '<br>') || 'None recorded'}</td></tr>
-            <tr><th style="text-align:left;padding:8px 4px;vertical-align:top">Timeline / Work Log:</th><td style="padding:8px 4px">${logHtml}</td></tr>
+            ${headerRow}
+            <tr><th style="text-align:left;padding:6px 4px;width:130px">Date:</th><td style="padding:6px 4px">${ddmmyyyy(comp.date)}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Customer:</th><td style="padding:6px 4px">${comp.customer}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Vehicle:</th><td style="padding:6px 4px">${(comp.vehicle||'')}${v.make||v.model ? ' — ' + (v.make||'') + ' ' + (v.model||'') : ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Type:</th><td style="padding:6px 4px">${comp.type || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Severity:</th><td style="padding:6px 4px">${comp.severity || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Status:</th><td style="padding:6px 4px">${comp.status || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Assigned:</th><td style="padding:6px 4px">${comp.assigned || 'Not assigned'}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Follow-up:</th><td style="padding:6px 4px">${ddmmyyyy(comp.followup) || 'Not set'}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Cost:</th><td style="padding:6px 4px">${comp.cost ? fmtMoney(comp.cost) : 'None'}</td></tr>
+
+            <tr><th style="text-align:left;padding:6px 4px">Mileage now:</th><td style="padding:6px 4px">${comp.mileageNow || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Booked with mechanic:</th><td style="padding:6px 4px">${comp.mechanicBooked || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Mechanic / Garage:</th><td style="padding:6px 4px">${comp.mechanicName || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Delivered to mechanic:</th><td style="padding:6px 4px">${comp.deliveredDate || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Work carried out:</th><td style="padding:6px 4px">${(comp.workDone || '').replace(/\n/g,'<br>')}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Customer collected:</th><td style="padding:6px 4px">${comp.collectedDate || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Mileage at collection:</th><td style="padding:6px 4px">${comp.collectedMileage || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Handled by:</th><td style="padding:6px 4px">${comp.handler || comp.assigned || ''}</td></tr>
+
+            <tr><th style="text-align:left;padding:6px 4px;vertical-align:top">Details:</th><td style="padding:6px 4px">${(comp.details || '').replace(/\n/g, '<br>')}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px;vertical-align:top">Resolution:</th><td style="padding:6px 4px">${(comp.resolution || '').replace(/\n/g, '<br>') || 'None recorded'}</td></tr>
           </table>
-        </div>
-      `;
-      openPrintable(`<!doctype html><html><head><meta charset="utf-8"><title>Complaint ${comp.customer}</title><style>body{font-family:Arial;padding:20px}</style></head><body>${html}</body></html>`);
+        </div>`;
+      alert(html);
     }
     else if(act === 'edit') {
       if(!canAction('edit')) return alert('No permission');
-      editId = id;
+      editId = comp.id;
+
       wrap.querySelector('#comp_date').value = comp.date || '';
       wrap.querySelector('#comp_customer').value = comp.customer || '';
       wrap.querySelector('#comp_vehicle').value = comp.vehicle || '';
-      wrap.querySelector('#comp_mileage').value = comp.mileageAtComplaint || '';
       wrap.querySelector('#comp_type').value = comp.type || '';
       wrap.querySelector('#comp_severity').value = comp.severity || 'medium';
       wrap.querySelector('#comp_details').value = comp.details || '';
@@ -5657,122 +5753,30 @@ function viewComplaints(){
       wrap.querySelector('#comp_assigned').value = comp.assigned || '';
       wrap.querySelector('#comp_followup').value = comp.followup || '';
       wrap.querySelector('#comp_cost').value = comp.cost || '';
+
+      wrap.querySelector('#comp_mileageNow').value = comp.mileageNow || '';
+      wrap.querySelector('#comp_mechBook').value = comp.mechanicBooked || '';
+      wrap.querySelector('#comp_mechName').value = comp.mechanicName || '';
+      wrap.querySelector('#comp_delivered').value = comp.deliveredDate || '';
+      wrap.querySelector('#comp_work').value = comp.workDone || '';
+      wrap.querySelector('#comp_collected').value = comp.collectedDate || '';
+      wrap.querySelector('#comp_collectedMileage').value = comp.collectedMileage || '';
+      wrap.querySelector('#comp_handler').value = comp.handler || '';
+
+      buildSaleHint(comp.vehicle, comp);
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
-      renderLog(comp);
     }
     else if(act === 'del') {
       if(!canAction('del')) return alert('No permission');
       if(!confirm('Delete this complaint?')) return;
-
-      markDeleted('complaints', id);
-      db.complaints = db.complaints.filter(x => x.id !== id);
-
+      db.complaints = (db.complaints||[]).filter(x => x.id !== id);
       saveDB();
       try{renderAlertBell();}catch(e){}
-      addAudit('delete', 'complaint', id, `${comp.customer} - ${comp.type}`);
+      addAudit('delete', 'complaint', id, comp.customer || '');
       renderComplaints();
-      if(editId === id){
-        editId = null;
-        renderLog(null);
-      }
     }
-
   });
-  
-  // ===== FILTERS =====
-  wrap.querySelector('#comp_search').addEventListener('input', function(e) {
-    renderComplaints({
-      search: e.target.value.trim(),
-      status: wrap.querySelector('#comp_filter_status').value,
-      severity: wrap.querySelector('#comp_filter_severity').value
-    });
-  });
-  
-  wrap.querySelector('#comp_filter_status').addEventListener('change', function() {
-    renderComplaints({
-      search: wrap.querySelector('#comp_search').value.trim(),
-      status: this.value,
-      severity: wrap.querySelector('#comp_filter_severity').value
-    });
-  });
-  
-  wrap.querySelector('#comp_filter_severity').addEventListener('change', function() {
-    renderComplaints({
-      search: wrap.querySelector('#comp_search').value.trim(),
-      status: wrap.querySelector('#comp_filter_status').value,
-      severity: this.value
-    });
-  });
-  
-  wrap.querySelector('#comp_clear').onclick = function() {
-    wrap.querySelector('#comp_search').value = '';
-    wrap.querySelector('#comp_filter_status').value = '';
-    wrap.querySelector('#comp_filter_severity').value = '';
-    renderComplaints();
-  };
 
-  // ===== PRINT / EXPORT COMPLAINT LIST =====
-  wrap.querySelector('#comp_print_list').onclick = function() {
-    const filter = {
-      search: wrap.querySelector('#comp_search').value.trim(),
-      status: wrap.querySelector('#comp_filter_status').value,
-      severity: wrap.querySelector('#comp_filter_severity').value
-    };
-    const list = getFilteredComplaints(filter);
-    if(!list.length) {
-      alert('No complaints to print for current filters.');
-      return;
-    }
-
-    const rowsHtml = list.map(c => `
-      <tr>
-        <td>${ddmmyyyy(c.date)}</td>
-        <td>${c.customer || ''}</td>
-        <td>${c.vehicle || ''}</td>
-        <td>${c.type || ''}</td>
-        <td>${c.severity || ''}</td>
-        <td>${c.status || ''}</td>
-        <td>${c.assigned || ''}</td>
-        <td>${ddmmyyyy(c.followup)}</td>
-        <td>${c.cost ? fmtMoney(c.cost) : ''}</td>
-      </tr>`).join('');
-
-    const html = `<!doctype html><html><head><meta charset="utf-8">
-      <title>Customer Complaints</title>
-      <style>
-        body{font-family:Arial;padding:20px;font-size:11px}
-        h2{margin-bottom:10px}
-        table{width:100%;border-collapse:collapse}
-        th,td{border:1px solid #ccc;padding:4px 6px;font-size:11px;vertical-align:top}
-        th{background:#f5f5f5;text-align:left}
-      </style>
-      </head><body>
-      <h2>Customer Complaints (${list.length})</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Customer</th>
-            <th>Vehicle</th>
-            <th>Type</th>
-            <th>Severity</th>
-            <th>Status</th>
-            <th>Assigned</th>
-            <th>Follow-up</th>
-            <th>Cost</th>
-          </tr>
-        </thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
-      </body></html>`;
-    
-    openPrintable(html);
-  };
-  
-  // Default date = today
-  wrap.querySelector('#comp_date').value = new Date().toISOString().slice(0,10);
-  renderComplaints();
-  renderLog(null);
   return wrap;
 }
 
