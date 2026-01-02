@@ -259,6 +259,14 @@ window.restoreJSONMerge = function () {
   </div>
   <div class="hdr-actions">
     <span id="who" class="small"></span>
+
+    <!-- 🔍 Global search -->
+    <input id="global_search"
+           placeholder="Search reg / name / invoice / phone"
+           onkeydown="if(event.key==='Enter'){globalSearch();}"
+           style="max-width:260px;margin-right:6px;">
+    <button onclick="globalSearch()">Search</button>
+
     <button onclick="switchUser()">Switch User</button>
     <button onclick="changeMyPass()">Change Password</button>
     <button onclick="logout()">Logout</button>
@@ -369,38 +377,75 @@ function openPrintable(html){
   iframe.srcdoc=html; return false;
 }
 
-// Export Vehicles as CSV
+// Export Vehicles as CSV (respects MOT filter)
 function exportVehiclesCSV() {
     const vehicles = db.vehicles || [];
     
     // Apply the same filters as the current view
-    const searchTerm = (document.getElementById('veh_search')?.value || '').toLowerCase().trim();
-    const instockOnly = document.getElementById('veh_instock')?.checked;
-    const soldOnly = document.getElementById('veh_soldonly')?.checked;
+    const searchTerm   = (document.getElementById('veh_search')?.value || '').toLowerCase().trim();
+    const instockOnly  = document.getElementById('veh_instock')?.checked;
+    const soldOnly     = document.getElementById('veh_soldonly')?.checked;
     const investorOnly = document.getElementById('veh_investoronly')?.checked;
-    const pxOnly = document.getElementById('veh_pxonly')?.checked;
+    const pxOnly       = document.getElementById('veh_pxonly')?.checked;
+    const motFilter    = document.getElementById('veh_motFilter')?.value || '';
     
     let filteredVehicles = vehicles.filter(v => {
-        // Apply stock status filters
+        // Stock status
         if (instockOnly && v.status === 'sold') return false;
-        if (soldOnly && v.status !== 'sold') return false;
+        if (soldOnly    && v.status !== 'sold') return false;
         
-        // Apply investor stock filter
+        // Investor stock only
         if (investorOnly && v.ownerType !== 'investor') return false;
         
-        // Apply part-ex filter
+        // Part-ex only
         if (pxOnly && v.supplier !== 'PART-EX') return false;
         
-        // Apply search filter
+        // Search (reg / make / model / supplier)
         if (searchTerm) {
-            const hay = ((v.reg || '') + ' ' + (v.make || '') + ' ' + (v.model || '')).toLowerCase();
+            const hay = (
+                (v.reg    || '') + ' ' +
+                (v.make   || '') + ' ' +
+                (v.model  || '') + ' ' +
+                (v.supplier || '')
+            ).toLowerCase();
             if (!hay.includes(searchTerm)) return false;
+        }
+        
+        // MOT expiry filter – SAME logic as viewVehicles()
+        if (motFilter) {
+            const motDate = v.motExpiry || v.lastMotExpiry || '';
+            if (!motDate) return false;
+            
+            const expiry = new Date(motDate);
+            const today  = new Date();
+            today.setHours(0, 0, 0, 0);
+            expiry.setHours(0, 0, 0, 0);
+            const diffMs   = expiry - today;
+            const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+            
+            switch (motFilter) {
+                case 'expired':
+                    if (diffDays >= 0) return false;   // only truly expired
+                    break;
+                case '30':
+                    if (diffDays <= 0 || diffDays > 30) return false;
+                    break;
+                case '60':
+                    if (diffDays <= 0 || diffDays > 60) return false;
+                    break;
+                case '90':
+                    if (diffDays <= 0 || diffDays > 90) return false;
+                    break;
+                case 'valid':
+                    if (diffDays < 0) return false;    // skip expired
+                    break;
+            }
         }
         
         return true;
     });
     
-    // Define headers
+    // CSV headers
     const headers = [
         'REG', 'Make', 'Model', 'Colour', 'Fuel', 'Mileage', 
         'First Registration', 'Purchase Date', 'Purchase Price', 
@@ -408,7 +453,7 @@ function exportVehiclesCSV() {
         'VIN', 'Created At', 'Last MOT Date', 'Last MOT Expiry', 'Last MOT Mileage'
     ];
     
-    // Create CSV rows
+    // Rows
     const rows = filteredVehicles.map(v => [
         v.reg || '',
         v.make || '',
@@ -431,28 +476,28 @@ function exportVehiclesCSV() {
         v.lastMotMileage || ''
     ]);
     
-    // Create CSV content
     const csvContent = [
         headers.join(','),
         ...rows.map(row => row.map(cell => 
-            typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n')) 
-                ? `"${cell.replace(/"/g, '""')}"` 
+            typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n'))
+                ? `"${cell.replace(/"/g,'""')}"`
                 : cell
         ).join(','))
     ].join('\n');
     
-    // Create and trigger download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `vehicles_export_${new Date().toISOString().slice(0, 10)}.csv`);
+    const url  = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = `vehicles_export_${new Date().toISOString().slice(0, 10)}.csv`;
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     
-    addAudit('export', 'vehicles', '', `Exported ${filteredVehicles.length} vehicles to CSV`);
+    if (typeof addAudit === 'function') {
+        addAudit('export', 'vehicles', '', `Exported ${filteredVehicles.length} vehicles to CSV`);
+    }
 }
 
 // Export Sales as CSV
@@ -560,7 +605,7 @@ window.db = db;
 db.deleted = db.deleted || {};
 if (!db.lastPush) db.lastPush = {};
 let pushEnabled = false;
-const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','To-Do','Users','Settings'];
+const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','Alerts','To-Do','Users','Settings'];
 
 // Add to the core utils section
 let changeTracker = {
@@ -1771,8 +1816,118 @@ function countChanges(changes) {
 }
 
 /* ========= Navigation & render ========= */
-const TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','To-Do','Users','Settings']; let currentTab=TABS[0];
+const TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','Alerts','To-Do','Users','Settings']; let currentTab=TABS[0];
 function setTab(t){ currentTab=t; render(); }
+
+// 🔍 Global search: reg / VIN / buyer / invoice / phone / complaint
+function globalSearch(){
+  const input = document.getElementById('global_search');
+  if (!input) return;
+  const raw = input.value || '';
+  const q = raw.trim();
+  if (!q) return;
+
+  const up = q.toUpperCase();
+  const low = q.toLowerCase();
+  const phoneDigits = q.replace(/\D+/g,'');
+
+  const vehicles   = db.vehicles   || [];
+  const sales      = db.sales      || [];
+  const complaints = db.complaints || [];
+
+  let matchVehicle   = null;
+  let matchSale      = null;
+  let matchComplaint = null;
+
+  // 1) Try vehicle by REG / VIN / make / model
+  if (vehicles.length){
+    matchVehicle = vehicles.find(v => normReg(v.reg) === normReg(up)) || null;
+    if (!matchVehicle){
+      matchVehicle = vehicles.find(v =>
+        (v.reg   || '').toUpperCase().includes(up)   ||
+        (v.vin   || '').toUpperCase().includes(up)   ||
+        (v.make  || '').toLowerCase().includes(low)  ||
+        (v.model || '').toLowerCase().includes(low)
+      ) || null;
+    }
+  }
+
+  // 2) Try sale by invoice / buyer / phone
+  if (sales.length){
+    matchSale = sales.find(s => {
+      const inv   = (s.invNo   || '').toString().toUpperCase();
+      const buyer = (s.buyer   || '').toLowerCase();
+      const phone = (s.phone   || '').replace(/\D+/g,'');
+      return inv === up ||
+             inv.includes(up) ||
+             buyer.includes(low) ||
+             (phoneDigits && phone && phone.indexOf(phoneDigits) !== -1);
+    }) || null;
+  }
+
+  // 3) Try complaint by customer / reg
+  if (complaints.length){
+    matchComplaint = complaints.find(c =>
+      (c.customer || '').toLowerCase().includes(low) ||
+      normReg(c.vehicle || '') === normReg(up)
+    ) || null;
+  }
+
+  if (matchVehicle){
+    goToVehicleSearch(matchVehicle.reg || q);
+  } else if (matchSale){
+    goToSaleSearch(matchSale);
+  } else if (matchComplaint){
+    goToComplaintSearch(matchComplaint);
+  } else {
+    alert('No matching vehicle, sale or complaint found for "'+q+'".');
+  }
+}
+
+function goToVehicleSearch(term){
+  setTab('Vehicles');
+  setTimeout(function(){
+    const inp = document.getElementById('veh_search');
+    if (inp){
+      inp.value = term;
+      inp.dispatchEvent(new Event('input'));
+    }
+  },50);
+}
+
+function goToSaleSearch(sale){
+  setTab('Sales');
+  setTimeout(function(){
+    const inp = document.getElementById('sales_search');
+    if (inp){
+      if (sale.invNo) {
+        inp.value = String(sale.invNo);
+      } else if (sale.buyer) {
+        inp.value = sale.buyer;
+      } else if (sale.vehicleId){
+        const v = (db.vehicles||[]).find(x=>x.id===sale.vehicleId) || {};
+        inp.value = v.reg || '';
+      } else {
+        inp.value = '';
+      }
+      inp.dispatchEvent(new Event('input'));
+    }
+  },50);
+}
+
+function goToComplaintSearch(comp){
+  setTab('Customer Complaints');
+  setTimeout(function(){
+    const inp = document.getElementById('comp_search');
+    if (inp){
+      if (comp.vehicle)      inp.value = comp.vehicle;
+      else if (comp.customer)inp.value = comp.customer;
+      else                   inp.value = '';
+      inp.dispatchEvent(new Event('input'));
+    }
+  },50);
+}
+
 function renderNav(){ const nav=document.getElementById('nav'); nav.innerHTML=''; TABS.forEach(t=>{ if(!canTab(t)) return; if(t==='Settings'&&!canSettings()) return; const b=document.createElement('button'); b.textContent=t; if(t===currentTab) b.classList.add('active'); b.onclick=()=>setTab(t); nav.appendChild(b); }); }
 
 function ensureIdsEverywhere(){
@@ -1993,7 +2148,7 @@ function render(){
   if(!session){ showLogin(true); return; }
   renderNav();
   const app=document.getElementById('app'); app.innerHTML=''; document.getElementById('who').textContent='Logged in: '+session.username+' ('+session.role+')';
-  const views={Dashboard:viewDashboard,Vehicles:viewVehicles,Expenses:viewExpenses,Showroom:viewShowroom,Sales:viewSales,Sold:viewSold,Credit:viewCredit,["Purchase Invoice"]:viewPurchaseInvoice,["Customer Complaints"]:viewComplaints,Directors:viewDirectors,Investors:viewInvestors,Reports:viewReports,["To-Do"]:viewTodo,Users:viewUsers,Settings:viewSettings};
+  const views={Dashboard:viewDashboard,Vehicles:viewVehicles,Expenses:viewExpenses,Showroom:viewShowroom,Sales:viewSales,Sold:viewSold,Credit:viewCredit,["Purchase Invoice"]:viewPurchaseInvoice,["Customer Complaints"]:viewComplaints,Directors:viewDirectors,Investors:viewInvestors,Reports:viewReports,Alerts:viewAlerts,["To-Do"]:viewTodo,Users:viewUsers,Settings:viewSettings};
   const f=views[currentTab]; if(f) app.appendChild(f()); else app.textContent='No view'; refreshLogoBox();
   
   // Re-apply push button state after rendering Settings tab
@@ -3027,7 +3182,25 @@ function viewSales(){
     <label>MOT Expiry<input id="sale_mot" type="date" placeholder="e.g. 2025-11-30"></label>
     <label>Service History<input id="sale_sh" placeholder="Full / Part / None"></label>
     <label>Invoice # (optional)<input id="sale_invNo" placeholder="Leave blank for auto"></label>
-    <label>Sale Type<select id="sale_status"><option value="completed" selected>Completed Sale (customer bought car)</option><option value="proforma">Proforma / Finance Quote (NOT sold yet)</option><option value="cancelled">Cancelled / Finance Declined</option></select></label>
+    <label>Sale Type
+      <select id="sale_status">
+        <option value="completed" selected>Completed Sale (customer bought car)</option>
+        <option value="proforma">Proforma / Finance Quote (NOT sold yet)</option>
+        <option value="cancelled">Cancelled / Finance Declined</option>
+        <option value="unwound">Unwound / Refunded (car returned)</option>
+      </select>
+    </label>
+    <label>Warranty Type
+      <select id="sale_warrantyType">
+        <option value="">None / Not set</option>
+        <option value="inhouse">In-house Warranty</option>
+        <option value="thirdparty">Third-Party Warranty</option>
+        <option value="manufacturer">Manufacturer</option>
+      </select>
+    </label>
+    <label>Warranty Provider<input id="sale_warrantyProvider" placeholder="Handler / RAC / etc"></label>
+    <label>Warranty Months<input id="sale_warrantyMonths" type="number" placeholder="e.g. 3"></label>
+    <label>Warranty Policy #<input id="sale_warrantyPolicy" placeholder="Policy number"></label>
     <button id="sale_add" class="primary">Record / Update</button>
   </div>
 
@@ -3121,6 +3294,21 @@ function viewSales(){
         const br = `£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
         const partexVehicle = (db.vehicles||[]).find(v => v.originalSaleId === s.id);
         const partexInfo = partexVehicle ? `<br><small style="color:#53a8ff;">PX: ${partexVehicle.reg} (in stock)</small>` : '';
+        
+        const st = s.status || 'completed';
+        let statusBadge = '';
+        if (st && st !== 'completed') {
+          const nice = (st === 'proforma')  ? 'PROFORMA'
+                     : (st === 'cancelled') ? 'CANCELLED'
+                     : (st === 'unwound')   ? 'UNWOUND'
+                     : String(st).toUpperCase();
+          const col = (st === 'proforma')  ? '#f1c40f'
+                    : (st === 'cancelled') ? '#e67e22'
+                    : (st === 'unwound')   ? '#e74c3c'
+                    : '#999';
+          statusBadge = `<br><span style="font-size:11px;color:${col};font-weight:600;">${nice}</span>`;
+        }
+        
         const tr = document.createElement('tr'); 
         tr.innerHTML = `<td>${ddmmyyyy(s.date)}</td>
         <td>${v.reg||''}</td>
@@ -3232,7 +3420,7 @@ function viewSales(){
       wrap.querySelector('#sale_phone').value=s.phone||''; wrap.querySelector('#sale_email').value=s.email||''; wrap.querySelector('#sale_mileage').value=s.mileage||0; wrap.querySelector('#sale_firstReg').value=s.firstReg||'';
       wrap.querySelector('#sale_price').value=s.salePrice||0; wrap.querySelector('#sale_dep').value=s.deposit||0; wrap.querySelector('#sale_cash').value=s.cash||0; wrap.querySelector('#sale_card').value=s.card||0; wrap.querySelector('#sale_bank').value=s.bank||0; wrap.querySelector('#sale_fin').value=s.finance||0;
       wrap.querySelector('#sale_partex').value=s.partex||''; wrap.querySelector('#sale_pxReg').value=s.pxReg||''; wrap.querySelector('#sale_pxMake').value=s.pxMake||''; wrap.querySelector('#sale_pxModel').value=s.pxModel||''; wrap.querySelector('#sale_pxAllowance').value=s.pxAllowance||0;
-      wrap.querySelector('#sale_finCo').value=s.financeCompany||''; wrap.querySelector('#sale_agree').value=s.agreement||''; wrap.querySelector('#sale_deliver').value=s.deliverTo||''; wrap.querySelector('#sale_keys').value=s.keys||''; wrap.querySelector('#sale_mot').value=s.mot||''; wrap.querySelector('#sale_sh').value=s.serviceHistory||''; wrap.querySelector('#sale_invNo').value=s.invNo||''; const stField = wrap.querySelector('#sale_status'); if (stField) stField.value = s.status || 'completed'; updateWarn();
+      wrap.querySelector('#sale_finCo').value=s.financeCompany||''; wrap.querySelector('#sale_agree').value=s.agreement||''; wrap.querySelector('#sale_deliver').value=s.deliverTo||''; wrap.querySelector('#sale_keys').value=s.keys||''; wrap.querySelector('#sale_mot').value=s.mot||''; wrap.querySelector('#sale_sh').value=s.serviceHistory||''; wrap.querySelector('#sale_invNo').value=s.invNo||''; const stField = wrap.querySelector('#sale_status'); if (stField) stField.value = s.status || 'completed'; const wt = wrap.querySelector('#sale_warrantyType'); if (wt) wt.value = s.warrantyType || ''; const wp = wrap.querySelector('#sale_warrantyProvider'); if (wp) wp.value = s.warrantyProvider || ''; const wm = wrap.querySelector('#sale_warrantyMonths'); if (wm) wm.value = s.warrantyMonths || ''; const wpol = wrap.querySelector('#sale_warrantyPolicy'); if (wpol) wpol.value = s.warrantyPolicy || ''; updateWarn();
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
     } else if(b.dataset.act==='inv'){ printInvoice(s.id); } else if(b.dataset.act==='proforma'){ printFinanceProforma(s.id); }
   });
@@ -3323,8 +3511,31 @@ function viewSales(){
     mot: wrap.querySelector('#sale_mot').value.trim(),
     serviceHistory: wrap.querySelector('#sale_sh').value.trim(),
     invNo: invNoValue || (Date.now() + '').slice(-6),
-    status: saleStatus // ✅ NEW
+    status: saleStatus,
+    warrantyType:      (wrap.querySelector('#sale_warrantyType')?.value || ''),
+    warrantyProvider:  (wrap.querySelector('#sale_warrantyProvider')?.value || '').trim(),
+    warrantyMonths:    Number((wrap.querySelector('#sale_warrantyMonths')?.value || 0)),
+    warrantyPolicy:    (wrap.querySelector('#sale_warrantyPolicy')?.value || '').trim()
   };
+
+  // Auto-set warranty expiry based on sale date + months (for quick reference)
+  (function(){
+    try{
+      const months = Number(s.warrantyMonths || 0);
+      if (s.date && months > 0){
+        const d = new Date(s.date);
+        d.setMonth(d.getMonth() + months);
+        s.warrantyExpiry = d.toISOString().slice(0,10);
+      } else {
+        s.warrantyExpiry = s.warrantyExpiry || '';
+      }
+    } catch(e){}
+  })();
+
+  // Mark refunded flag for unwound deals
+  if (saleStatus === 'unwound') {
+    s.refunded = true;
+  }
   
   const sumBreak = s.deposit + s.cash + s.card + s.bank + s.finance + s.pxAllowance;
   if (sumBreak !== s.salePrice) {
@@ -4364,6 +4575,62 @@ function viewInvestors(){ if(!canTab('Investors')) return document.createElement
   wrap.innerHTML=`<h2>Investors</h2><div class="row"><input id="i_name" placeholder="Investor name"><button id="i_addInv" class="primary">Add investor</button><span class="small">Track funds in/out & balance; tag investor on vehicle.</span></div>
   <div class="row"><select id="i_sel"><option value="">Select investor…</option>${(db.investors||[]).map(i=>`<option value="${i.id}">${i.name}</option>`).join('')}</select></div><div id="i_box" class="card"></div>`;
   
+  function exportInvestorStatement(invId){
+  const inv = (db.investors || []).find(i => i.id === invId);
+  if(!inv){
+    alert('Investor not found.');
+    return;
+  }
+  const tx = (inv.tx || []).slice().sort((a,b)=> new Date(a.date||0) - new Date(b.date||0));
+  
+  let running = 0;
+  const rows = tx.map(t=>{
+    const amt = Number(t.amount || 0);
+    if(t.type === 'fund_in') running += amt;
+    else if(t.type === 'withdraw') running -= amt;
+    else running += amt;
+    return {
+      date: ddmmyyyy(t.date),
+      type: t.type || '',
+      method: t.method || '',
+      amount: fmtMoney(amt),
+      note: t.note || '',
+      balance: fmtMoney(running)
+    };
+  });
+  
+  const headers = ['Date','Type','Method','Amount','Note','Running Balance'];
+  const lines = [];
+  lines.push(headers.join(','));
+  rows.forEach(r=>{
+    const vals = [r.date,r.type,r.method,r.amount,r.note,r.balance].map(cell=>{
+      const s = String(cell == null ? '' : cell);
+      if(s.includes(',') || s.includes('"') || s.includes('\n')){
+        return '"' + s.replace(/"/g,'""') + '"';
+      }
+      return s;
+    });
+    lines.push(vals.join(','));
+  });
+  
+  const csv = lines.join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safeName = (inv.name || 'investor').replace(/[^a-z0-9]+/gi,'_');
+  a.href = url;
+  a.download = 'investor_statement_' + safeName + '_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 10000);
+  
+  if(typeof addAudit === 'function'){
+    addAudit('export','investor',inv.id,'Export statement ' + inv.name);
+  }
+  }
+
+
   // Hard-wire Delete button next to "Add investor"
   (function(){
     const addBtn = wrap.querySelector('#i_addInv');
@@ -4514,7 +4781,10 @@ function viewInvestors(){ if(!canTab('Investors')) return document.createElement
     const txRows=(inv.tx||[]).map(t=>`<tr><td>${ddmmyyyy(t.date||'')}</td><td>${t.type}</td><td>${t.method||'bank'}</td><td class="right">${fmtMoney(t.amount)}</td><td>${t.note||''}</td><td>${canAction('edit')?`<button data-act="edit" data-id="${t.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${t.id}">Delete</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="small">No transactions</td></tr>';
     
     wrap.querySelector('#i_box').innerHTML=`<div class="row"><input id="i_date" type="date"><select id="i_type"><option value="fund_in">fund_in</option><option value="withdraw">withdraw</option></select><select id="i_method"><option>bank</option><option>cash</option></select><input id="i_amt" type="number" placeholder="Amount"><input id="i_note" placeholder="Note"><button id="i_tx" class="primary">Add / Update</button></div>
-    <div class="row small"><b>Balance:</b> ${fmtMoney(inv.balance||0)}</div>
+    <div class="row small">
+      <b>Balance:</b> ${fmtMoney(inv.balance||0)}
+      <button id="i_stmt_csv" style="margin-left:8px;">Export Statement (CSV)</button>
+    </div>
     <div class=\"row small\"><b>Assigned to vehicles (unsold):</b> ${fmtMoney(assigned)} &nbsp; <b>Unassigned:</b> ${fmtMoney(unassigned)}</div><table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Type</th><th>Method</th><th class="right">Amount</th><th>Note</th><th>Actions</th></tr></thead><tbody id="i_body">${txRows}</tbody></table>`;
     
     let editTxId=null; 
@@ -4542,6 +4812,13 @@ function viewInvestors(){ if(!canTab('Investors')) return document.createElement
       wrap.querySelector('#i_note').value=''; 
       renderDetails(id);
     };
+
+    const stmtBtn = wrap.querySelector('#i_stmt_csv');
+    if (stmtBtn) {
+      stmtBtn.onclick = () => {
+        exportInvestorStatement(inv.id);
+      };
+    }
     
     wrap.querySelector('#i_body').addEventListener('click',(ev)=>{ 
       const b=ev.target.closest('button'); 
@@ -5224,6 +5501,155 @@ function alreadyPosted(k){
 return wrap;
 }
 
+function viewAlerts(){
+  if(!canTab('Alerts')) return document.createElement('div');
+  const wrap = document.createElement('div');
+  wrap.className = 'card';
+  
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  
+  const complaints = (db.complaints || []).slice();
+  const urgent = complaints.filter(c => 
+    (c.severity === 'urgent' || c.status === 'escalated')
+  );
+  const overdueFollow = complaints.filter(c => {
+    if(!c.followup) return false;
+    const st = (c.status || '').toLowerCase();
+    if(st === 'resolved' || st === 'closed') return false;
+    try{
+      const d = new Date(c.followup);
+      d.setHours(0,0,0,0);
+      return d < today;
+    }catch(e){ return false; }
+  });
+  
+  const vehicles = (db.vehicles || []).slice();
+  const motAlerts = [];
+  vehicles.forEach(v => {
+    const motDate = v.lastMotExpiry || v.motExpiry || '';
+    if(!motDate) return;
+    try{
+      const e = new Date(motDate);
+      e.setHours(0,0,0,0);
+      const diffDays = Math.ceil((e - today)/(1000*60*60*24));
+      if(diffDays < 0){
+        motAlerts.push({type:'Expired', diff:diffDays, v});
+      } else if(diffDays <= 30){
+        motAlerts.push({type:'Due <30 days', diff:diffDays, v});
+      }
+    }catch(e){}
+  });
+  motAlerts.sort((a,b)=>a.diff-b.diff);
+  
+  const todos = (db.todo || []).filter(t => !t.done);
+  todos.sort((a,b)=> new Date(a.date || 0) - new Date(b.date || 0));
+  
+  let html = `<h2>Alerts & Tasks</h2>`;
+  
+  html += `<div class="row small" style="margin-bottom:10px">
+    <span><b>Urgent complaints:</b> ${urgent.length}</span>
+    <span style="margin-left:15px;"><b>Overdue follow-ups:</b> ${overdueFollow.length}</span>
+    <span style="margin-left:15px;"><b>MOT alerts (expired / &lt;30 days):</b> ${motAlerts.length}</span>
+    <span style="margin-left:15px;"><b>Open To-Do tasks:</b> ${todos.length}</span>
+  </div>`;
+  
+  // Urgent complaints
+  html += `<div class="card" style="margin-top:10px;">
+    <h3>Urgent / Escalated Complaints</h3>`;
+  if(!urgent.length){
+    html += `<div class="small">No urgent complaints 🎉</div>`;
+  } else {
+    html += `<table class="table"><thead>
+      <tr><th>Date</th><th>Customer</th><th>Vehicle</th><th>Type</th><th>Severity</th><th>Status</th><th>Follow-up</th><th>Handler</th></tr>
+    </thead><tbody>`;
+    urgent.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0)).forEach(c=>{
+      html += `<tr>
+        <td>${ddmmyyyy(c.date)}</td>
+        <td>${c.customer||''}</td>
+        <td>${c.vehicle||''}</td>
+        <td>${c.type||''}</td>
+        <td>${c.severity||''}</td>
+        <td>${c.status||''}</td>
+        <td>${ddmmyyyy(c.followup)}</td>
+        <td>${c.handler || c.assigned || ''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+  
+  // Overdue follow-ups
+  html += `<div class="card" style="margin-top:10px;">
+    <h3>Overdue Complaint Follow-ups</h3>`;
+  if(!overdueFollow.length){
+    html += `<div class="small">No overdue complaint follow-ups.</div>`;
+  } else {
+    html += `<table class="table"><thead>
+      <tr><th>Follow-up Date</th><th>Customer</th><th>Vehicle</th><th>Type</th><th>Status</th><th>Handler</th></tr>
+    </thead><tbody>`;
+    overdueFollow.sort((a,b)=>new Date(a.followup||0)-new Date(b.followup||0)).forEach(c=>{
+      html += `<tr>
+        <td>${ddmmyyyy(c.followup)}</td>
+        <td>${c.customer||''}</td>
+        <td>${c.vehicle||''}</td>
+        <td>${c.type||''}</td>
+        <td>${c.status||''}</td>
+        <td>${c.handler || c.assigned || ''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+  
+  // MOT alerts
+  html += `<div class="card" style="margin-top:10px;">
+    <h3>MOT Alerts (Expired / next 30 days)</h3>`;
+  if(!motAlerts.length){
+    html += `<div class="small">No MOT alerts.</div>`;
+  } else {
+    html += `<table class="table"><thead>
+      <tr><th>REG</th><th>Vehicle</th><th>MOT Expiry</th><th>Alert</th><th>Days</th><th>Status</th></tr>
+    </thead><tbody>`;
+    motAlerts.forEach(row=>{
+      const v = row.v;
+      html += `<tr>
+        <td>${(v.reg||'').toUpperCase()}</td>
+        <td>${(v.make||'')+' '+(v.model||'')}</td>
+        <td>${ddmmyyyy(v.lastMotExpiry || v.motExpiry)}</td>
+        <td>${row.type}</td>
+        <td class="right">${row.diff}</td>
+        <td>${v.status||''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+  
+  // To-Do
+  html += `<div class="card" style="margin-top:10px;">
+    <h3>Open To-Do Tasks</h3>`;
+  if(!todos.length){
+    html += `<div class="small">No open tasks.</div>`;
+  } else {
+    html += `<table class="table"><thead>
+      <tr><th>Date</th><th>Text</th><th>Assigned</th></tr>
+    </thead><tbody>`;
+    todos.forEach(t=>{
+      html += `<tr>
+        <td>${ddmmyyyy(t.date)}</td>
+        <td>${t.text||''}</td>
+        <td>${t.assignedTo||''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+  
+  wrap.innerHTML = html;
+  return wrap;
+}
+
 /* ========= To-Do ========= */
 function viewTodo(){ if(!canTab('To-Do')) return document.createElement('div'); const wrap=document.createElement('div'); wrap.className='card';
   wrap.innerHTML=`<h2>To-Do</h2><div class="row"><input id="t_date" type="date"><input id="t_text" placeholder="Task"><select id="t_user"><option value="">— assign —</option>${(db.users||[]).map(u=>`<option>${u.username}</option>`).join('')}</select><select id="t_entity"><option value="">entity…</option><option>vehicle</option><option>sale</option><option>investor</option><option>director</option></select><input id="t_eid" placeholder="Entity id/reg"><button id="t_add" class="primary">Add</button></div>
@@ -5381,14 +5807,19 @@ function viewComplaints(){
       daysSinceSale = isNaN(diff) ? '' : `${diff} days`;
     }
 
-    // Optional warranty months from Settings (db.company.defaultWarrantyMonths)
+    // Optional warranty: prefer sale-specific months, then Settings default
     let warrantyText = '';
-    const wMonths = Number((db.company || {}).defaultWarrantyMonths || 0);
+    const saleMonths   = Number(s.warrantyMonths || 0);
+    const configMonths = Number((db.company || {}).defaultWarrantyMonths || 0);
+    const wMonths      = saleMonths || configMonths;
+
     if (s.date && wMonths > 0){
       const d = new Date(s.date);
       d.setMonth(d.getMonth() + wMonths);
-      const iso = d.toISOString().slice(0,10);
-      warrantyText = `• Warranty approx until ${ddmmyyyy(iso)} (${wMonths} months)`;
+      const iso   = d.toISOString().slice(0,10);
+      const prov  = s.warrantyProvider || '';
+      const label = prov ? `${prov} warranty` : 'Warranty';
+      warrantyText = `${label} approx until ${ddmmyyyy(iso)} (${wMonths} months)`;
     }
 
     let bits = [];
@@ -5402,6 +5833,296 @@ function viewComplaints(){
 
     const line = `Logging for: ${buyer || 'Unknown'} — ${(v.reg||'').toUpperCase()} (${v.make||''} ${v.model||''})`;
     hintEl.innerHTML = line + (bits.length ? `<br><span style="color:var(--mut);font-size:12px">${bits.join(' • ')}</span>` : '');
+  }
+
+    function openComplaintEvidence(comp){
+    const reg = (comp.vehicle || '').toUpperCase();
+    const found = findSaleByReg(reg) || {};
+    const v = found.vehicle || {};
+    const s = found.sale || null;
+    
+    const expenses = (db.vehicleExpenses || []).filter(e => v.id && e.vehicleId === v.id);
+    expenses.sort((a,b)=> new Date(a.date||0) - new Date(b.date||0));
+    const expRows = expenses.map(e => {
+      return `<tr>
+        <td>${ddmmyyyy(e.date)}</td>
+        <td>${e.type || ''}</td>
+        <td>${e.note || ''}</td>
+        <td class="right">${fmtMoney(e.amount || 0)}</td>
+      </tr>`;
+    }).join('');
+    const expTotal = expenses.reduce((t,e)=>t + Number(e.amount||0),0);
+    
+    const saleDate   = s && s.date ? ddmmyyyy(s.date) : '';
+    const saleMiles  = s && s.mileage ? s.mileage.toLocaleString() : '';
+    const compMiles  = comp.mileageNow || comp.collectedMileage || '';
+    
+    let milesLine = '';
+    if (saleMiles || compMiles){
+      let diff = '';
+      if (saleMiles && compMiles){
+        const m1 = Number(String(s.mileage||0).replace(/[^0-9]/g,'')) || 0;
+        const m2 = Number(String(compMiles).replace(/[^0-9]/g,'')) || 0;
+        const d  = m2 - m1;
+        if(!isNaN(d) && d>=0) diff = ` (approx +${d.toLocaleString()} miles since sale)`;
+      }
+      milesLine =
+        `${saleMiles ? 'Mileage at sale: '+saleMiles : ''}` +
+        `${saleMiles && compMiles ? ' → ' : ''}` +
+        `${compMiles ? 'Mileage at complaint: '+compMiles : ''}` +
+        `${diff}`;
+    }
+    
+    let warrantyText = '';
+    if (s && s.warrantyMonths){
+      const months = Number(s.warrantyMonths||0);
+      if(s.date && months>0){
+        const d = new Date(s.date);
+        d.setMonth(d.getMonth()+months);
+        const iso = d.toISOString().slice(0,10);
+        const prov = s.warrantyProvider || '';
+        const label = prov ? prov+' warranty' : 'Warranty';
+        warrantyText = `${label} approx until ${ddmmyyyy(iso)} (${months} months)`;
+      }
+    } else {
+      const cfgMonths = Number((db.company || {}).defaultWarrantyMonths || 0);
+      if(s && s.date && cfgMonths>0){
+        const d = new Date(s.date);
+        d.setMonth(d.getMonth()+cfgMonths);
+        const iso = d.toISOString().slice(0,10);
+        warrantyText = `Warranty approx until ${ddmmyyyy(iso)} (${cfgMonths} months)`;
+      }
+    }
+    
+    const nowStr = new Date().toLocaleString();
+    
+    let html = `<!doctype html><html><head><meta charset="utf-8">
+      <title>Complaint Evidence Pack</title>
+      <style>
+        body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#222;margin:16px;}
+        h1,h2,h3{margin:4px 0;}
+        table{border-collapse:collapse;width:100%;margin-bottom:10px;}
+        th,td{border:1px solid #ccc;padding:4px 6px;font-size:12px;vertical-align:top;}
+        th{background:#f4f4f4;text-align:left;}
+        .right{text-align:right;}
+        .small{font-size:11px;color:#666;}
+        .section{margin-top:10px;margin-bottom:4px;}
+      </style>
+    </head><body>`;
+    
+    html += `<h1>Complaint Evidence Pack</h1>
+      <div class="small">Generated: ${nowStr}</div>
+      <div class="small">Complaint ID: ${comp.id || ''}</div>`;
+    
+    // 1. Complaint summary
+    html += `<div class="section"><h2>1. Complaint Summary</h2>
+      <table>
+        <tr><th>Date received</th><td>${ddmmyyyy(comp.date)}</td></tr>
+        <tr><th>Customer</th><td>${comp.customer || ''}</td></tr>
+        <tr><th>Vehicle</th><td>${reg} ${(v.make||'') ? ' — '+(v.make||'')+' '+(v.model||'') : ''}</td></tr>
+        <tr><th>Type</th><td>${comp.type || ''}</td></tr>
+        <tr><th>Severity</th><td>${comp.severity || ''}</td></tr>
+        <tr><th>Status</th><td>${comp.status || ''}</td></tr>
+        <tr><th>Assigned handler</th><td>${comp.handler || comp.assigned || ''}</td></tr>
+        <tr><th>Follow-up date</th><td>${ddmmyyyy(comp.followup)}</td></tr>
+        <tr><th>Complaint details</th><td>${(comp.details || '').replace(/\n/g,'<br>')}</td></tr>
+        <tr><th>Resolution / notes</th><td>${(comp.resolution || '').replace(/\n/g,'<br>')}</td></tr>
+      </table>
+    </div>`;
+    
+    // 2. Vehicle & sale details
+    html += `<div class="section"><h2>2. Vehicle & Sale Details</h2>
+      <table>
+        <tr><th>REG</th><td>${reg}</td></tr>
+        <tr><th>Make / Model</th><td>${(v.make||'')+' '+(v.model||'')}</td></tr>
+        <tr><th>VIN</th><td>${v.vin || ''}</td></tr>
+        <tr><th>First registration</th><td>${ddmmyyyy(v.firstReg)}</td></tr>
+        <tr><th>MOT expiry (last known)</th><td>${ddmmyyyy(v.lastMotExpiry || v.motExpiry)}</td></tr>
+        <tr><th>Status in stock system</th><td>${v.status || ''}</td></tr>
+        <tr><th>Sale date</th><td>${saleDate}</td></tr>
+        <tr><th>Sale price</th><td>${s ? fmtMoney(s.salePrice || 0) : ''}</td></tr>
+        <tr><th>Invoice #</th><td>${s ? (s.invNo || '') : ''}</td></tr>
+        <tr><th>Finance company</th><td>${s ? (s.financeCompany || '') : ''}</td></tr>
+        <tr><th>Mileage at sale / now</th><td>${milesLine || ''}</td></tr>
+        <tr><th>Warranty</th><td>${warrantyText || 'Not recorded'}</td></tr>
+      </table>
+    </div>`;
+    
+    // 3. Workshop / repairs from complaint log
+    html += `<div class="section"><h2>3. Workshop / Repair Details (Complaint Log)</h2>
+      <table>
+        <tr><th>Fault reported</th><td>${comp.problem || comp.type || ''}</td></tr>
+        <tr><th>Booked with mechanic</th><td>${comp.mechanicBooked || ''}</td></tr>
+        <tr><th>Garage / mechanic name</th><td>${comp.mechanicName || ''}</td></tr>
+        <tr><th>Vehicle delivered to mechanic</th><td>${comp.deliveredDate || ''}</td></tr>
+        <tr><th>Work done</th><td>${(comp.workDone || '').replace(/\n/g,'<br>')}</td></tr>
+        <tr><th>Customer collected on</th><td>${comp.collectedDate || ''}</td></tr>
+        <tr><th>Mileage at collection</th><td>${comp.collectedMileage || ''}</td></tr>
+        <tr><th>Internal handler</th><td>${comp.handler || comp.assigned || ''}</td></tr>
+        <tr><th>Company cost / goodwill</th><td>${comp.cost ? fmtMoney(comp.cost) : ''}</td></tr>
+      </table>
+    </div>`;
+    
+    // 4. Linked vehicle expenses
+    html += `<div class="section"><h2>4. Linked Vehicle Expenses / Repairs</h2>`;
+    if(!expenses.length){
+      html += `<div class="small">No vehicle expenses recorded for this vehicle.</div>`;
+    } else {
+      html += `<table>
+        <thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="right">Amount</th></tr></thead>
+        <tbody>${expRows}</tbody>
+        <tfoot><tr><th colspan="3" class="right">Total</th><th class="right">${fmtMoney(expTotal)}</th></tr></tfoot>
+      </table>`;
+    }
+    html += `</div>`;
+    
+    html += `</body></html>`;
+    openPrintable(html);
+    }
+
+    function openComplaintEvidence(comp){
+    const reg = (comp.vehicle || '').toUpperCase();
+    const found = findSaleByReg(reg) || {};
+    const v = found.vehicle || {};
+    const s = found.sale || null;
+    
+    const expenses = (db.vehicleExpenses || []).filter(e => v.id && e.vehicleId === v.id);
+    expenses.sort((a,b)=> new Date(a.date||0) - new Date(b.date||0));
+    const expRows = expenses.map(e => {
+      return `<tr>
+        <td>${ddmmyyyy(e.date)}</td>
+        <td>${e.type || ''}</td>
+        <td>${e.note || ''}</td>
+        <td class="right">${fmtMoney(e.amount || 0)}</td>
+      </tr>`;
+    }).join('');
+    const expTotal = expenses.reduce((t,e)=>t + Number(e.amount||0),0);
+    
+    const saleDate   = s && s.date ? ddmmyyyy(s.date) : '';
+    const saleMiles  = s && s.mileage ? s.mileage.toLocaleString() : '';
+    const compMiles  = comp.mileageNow || comp.collectedMileage || '';
+    
+    let milesLine = '';
+    if (saleMiles || compMiles){
+      let diff = '';
+      if (saleMiles && compMiles){
+        const m1 = Number(String(s.mileage||0).replace(/[^0-9]/g,'')) || 0;
+        const m2 = Number(String(compMiles).replace(/[^0-9]/g,'')) || 0;
+        const d  = m2 - m1;
+        if(!isNaN(d) && d>=0) diff = ` (approx +${d.toLocaleString()} miles since sale)`;
+      }
+      milesLine =
+        `${saleMiles ? 'Mileage at sale: '+saleMiles : ''}` +
+        `${saleMiles && compMiles ? ' → ' : ''}` +
+        `${compMiles ? 'Mileage at complaint: '+compMiles : ''}` +
+        `${diff}`;
+    }
+    
+    let warrantyText = '';
+    if (s && s.warrantyMonths){
+      const months = Number(s.warrantyMonths||0);
+      if(s.date && months>0){
+        const d = new Date(s.date);
+        d.setMonth(d.getMonth()+months);
+        const iso = d.toISOString().slice(0,10);
+        const prov = s.warrantyProvider || '';
+        const label = prov ? prov+' warranty' : 'Warranty';
+        warrantyText = `${label} approx until ${ddmmyyyy(iso)} (${months} months)`;
+      }
+    } else {
+      const cfgMonths = Number((db.company || {}).defaultWarrantyMonths || 0);
+      if(s && s.date && cfgMonths>0){
+        const d = new Date(s.date);
+        d.setMonth(d.getMonth()+cfgMonths);
+        const iso = d.toISOString().slice(0,10);
+        warrantyText = `Warranty approx until ${ddmmyyyy(iso)} (${cfgMonths} months)`;
+      }
+    }
+    
+    const nowStr = new Date().toLocaleString();
+    
+    let html = `<!doctype html><html><head><meta charset="utf-8">
+      <title>Complaint Evidence Pack</title>
+      <style>
+        body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#222;margin:16px;}
+        h1,h2,h3{margin:4px 0;}
+        table{border-collapse:collapse;width:100%;margin-bottom:10px;}
+        th,td{border:1px solid #ccc;padding:4px 6px;font-size:12px;vertical-align:top;}
+        th{background:#f4f4f4;text-align:left;}
+        .right{text-align:right;}
+        .small{font-size:11px;color:#666;}
+        .section{margin-top:10px;margin-bottom:4px;}
+      </style>
+    </head><body>`;
+    
+    html += `<h1>Complaint Evidence Pack</h1>
+      <div class="small">Generated: ${nowStr}</div>
+      <div class="small">Complaint ID: ${comp.id || ''}</div>`;
+    
+    // 1. Complaint summary
+    html += `<div class="section"><h2>1. Complaint Summary</h2>
+      <table>
+        <tr><th>Date received</th><td>${ddmmyyyy(comp.date)}</td></tr>
+        <tr><th>Customer</th><td>${comp.customer || ''}</td></tr>
+        <tr><th>Vehicle</th><td>${reg} ${(v.make||'') ? ' — '+(v.make||'')+' '+(v.model||'') : ''}</td></tr>
+        <tr><th>Type</th><td>${comp.type || ''}</td></tr>
+        <tr><th>Severity</th><td>${comp.severity || ''}</td></tr>
+        <tr><th>Status</th><td>${comp.status || ''}</td></tr>
+        <tr><th>Assigned handler</th><td>${comp.handler || comp.assigned || ''}</td></tr>
+        <tr><th>Follow-up date</th><td>${ddmmyyyy(comp.followup)}</td></tr>
+        <tr><th>Complaint details</th><td>${(comp.details || '').replace(/\n/g,'<br>')}</td></tr>
+        <tr><th>Resolution / notes</th><td>${(comp.resolution || '').replace(/\n/g,'<br>')}</td></tr>
+      </table>
+    </div>`;
+    
+    // 2. Vehicle & sale details
+    html += `<div class="section"><h2>2. Vehicle & Sale Details</h2>
+      <table>
+        <tr><th>REG</th><td>${reg}</td></tr>
+        <tr><th>Make / Model</th><td>${(v.make||'')+' '+(v.model||'')}</td></tr>
+        <tr><th>VIN</th><td>${v.vin || ''}</td></tr>
+        <tr><th>First registration</th><td>${ddmmyyyy(v.firstReg)}</td></tr>
+        <tr><th>MOT expiry (last known)</th><td>${ddmmyyyy(v.lastMotExpiry || v.motExpiry)}</td></tr>
+        <tr><th>Status in stock system</th><td>${v.status || ''}</td></tr>
+        <tr><th>Sale date</th><td>${saleDate}</td></tr>
+        <tr><th>Sale price</th><td>${s ? fmtMoney(s.salePrice || 0) : ''}</td></tr>
+        <tr><th>Invoice #</th><td>${s ? (s.invNo || '') : ''}</td></tr>
+        <tr><th>Finance company</th><td>${s ? (s.financeCompany || '') : ''}</td></tr>
+        <tr><th>Mileage at sale / now</th><td>${milesLine || ''}</td></tr>
+        <tr><th>Warranty</th><td>${warrantyText || 'Not recorded'}</td></tr>
+      </table>
+    </div>`;
+    
+    // 3. Workshop / repairs from complaint log
+    html += `<div class="section"><h2>3. Workshop / Repair Details (Complaint Log)</h2>
+      <table>
+        <tr><th>Fault reported</th><td>${comp.problem || comp.type || ''}</td></tr>
+        <tr><th>Booked with mechanic</th><td>${comp.mechanicBooked || ''}</td></tr>
+        <tr><th>Garage / mechanic name</th><td>${comp.mechanicName || ''}</td></tr>
+        <tr><th>Vehicle delivered to mechanic</th><td>${comp.deliveredDate || ''}</td></tr>
+        <tr><th>Work done</th><td>${(comp.workDone || '').replace(/\n/g,'<br>')}</td></tr>
+        <tr><th>Customer collected on</th><td>${comp.collectedDate || ''}</td></tr>
+        <tr><th>Mileage at collection</th><td>${comp.collectedMileage || ''}</td></tr>
+        <tr><th>Internal handler</th><td>${comp.handler || comp.assigned || ''}</td></tr>
+        <tr><th>Company cost / goodwill</th><td>${comp.cost ? fmtMoney(comp.cost) : ''}</td></tr>
+      </table>
+    </div>`;
+    
+    // 4. Linked vehicle expenses
+    html += `<div class="section"><h2>4. Linked Vehicle Expenses / Repairs</h2>`;
+    if(!expenses.length){
+      html += `<div class="small">No vehicle expenses recorded for this vehicle.</div>`;
+    } else {
+      html += `<table>
+        <thead><tr><th>Date</th><th>Type</th><th>Note</th><th class="right">Amount</th></tr></thead>
+        <tbody>${expRows}</tbody>
+        <tfoot><tr><th colspan="3" class="right">Total</th><th class="right">${fmtMoney(expTotal)}</th></tr></tfoot>
+      </table>`;
+    }
+    html += `</div>`;
+    
+    html += `</body></html>`;
+    openPrintable(html);
   }
 
   function renderComplaints(filter = {}) {
@@ -5450,6 +6171,7 @@ function viewComplaints(){
         <td class="right">${c.cost ? fmtMoney(c.cost) : ''}</td>
         <td>
           <button data-act="view" data-id="${c.id}" title="View Details">View</button>
+          <button data-act="pack" data-id="${c.id}" title="Export evidence pack">Evidence</button>
           ${canAction('edit') ? `<button data-act="edit" data-id="${c.id}">Edit</button>` : ''}
           ${canAction('del') ? `<button class="danger" data-act="del" data-id="${c.id}">Delete</button>` : ''}
         </td>
@@ -5814,6 +6536,11 @@ function viewComplaints(){
         </div>`;
       alert(html);
     }
+
+    else if(act === 'pack') {
+      openComplaintEvidence(comp);
+    }
+
     else if(act === 'edit') {
       if(!canAction('edit')) return alert('No permission');
       editId = comp.id;
