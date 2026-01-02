@@ -259,6 +259,7 @@ window.restoreJSONMerge = function () {
   </div>
   <div class="hdr-actions">
     <span id="who" class="small"></span>
+    <span id="backupInfo" class="small" style="margin-left:10px;margin-right:10px;"></span>
 
     <!-- 🔍 Global search -->
     <input id="global_search"
@@ -600,12 +601,16 @@ function validateDVLAResponse(data) {
 }
 
 /* ========= DB init ========= */
-let db=loadDB();
+let db = loadDB();
 window.db = db;
 db.deleted = db.deleted || {};
 if (!db.lastPush) db.lastPush = {};
+db.company = db.company || {};
 let pushEnabled = false;
 const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','Alerts','To-Do','Users','Settings'];
+
+// Show backup status in header
+try { renderBackupInfo(); } catch(e) {}
 
 // Add to the core utils section
 let changeTracker = {
@@ -946,18 +951,70 @@ function addAudit(action, entity, entityId, details){
   }catch(e){}
 }
 
+function renderBackupInfo(){
+   try {
+    const el = document.getElementById('backupInfo');
+    if (!el || !window.db) return;
+
+    db.company = db.company || {};
+    const last = db.company.lastBackupDate;
+
+    if (!last) {
+      el.textContent = 'No backup recorded';
+      el.style.color = '#d9534f'; // red
+       return;
+    }
+
+    const today = new Date().toISOString().slice(0,10);
+    if (last === today) {
+      el.textContent = 'Last backup: today';
+      el.style.color = ''; // normal
+    } else {
+      el.textContent = 'Last backup: ' + ddmmyyyy(last);
+      el.style.color = '#f0ad4e'; // amber
+    }
+  } catch(e) {
+    // silent fail – nothing critical
+  }
+}
+
 /* ========= Backup / Restore / CSV ========= */
 function backupJSON(){
   try{
     const data = JSON.stringify(db, null, 2); // full DB including db.audit and user passwords
-    const blob = new Blob([data], {type:'application/json'});
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download='starcars_backup_'+(new Date()).toISOString().slice(0,19).replace(/[:T]/g,'-')+'.json';
-    a.click();
-    addAudit && addAudit('export','backup','','Full JSON backup');
-  }catch(e){ alert('Backup failed: '+(e.message||e)); }
 
+    // create blob + object URL
+    const blob = new Blob([data], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+
+    // create the anchor element correctly (was missing: `a` was not declared)
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'starcars_backup_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.json';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    // cleanup
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    // Record backup timestamp in DB
+    db.company = db.company || {};
+    const nowIso = new Date().toISOString();
+    db.company.lastBackupTs = nowIso;
+    db.company.lastBackupDate = nowIso.slice(0,10);
+    saveDB();
+
+    if (typeof addAudit === 'function') {
+      addAudit('export','backup','','Full JSON backup');
+    }
+
+    if (typeof renderBackupInfo === 'function') {
+      renderBackupInfo();
+    }
+  }catch(e){
+    alert('Backup failed: '+(e.message||e));
+  }
 }
 
 // Merge-from-backup with id-based merge for ALL arrays
@@ -3973,6 +4030,7 @@ function viewCredit(){
         <td>${cr.invoiceNo||''}</td>
         <td>${cr.type==='refund' && inStock ? '✅' : ''}</td>
         <td>
+          <button data-act="print" data-id="${cr.id}">Print</button>
           <button data-act="edit" data-id="${cr.id}">Edit</button>
           <button class="danger" data-act="del" data-id="${cr.id}">Delete</button>
         </td>`;
@@ -4107,49 +4165,55 @@ function viewCredit(){
     const b=ev.target.closest('button');
     if(!b) return;
 
-    const id=b.dataset.id, act=b.dataset.act;
+    const id  = b.dataset.id;
+    const act = b.dataset.act;
 
-    if(act==='del'){
-      if(!canAction('del')) return alert('No permission');
-      if(!confirm('Delete this credit/refund?')) return;
+    if (act === 'print') {
+      // 🖨 Print Credit Note / Refund Receipt
+      printCreditInvoice(id);
+      return;
+    }
+
+    if (act === 'del') {
+      if (!canAction('del')) return alert('No permission');
+      if (!confirm('Delete this credit/refund?')) return;
 
       const delCr = (db.credits||[]).find(x=>x.id===id);
 
       // Also delete linked adjustment expense (if any)
-      if(delCr && delCr.costAdjustExpenseId){
+      if (delCr && delCr.costAdjustExpenseId) {
         db.vehicleExpenses = (db.vehicleExpenses||[]).filter(e => e.id !== delCr.costAdjustExpenseId);
       }
 
       db.credits = (db.credits||[]).filter(x=>x.id!==id);
 
       saveDB();
-      try{renderAlertBell();}catch(e){}
-      addAudit('delete','credit',id,delCr?`${delCr.type} for ${delCr.customer}`:'');
+      try{ renderAlertBell(); }catch(e){}
+      addAudit('delete','credit',id,delCr ? `${delCr.type} for ${delCr.customer}` : '');
       renderCredits();
     }
 
-    if(act==='edit'){
-      if(!canAction('edit')) return alert('No permission');
+    if (act === 'edit') {
+      if (!canAction('edit')) return alert('No permission');
       const cr = (db.credits||[]).find(x=>x.id===id);
-      if(!cr) return;
+      if (!cr) return;
 
-      editId=id;
+      editId = id;
 
-      wrap.querySelector('#cr_date').value = cr.date || '';
-      wrap.querySelector('#cr_customer').value = cr.customer || '';
-      wrap.querySelector('#cr_vehicle').value = cr.vehicle || '';
-      wrap.querySelector('#cr_type').value = cr.type || 'refund';
-      wrap.querySelector('#cr_method').value = cr.method || 'bank';
-      wrap.querySelector('#cr_amount').value = Number(cr.amount||0);
-      wrap.querySelector('#cr_reason').value = cr.reason || '';
+      wrap.querySelector('#cr_date').value      = cr.date || '';
+      wrap.querySelector('#cr_customer').value  = cr.customer || '';
+      wrap.querySelector('#cr_vehicle').value   = cr.vehicle || '';
+      wrap.querySelector('#cr_type').value      = cr.type || 'refund';
+      wrap.querySelector('#cr_method').value    = cr.method || 'bank';
+      wrap.querySelector('#cr_amount').value    = Number(cr.amount||0);
+      wrap.querySelector('#cr_reason').value    = cr.reason || '';
       wrap.querySelector('#cr_invoiceNo').value = cr.invoiceNo || '';
-
-      wrap.querySelector('#cr_make').value = cr.make || '';
-      wrap.querySelector('#cr_model').value = cr.model || '';
-      wrap.querySelector('#cr_vin').value = cr.vin || '';
+      wrap.querySelector('#cr_make').value    = cr.make || '';
+      wrap.querySelector('#cr_model').value   = cr.model || '';
+      wrap.querySelector('#cr_vin').value     = cr.vin || '';
       wrap.querySelector('#cr_mileage').value = Number(cr.returnMileage||cr.mileage||0);
-      wrap.querySelector('#cr_colour').value = cr.colour || '';
-      wrap.querySelector('#cr_fuel').value = cr.fuel || '';
+      wrap.querySelector('#cr_colour').value  = cr.colour || '';
+      wrap.querySelector('#cr_fuel').value    = cr.fuel || '';
 
       // Reload linkage hint
       loadFromReg();
@@ -4209,7 +4273,15 @@ function printCreditInvoice(creditId){
   ${headerHTML}
   <table class="tight">
     <tr><th>Customer</th><td>${cr.customer||''}</td></tr>
-    ${cr.vehicle ? `<tr><th>Vehicle</th><td>${cr.vehicle}</td></tr>` : ''}
+    ${cr.vehicle
+      ? `<tr><th>Vehicle</th><td>${cr.vehicle}</td></tr>`
+      : ''
+    }
+    ${
+      (cr.invoiceNo || cr.soldInvNo)
+        ? `<tr><th>Original Invoice #</th><td>${cr.invoiceNo || cr.soldInvNo}</td></tr>`
+        : ''
+    }
     <tr><th>Type</th><td>${cr.type === 'credit_note' ? 'Credit Note' : 'Refund'}</td></tr>
     <tr><th>Payment Method</th><td>${cr.method === 'cash' ? 'Cash' : 'Bank Transfer'}</td></tr>
     <tr><th>Reason</th><td>${cr.reason||''}</td></tr>
