@@ -3275,13 +3275,18 @@ function viewSales(){
   wrap.querySelector('#sales_month').value = currentFilter.month;
   
   function getFilteredSales() {
-    let sales = (db.sales || []).filter(s => !s.refunded);
-    
+    // For the list: show ALL completed sales (even if refunded)
+    let sales = (db.sales || []).filter(s => {
+      if (!s) return false;
+      const st = s.status || 'completed';   // old sales = completed
+      return st === 'completed';
+    });
+
     // Apply month filter if specified
     if (currentFilter.month) {
       sales = sales.filter(s => ymStr(s.date) === currentFilter.month);
     }
-    
+
     // Apply search filter if specified
     if (currentFilter.search) {
       const searchTerm = currentFilter.search.toLowerCase();
@@ -3296,18 +3301,15 @@ function viewSales(){
         );
       });
     }
-    
-    // Sort by date (newest first) - FIXED: This ensures latest date shows first
+
+    // Sort by date (newest first)
     sales.sort((a, b) => {
-      // Handle missing dates by putting them at the end
       if (!a.date && !b.date) return 0;
       if (!a.date) return 1;
       if (!b.date) return -1;
-      
-      // Compare dates (ISO format works for string comparison)
       return b.date.localeCompare(a.date);
     });
-    
+
     return sales;
   }
 
@@ -3341,40 +3343,97 @@ function viewSales(){
     
     if (filteredSales.length === 0) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td colspan="${canProfit() ? 7 : 6}" class="small" style="text-align: center; padding: 20px;">No sales found${currentFilter.search ? ' for "' + currentFilter.search + '"' : ''}${currentFilter.month ? ' in ' + currentFilter.month : ''}</td>`;
+      tr.innerHTML = `<td colspan="${canProfit() ? 7 : 6}" class="small" style="text-align: center; padding: 20px;">
+        No sales found${currentFilter.search ? ' for "' + currentFilter.search + '"' : ''}${currentFilter.month ? ' in ' + currentFilter.month : ''}
+      </td>`;
       body.appendChild(tr);
     } else {
       filteredSales.forEach(s => { 
         const v = db.vehicles.find(x => x.id === s.vehicleId) || {}; 
-        const vexp = (db.vehicleExpenses||[]).filter(e => e.vehicleId === s.vehicleId).reduce((t,x) => t + Number(x.amount||0), 0);
+        const vexp = (db.vehicleExpenses||[])
+          .filter(e => e.vehicleId === s.vehicleId)
+          .reduce((t,x) => t + Number(x.amount||0), 0);
         const profit = Number(s.salePrice||0) - Number(v.purchase||0) - vexp; 
+
         const br = `£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
-        const partexVehicle = (db.vehicles||[]).find(v => v.originalSaleId === s.id);
-        const partexInfo = partexVehicle ? `<br><small style="color:#53a8ff;">PX: ${partexVehicle.reg} (in stock)</small>` : '';
+        const partexVehicle = (db.vehicles||[]).find(vv => vv.originalSaleId === s.id);
+        const partexInfo = partexVehicle
+          ? `<br><small style="color:#53a8ff;">PX: ${partexVehicle.reg} (in stock)</small>`
+          : '';
         
         const st = s.status || 'completed';
         let statusBadge = '';
         if (st && st !== 'completed') {
           const nice = (st === 'proforma')  ? 'PROFORMA'
-                     : (st === 'cancelled') ? 'CANCELLED'
-                     : (st === 'unwound')   ? 'UNWOUND'
-                     : String(st).toUpperCase();
+                    : (st === 'cancelled') ? 'CANCELLED'
+                    : (st === 'unwound')   ? 'UNWOUND'
+                    : String(st).toUpperCase();
           const col = (st === 'proforma')  ? '#f1c40f'
                     : (st === 'cancelled') ? '#e67e22'
                     : (st === 'unwound')   ? '#e74c3c'
                     : '#999';
           statusBadge = `<br><span style="font-size:11px;color:${col};font-weight:600;">${nice}</span>`;
         }
-        
+
+        // Extra badge if this sale has been refunded
+        if (s.refunded) {
+          statusBadge += `<br><span style="font-size:11px;color:#e74c3c;font-weight:600;">REFUNDED</span>`;
+        }
+      
+        // 🔹 Main sale row
         const tr = document.createElement('tr'); 
         tr.innerHTML = `<td>${ddmmyyyy(s.date)}</td>
-        <td>${v.reg||''}</td>
-        <td>${s.buyer||''}</td>
-        <td class="right">${fmtMoney(s.salePrice)}</td>
-        <td>${br}${partexInfo}</td>
-        ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
-        <td><button data-act="inv" data-id="${s.id}">Invoice</button><button data-act="proforma" data-id="${s.id}">Finance Proforma</button>${canAction('edit')?`<button data-act="edit" data-id="${s.id}">Edit</button>`:''}${canAction('del')?` <button class="danger" data-act="del" data-id="${s.id}">Delete</button>`:''}</td>`; 
+          <td>${v.reg||''}</td>
+          <td>${s.buyer||''}${statusBadge}</td>
+          <td class="right">${fmtMoney(s.salePrice)}</td>
+          <td>${br}${partexInfo}</td>
+          ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
+          <td>
+            <button data-act="inv" data-id="${s.id}">Invoice</button>
+            <button data-act="proforma" data-id="${s.id}">Finance Proforma</button>
+            ${canAction('edit')?`<button data-act="edit" data-id="${s.id}">Edit</button>`:''}
+            ${canAction('del')?` <button class="danger" data-act="del" data-id="${s.id}">Delete</button>`:''}
+          </td>`; 
         body.appendChild(tr); 
+
+        // 🔻 Extra rows for Refund / Credit Note linked to this sale
+        const regUpper = (v.reg || '').toUpperCase();
+        const relatedCredits = (db.credits || []).filter(cr => {
+          if (!cr) return false;
+          if (cr.type !== 'refund' && cr.type !== 'credit_note') return false;
+          if (cr.saleId && cr.saleId === s.id) return true;
+          if (cr.vehicle && cr.vehicle.toUpperCase() === regUpper) return true;
+          return false;
+        });
+
+        // Show newest credit first under the sale
+        relatedCredits.sort((a,b) => {
+          if (!a.date && !b.date) return 0;
+          if (!a.date) return 1;
+          if (!b.date) return -1;
+          return b.date.localeCompare(a.date);
+        });
+
+        relatedCredits.forEach(cr => {
+          const label = cr.type === 'credit_note' ? 'Credit Note' : 'Refund';
+          const trCr = document.createElement('tr');
+          trCr.innerHTML = `
+            <td>${ddmmyyyy(cr.date || '')}</td>
+            <td>${regUpper}</td>
+            <td>${cr.customer || s.buyer || ''}</td>
+            <td class="right" style="color:#e74c3c;font-weight:600;">-${fmtMoney(cr.amount || 0)}</td>
+            <td>
+              <span style="font-size:11px;background:#e74c3c;color:#fff;padding:2px 6px;border-radius:4px;margin-right:6px;">
+                ${label}
+              </span>
+              ${cr.reason || ''}
+            </td>
+            ${canProfit()?'<td class="right"></td>':''}
+            <td>
+              <button onclick="printCreditInvoice('${cr.id}')">Print ${label}</button>
+            </td>`;
+          body.appendChild(trCr);
+        });
       });
     }
     
@@ -3383,11 +3442,12 @@ function viewSales(){
   }
   
   function updateSummary() {
-    const filteredSales = getFilteredSales();
-    const totalSales = filteredSales.reduce((sum, s) => sum + Number(s.salePrice || 0), 0);
+    const allSales = getFilteredSales();          // includes refunded
+    const realSales = allSales.filter(isRealSale); // completed + not refunded
+    const totalSales = realSales.reduce((sum, s) => sum + Number(s.salePrice || 0), 0);
     const summary = wrap.querySelector('#sales_summary');
-    
-    let summaryText = `Showing ${filteredSales.length} sale${filteredSales.length !== 1 ? 's' : ''}`;
+  
+    let summaryText = `Showing ${realSales.length} completed sale${realSales.length !== 1 ? 's' : ''}`;
     if (currentFilter.month) {
       summaryText += ` for ${currentFilter.month}`;
     } else {
@@ -3396,9 +3456,14 @@ function viewSales(){
     if (currentFilter.search) {
       summaryText += ` matching "${currentFilter.search}"`;
     }
-    summaryText += ` | Total: ${fmtMoney(totalSales)}`;
-    
-    summary.textContent = summaryText;
+
+    const refundedCount = allSales.length - realSales.length;
+    if (refundedCount > 0) {
+      summaryText += ` &nbsp; | &nbsp; <span style="color:#e74c3c;">${refundedCount} refunded sale${refundedCount !== 1 ? 's' : ''} shown below (not included in totals)</span>`;
+    }
+
+    summaryText += ` &nbsp; | &nbsp; Total Sales: <b>${fmtMoney(totalSales)}</b>`;
+    summary.innerHTML = summaryText;
   }
   
   // Auto-fill "Date of First Reg" when entering the vehicle REG
