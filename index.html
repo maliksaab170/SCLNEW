@@ -2270,14 +2270,25 @@ function getNextInvoiceNo() {
 function syncSoldStatusFromSales() {
   const soldIds = new Set(
     (db.sales || [])
-      .filter(s => !s.refunded)
+      .filter(s => {
+        if (!s) return false;
+        const st = String(s.status || 'completed').toLowerCase();
+        // Only **completed** and **not refunded** sales mark the car as SOLD
+        return !s.refunded && st === 'completed';
+      })
       .map(s => s.vehicleId)
   );
 
   (db.vehicles || []).forEach(v => {
     if (!v) return;
-    if (soldIds.has(v.id)) {
+    const currentStatus = String(v.status || '').toLowerCase();
+    const shouldBeSold = soldIds.has(v.id);
+
+    if (shouldBeSold) {
       v.status = 'sold';
+    } else if (currentStatus === 'sold') {
+      // If there is no qualifying sale any more, put it back For Sale
+      v.status = 'for sale';
     }
   });
 }
@@ -3198,6 +3209,12 @@ function viewSales(){
         <label class="small">Filter by Month</label>
         <input id="sales_month" type="month" style="width: 100%;">
       </div>
+      <div style="min-width: 220px;">
+        <label class="small">
+          <input id="sales_show_pending" type="checkbox" style="margin-right: 6px;">
+          Show Proforma / Cancelled / Unwound
+        </label>
+      </div>
       <div style="display: flex; gap: 8px; align-items: flex-end;">
         <button id="sales_clear_search" style="margin-top: 20px;">Clear Search</button>
         <button id="sales_clear_month" style="margin-top: 20px;">Show All Time</button>
@@ -3266,20 +3283,29 @@ function viewSales(){
   
   let editId=null; 
   const body=wrap.querySelector('#sale_body');
-  let currentFilter = {
+    let currentFilter = {
     search: '',
-    month: '' // Empty by default instead of current month
+    month: '',          // Empty by default instead of current month
+    showPending: false  // Proforma / Cancelled / Unwound
   };
   
   // Set default month to empty (show all time)
   wrap.querySelector('#sales_month').value = currentFilter.month;
   
-  function getFilteredSales() {
-    // For the list: show ALL completed sales (even if refunded)
+    function getFilteredSales() {
     let sales = (db.sales || []).filter(s => {
       if (!s) return false;
-      const st = s.status || 'completed';   // old sales = completed
-      return st === 'completed';
+      const st = String(s.status || 'completed').toLowerCase();
+
+      // Always show completed sales (whether refunded or not)
+      if (st === 'completed') return true;
+
+      // Only show Proforma / Cancelled / Unwound if toggle is ON
+      if (currentFilter.showPending) {
+        return st === 'proforma' || st === 'cancelled' || st === 'unwound';
+      }
+
+      return false;
     });
 
     // Apply month filter if specified
@@ -3291,11 +3317,11 @@ function viewSales(){
     if (currentFilter.search) {
       const searchTerm = currentFilter.search.toLowerCase();
       sales = sales.filter(s => {
-        const v = db.vehicles.find(x => x.id === s.vehicleId) || {};
+        const v = (db.vehicles || []).find(x => x.id === s.vehicleId) || {};
         return (
           (v.reg || '').toLowerCase().includes(searchTerm) ||
           (s.buyer || '').toLowerCase().includes(searchTerm) ||
-          (s.invNo || '').toLowerCase().includes(searchTerm) ||
+          String(s.invNo || '').toLowerCase().includes(searchTerm) ||
           (s.phone || '').toLowerCase().includes(searchTerm) ||
           (s.email || '').toLowerCase().includes(searchTerm)
         );
@@ -3307,7 +3333,7 @@ function viewSales(){
       if (!a.date && !b.date) return 0;
       if (!a.date) return 1;
       if (!b.date) return -1;
-      return b.date.localeCompare(a.date);
+      return String(b.date).localeCompare(String(a.date));
     });
 
     return sales;
@@ -3513,6 +3539,14 @@ function viewSales(){
     currentFilter.month = '';
     rows();
   };
+
+  const pendingToggle = wrap.querySelector('#sales_show_pending');
+  if (pendingToggle) {
+    pendingToggle.addEventListener('change', function(e) {
+      currentFilter.showPending = !!e.target.checked;
+      rows();
+    });
+  }
 
   function getNums(){ return { price:Number(wrap.querySelector('#sale_price').value||0), dep:Number(wrap.querySelector('#sale_dep').value||0), cash:Number(wrap.querySelector('#sale_cash').value||0), card:Number(wrap.querySelector('#sale_card').value||0), bank:Number(wrap.querySelector('#sale_bank').value||0), fin:Number(wrap.querySelector('#sale_fin').value||0), px:Number(wrap.querySelector('#sale_pxAllowance').value||0) }; }
   function updateWarn(){ const {price,dep,cash,card,bank,fin,px}=getNums(); const sum=dep+cash+card+bank+fin+px; const w=wrap.querySelector('#sale_warn'); if(sum===price){ w.textContent='OK: payments + PX match price'; w.style.color=''; } else { const diff=price-sum; w.textContent='Remaining difference: '+fmtMoney(diff); w.style.color=diff===0?'':(diff<0?'#ffb3b3':''); } }
