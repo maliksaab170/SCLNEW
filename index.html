@@ -2851,24 +2851,30 @@ function viewVehicles(){
 
     // Last MOT details
     if (latest) {
-      if (latest.completedDate) {
-        const motInput = wrap.querySelector('#v_motExpiry');
-        if (motInput && (!motInput.value || motInput.value === '')) motInput.value = latest.expiryDate || latest.expiry || '';
-      }
-      // Also store lastMot* values on found vehicle if it exists in DB
-      const found = (db.vehicles || []).find(v => (v.reg || '').toUpperCase() === reg);
-      if (found) {
-        if (latest.completedDate) found.lastMotDate = latest.completedDate || found.lastMotDate || '';
-        if (latest.expiryDate || latest.expiry) {
-          found.lastMotExpiry = latest.expiryDate || latest.expiry || found.lastMotExpiry || '';
-          // Keep motExpiry in sync for filters/warnings (fallback)
-          if (!found.motExpiry) found.motExpiry = found.lastMotExpiry;
-        }
-        if (latest.odometerValue || latest.odometer) found.lastMotMileage = latest.odometerValue || latest.odometer || found.lastMotMileage || '';
-        found.updatedAt = new Date().toISOString();
-        saveDB();
-      }
+      const newExp = latest.expiryDate || latest.expiry || '';
+
+    // 1) Always update the MOT field on screen
+    const motInput = wrap.querySelector('#v_motExpiry');
+    if (motInput && newExp) {
+      motInput.value = newExp;
     }
+
+    // 2) Also store lastMot* values on found vehicle if it exists in DB
+    const found = (db.vehicles || []).find(v => (v.reg || '').toUpperCase() === (regReturned || reg || '').toUpperCase());
+    if (found) {
+      if (latest.completedDate) found.lastMotDate = latest.completedDate || found.lastMotDate || '';
+      if (newExp) {
+        found.lastMotExpiry = newExp;
+        // ✅ always keep main motExpiry in sync with the latest MOT
+        found.motExpiry = newExp;
+      }
+      if (latest.odometerValue || latest.odometer) {
+        found.lastMotMileage = latest.odometerValue || latest.odometer || found.lastMotMileage || '';
+      }
+      found.updatedAt = new Date().toISOString();
+      saveDB();
+    }
+  }
 
     // Build friendly message
     let msg = `Reg: ${regReturned || reg}\nMake/Model: ${makeVal || ''} ${modelVal || ''}\n\n`;
@@ -3282,8 +3288,43 @@ function viewSales(){
     <button id="sale_add" class="primary">Record / Update</button>
   </div>
 
-  <table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Reg</th><th>Customer</th><th class="right">Price</th><th>Breakdown</th>${canProfit()?'<th class="right">Profit</th>':''}<th>Actions</th></tr></thead><tbody id="sale_body"></tbody></table>
-  <div id="sales_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>`;
+  <table class="table" style="margin-top:10px">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Reg</th>
+        <th>Customer</th>
+        <th class="right">Price</th>
+        <th>Breakdown</th>
+        ${canProfit()?'<th class="right">Profit</th>':''}
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="sale_body"></tbody>
+  </table>
+
+  <div id="sales_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>
+
+  <!-- 🔻 Proforma / Cancelled / Unwound list (does NOT affect totals) -->
+  <div id="proforma_box" class="small" style="margin-top:16px;padding:8px;background:rgba(5,15,35,0.8);border-radius:8px;display:none;">
+    <div style="font-weight:600;margin-bottom:6px;">
+      Proforma / Cancelled / Unwound deals (do NOT count in sales totals)
+    </div>
+    <table class="table small">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Reg</th>
+          <th>Customer</th>
+          <th>Status</th>
+          <th class="right">Price</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="proforma_body"></tbody>
+    </table>
+  </div>
+  `;
   
   let editId=null; 
   const body=wrap.querySelector('#sale_body');
@@ -3332,8 +3373,19 @@ function viewSales(){
       });
     }
 
-    // Sort by date (newest first)
     sales.sort((a, b) => {
+      const stA = String(a.status || 'completed').toLowerCase();
+      const stB = String(b.status || 'completed').toLowerCase();
+
+      const pendA = (stA === 'proforma' || stA === 'cancelled' || stA === 'unwound');
+      const pendB = (stB === 'proforma' || stB === 'cancelled' || stB === 'unwound');
+
+      // If toggle is ON: pending group at the top
+      if (currentFilter.showPending && pendA !== pendB) {
+        return pendA ? -1 : 1;   // pending rows first
+      }
+
+      // Inside each group, sort by date (newest first)
       if (!a.date && !b.date) return 0;
       if (!a.date) return 1;
       if (!b.date) return -1;
@@ -3469,6 +3521,7 @@ function viewSales(){
     
     // Update summary
     updateSummary();
+    renderProformaList();
   }
 
   // 🔵 Show Make / Model when selecting REG
@@ -3522,6 +3575,88 @@ function viewSales(){
 
     summaryText += ` &nbsp; | &nbsp; Total Sales: <b>${fmtMoney(totalSales)}</b>`;
     summary.innerHTML = summaryText;
+  }
+
+  // Build Proforma / Cancelled / Unwound list (no effect on totals)
+  function getPendingSalesForList() {
+    let sales = (db.sales || []).filter(s => {
+      if (!s) return false;
+      const st = String(s.status || '').toLowerCase();
+      return st === 'proforma' || st === 'cancelled' || st === 'unwound';
+    });
+
+    // Same month filter as main list
+    if (currentFilter.month) {
+      sales = sales.filter(s => ymStr(s.date) === currentFilter.month);
+    }
+
+    // Same search filter as main list
+    if (currentFilter.search) {
+      const term = currentFilter.search.toLowerCase();
+      sales = sales.filter(s => {
+        const v = (db.vehicles || []).find(x => x.id === s.vehicleId) || {};
+        return (
+          (v.reg || '').toLowerCase().includes(term) ||
+          (s.buyer || '').toLowerCase().includes(term) ||
+          String(s.invNo || '').toLowerCase().includes(term) ||
+          (s.phone || '').toLowerCase().includes(term) ||
+          (s.email || '').toLowerCase().includes(term)
+        );
+      });
+    }
+
+    // Newest first
+    sales.sort((a,b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return String(b.date).localeCompare(String(a.date));
+    });
+
+    return sales;
+  }
+
+  function renderProformaList() {
+    const box   = wrap.querySelector('#proforma_box');
+    const tbody = wrap.querySelector('#proforma_body');
+    if (!box || !tbody) return;
+
+    const sales = getPendingSalesForList();
+
+    if (!sales.length) {
+      box.style.display = 'none';
+      tbody.innerHTML = '';
+      return;
+    }
+
+    box.style.display = 'block';
+    tbody.innerHTML = '';
+
+    sales.forEach(s => {
+      const v = (db.vehicles || []).find(x => x.id === s.vehicleId) || {};
+      const st = String(s.status || '').toLowerCase();
+
+      const nice = (st === 'proforma')  ? 'PROFORMA'
+                 : (st === 'cancelled') ? 'CANCELLED'
+                 : (st === 'unwound')   ? 'UNWOUND'
+                 : String(st).toUpperCase();
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${ddmmyyyy(s.date)}</td>
+        <td>${v.reg || ''}</td>
+        <td>${s.buyer || ''}</td>
+        <td>${nice}</td>
+        <td class="right">${fmtMoney(s.salePrice)}</td>
+        <td>
+          <button data-act="inv" data-id="${s.id}">Invoice</button>
+          <button data-act="proforma" data-id="${s.id}">Finance Proforma</button>
+          ${canAction('edit') ? `<button data-act="edit" data-id="${s.id}">Edit</button>` : ''}
+          ${canAction('del')  ? ` <button class="danger" data-act="del" data-id="${s.id}">Delete</button>` : ''}
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
   }
   
   // Auto-fill "Date of First Reg" when entering the vehicle REG
@@ -4019,6 +4154,10 @@ function viewCredit(){
     <button id="cr_add" class="primary">Add/Update Credit</button>
   </div>
 
+  <div class="row" style="margin-top:6px;">
+    <textarea id="cr_terms" placeholder="Extra terms / conditions for this credit note or refund (will print on the credit note)" style="width:100%;min-height:60px;"></textarea>
+  </div>
+
   <div class="row" style="margin:10px 0 12px;">
     <div class="small" id="cr_saleHint" style="opacity:.85"></div>
   </div>
@@ -4187,6 +4326,7 @@ function viewCredit(){
     wrap.querySelector('#cr_mileage').value = '';
     wrap.querySelector('#cr_colour').value = '';
     wrap.querySelector('#cr_fuel').value = '';
+    if (wrap.querySelector('#cr_terms')) wrap.querySelector('#cr_terms').value = '';
     linkedSale = null;
     linkedVehicle = null;
     setSaleHint();
@@ -4214,8 +4354,13 @@ function viewCredit(){
       amount: refundPaid,
       reason: wrap.querySelector('#cr_reason').value.trim(),
       invoiceNo: wrap.querySelector('#cr_invoiceNo').value.trim(),
-
-      // NEW: link back to the sale + keep a snapshot
+      make: wrap.querySelector('#cr_make').value.trim(),
+      model: wrap.querySelector('#cr_model').value.trim(),
+      vin: wrap.querySelector('#cr_vin').value.trim(),
+      mileage: Number(wrap.querySelector('#cr_mileage').value || 0),
+      colour: wrap.querySelector('#cr_colour').value.trim(),
+      fuel: wrap.querySelector('#cr_fuel').value.trim(),
+      terms: (wrap.querySelector('#cr_terms')?.value || '').trim(),
       saleId: linkedSale ? linkedSale.id : null,
       soldPrice: linkedSale ? Number(linkedSale.salePrice||0) : 0,
       soldInvNo: linkedSale ? (linkedSale.invNo||'') : '',
@@ -4345,6 +4490,7 @@ function viewCredit(){
       wrap.querySelector('#cr_mileage').value = Number(cr.returnMileage||cr.mileage||0);
       wrap.querySelector('#cr_colour').value  = cr.colour || '';
       wrap.querySelector('#cr_fuel').value    = cr.fuel || '';
+      if (wrap.querySelector('#cr_terms')) wrap.querySelector('#cr_terms').value = cr.terms || '';
 
       // Reload linkage hint
       loadFromReg();
@@ -4399,6 +4545,8 @@ function printCreditInvoice(creditId){
     .terms{ page-break-inside: avoid; break-inside: avoid; }
     .tight td{padding:4px 6px}
     .negative{color:#d00;font-weight:bold}
+    .no-print{margin:8px 0}
+    @media print{.no-print{display:none !important}}
   </style></head><body>
   <button class="no-print" onclick="window.print()" style="margin:8px 0">Print / Save as PDF</button>
   ${headerHTML}
@@ -4423,9 +4571,15 @@ function printCreditInvoice(creditId){
   </table>
   <p class="terms">
     <b>Terms:</b><br>
-    ${cr.type === 'credit_note'
-      ? 'This credit note may be used against future purchases with ' + (co.name || 'Star Cars London Ltd') + '. Valid for 12 months from date of issue.'
-      : 'This refund has been processed as indicated above. Please allow 3-5 working days for bank transfers to clear.'}
+    ${
+      (cr.terms || '').trim()
+        ? (cr.terms || '').trim()
+        : (
+            cr.type === 'credit_note'
+              ? 'This credit note may be used against future purchases with ' + (co.name || 'Star Cars London Ltd') + '. Valid for 12 months from date of issue.'
+              : 'This refund has been processed as indicated above. Please allow 3-5 working days for bank transfers to clear.'
+          )
+    }
   </p>
   <p>Customer signature: _______________________ &nbsp;&nbsp; Authorised by: _______________________</p>
   <p style="margin-top:20px;font-size:${Math.max(10,fontPx-2)}px;color:#666">
