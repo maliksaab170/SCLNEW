@@ -3185,7 +3185,8 @@ function hint(){ const bal=calcBalances(); wrap.querySelector('#s_totHint').text
 /* ========= Sales ========= */
 function viewSales(){ 
   if(!canTab('Sales')) return document.createElement('div'); 
-  const wrap=document.createElement('div'); 
+  const wrap=document.createElement('div');
+
   wrap.className='card';
   
   // ✅ Only show vehicles that are NOT sold and do NOT already have a sale record
@@ -3226,6 +3227,9 @@ function viewSales(){
   <!-- Sale Entry Form -->
   <div class="row">
     <label>Vehicle REG<datalist id="sale_reg_list">${regOptions}</datalist><input id="sale_reg" list="sale_reg_list" placeholder="Type REG to select vehicle"></label>
+    <div id="sale_vehicleInfo" class="small" style="color:#9fb4ff; margin-left:6px;">
+      Select a reg to see vehicle details
+    </div>
     <label>Sale Date<input id="sale_date" type="date"></label>
     <label>Customer Name<input id="sale_buyer" placeholder="Customer name"></label>
     <label>Customer Address<input id="sale_addr" placeholder="Address"></label>
@@ -3466,6 +3470,34 @@ function viewSales(){
     // Update summary
     updateSummary();
   }
+
+  // 🔵 Show Make / Model when selecting REG
+  (function(){
+    const regInput = wrap.querySelector('#sale_reg');
+    const info = wrap.querySelector('#sale_vehicleInfo');
+
+    function updateVehicleInfo(){
+      const reg = (regInput.value || '').trim().toUpperCase();
+      if(!reg){
+        info.textContent = 'Select a reg to see vehicle details';
+        return;
+      }
+
+      const v = (db.vehicles || []).find(x => (x.reg||'').toUpperCase() === reg);
+      if(!v){
+        info.textContent = 'Vehicle not found in stock';
+        return;
+      }
+
+      info.textContent =
+        `${v.make || ''} ${v.model || ''} | `
+        + `Colour: ${v.colour || 'N/A'} | `
+        + `Mileage: ${v.mileage || 0}`;
+    }
+
+    regInput.addEventListener('input', updateVehicleInfo);
+    regInput.addEventListener('change', updateVehicleInfo);
+  })();
   
   function updateSummary() {
     const allSales = getFilteredSales();          // includes refunded
