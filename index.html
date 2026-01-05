@@ -3285,6 +3285,21 @@ function viewSales(){
     <label>Warranty Provider<input id="sale_warrantyProvider" placeholder="Handler / RAC / etc"></label>
     <label>Warranty Months<input id="sale_warrantyMonths" type="number" placeholder="e.g. 3"></label>
     <label>Warranty Policy #<input id="sale_warrantyPolicy" placeholder="Policy number"></label>
+    
+    <label>Lead Source
+      <select id="sale_lead">
+        <option value="">Not set</option>
+        <option value="AutoTrader">AutoTrader</option>
+        <option value="Website">Website</option>
+        <option value="Walk-in">Walk-in</option>
+        <option value="Facebook">Facebook</option>
+        <option value="AA Cars">AA Cars</option>
+        <option value="Gumtree">Gumtree</option>
+        <option value="Referral">Referral</option>
+        <option value="Other">Other</option>
+      </select>
+    </label>
+    
     <button id="sale_add" class="primary">Record / Update</button>
   </div>
 
@@ -3397,26 +3412,34 @@ function viewSales(){
 
   // Add function to clear the form
   function clearSaleForm() {
-    const fields = [
-      '#sale_reg', '#sale_date', '#sale_buyer', '#sale_addr', '#sale_phone',
-      '#sale_email', '#sale_mileage', '#sale_firstReg', '#sale_price',
-      '#sale_dep', '#sale_cash', '#sale_card', '#sale_bank', '#sale_fin',
-      '#sale_pxAllowance', '#sale_partex', '#sale_pxReg', '#sale_pxMake',
-      '#sale_pxModel', '#sale_finCo', '#sale_agree', '#sale_deliver',
-      '#sale_keys', '#sale_mot', '#sale_sh'
-    ];
+  const fields = [
+    '#sale_reg', '#sale_date', '#sale_buyer', '#sale_addr', '#sale_phone',
+    '#sale_email', '#sale_mileage', '#sale_firstReg', '#sale_price',
+    '#sale_dep', '#sale_cash', '#sale_card', '#sale_bank', '#sale_fin',
+    '#sale_pxAllowance', '#sale_partex', '#sale_pxReg', '#sale_pxMake',
+    '#sale_pxModel', '#sale_finCo', '#sale_agree', '#sale_deliver',
+    '#sale_keys', '#sale_mot', '#sale_sh'
+  ];
     
-    fields.forEach(selector => {
-      const el = wrap.querySelector(selector);
-      if (el) el.value = '';
-    });
+  fields.forEach(selector => {
+    const el = wrap.querySelector(selector);
+    if (el) el.value = '';
+  });
+
+  // ⭐ NEW: reset Lead Source dropdown
+  const leadEl = wrap.querySelector('#sale_lead');
+  if (leadEl) leadEl.value = '';
+
+  // Optionally reset sale status back to "completed"
+  const stField = wrap.querySelector('#sale_status');
+  if (stField) stField.value = 'completed';
+
+  // Clear warning message
+  const warnEl = wrap.querySelector('#sale_warn');
+  if (warnEl) warnEl.textContent = '';
     
-    // Clear warning message
-    const warnEl = wrap.querySelector('#sale_warn');
-    if (warnEl) warnEl.textContent = '';
-    
-    // Reset edit ID
-    editId = null;
+  // Reset edit ID
+  editId = null;
   }
   
   function rows(){ 
@@ -3738,14 +3761,66 @@ function viewSales(){
     rows(); 
     } }
 
-    else if(b.dataset.act==='edit'){ if(!canAction('edit')) return alert('No permission'); editId=s.id; const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
-      wrap.querySelector('#sale_reg').value=(v.reg||'').toUpperCase(); wrap.querySelector('#sale_date').value=s.date; wrap.querySelector('#sale_buyer').value=s.buyer||''; wrap.querySelector('#sale_addr').value=s.address||'';
-      wrap.querySelector('#sale_phone').value=s.phone||''; wrap.querySelector('#sale_email').value=s.email||''; wrap.querySelector('#sale_mileage').value=s.mileage||0; wrap.querySelector('#sale_firstReg').value=s.firstReg||'';
-      wrap.querySelector('#sale_price').value=s.salePrice||0; wrap.querySelector('#sale_dep').value=s.deposit||0; wrap.querySelector('#sale_cash').value=s.cash||0; wrap.querySelector('#sale_card').value=s.card||0; wrap.querySelector('#sale_bank').value=s.bank||0; wrap.querySelector('#sale_fin').value=s.finance||0;
-      wrap.querySelector('#sale_partex').value=s.partex||''; wrap.querySelector('#sale_pxReg').value=s.pxReg||''; wrap.querySelector('#sale_pxMake').value=s.pxMake||''; wrap.querySelector('#sale_pxModel').value=s.pxModel||''; wrap.querySelector('#sale_pxAllowance').value=s.pxAllowance||0;
-      wrap.querySelector('#sale_finCo').value=s.financeCompany||''; wrap.querySelector('#sale_agree').value=s.agreement||''; wrap.querySelector('#sale_deliver').value=s.deliverTo||''; wrap.querySelector('#sale_keys').value=s.keys||''; wrap.querySelector('#sale_mot').value=s.mot||''; wrap.querySelector('#sale_sh').value=s.serviceHistory||''; wrap.querySelector('#sale_invNo').value=s.invNo||''; const stField = wrap.querySelector('#sale_status'); if (stField) stField.value = s.status || 'completed'; const wt = wrap.querySelector('#sale_warrantyType'); if (wt) wt.value = s.warrantyType || ''; const wp = wrap.querySelector('#sale_warrantyProvider'); if (wp) wp.value = s.warrantyProvider || ''; const wm = wrap.querySelector('#sale_warrantyMonths'); if (wm) wm.value = s.warrantyMonths || ''; const wpol = wrap.querySelector('#sale_warrantyPolicy'); if (wpol) wpol.value = s.warrantyPolicy || ''; updateWarn();
+    else if(b.dataset.act==='edit'){ 
+      if(!canAction('edit')) return alert('No permission'); 
+      editId = s.id; 
+
+      const v = db.vehicles.find(x => x.id === s.vehicleId) || {};
+
+      wrap.querySelector('#sale_reg').value       = (v.reg || '').toUpperCase(); 
+      wrap.querySelector('#sale_date').value      = s.date || ''; 
+      wrap.querySelector('#sale_buyer').value     = s.buyer || ''; 
+      wrap.querySelector('#sale_addr').value      = s.address || '';
+      wrap.querySelector('#sale_phone').value     = s.phone || ''; 
+      wrap.querySelector('#sale_email').value     = s.email || ''; 
+      wrap.querySelector('#sale_mileage').value   = s.mileage || 0; 
+      wrap.querySelector('#sale_firstReg').value  = s.firstReg || '';
+
+      wrap.querySelector('#sale_price').value     = s.salePrice || 0; 
+      wrap.querySelector('#sale_dep').value       = s.deposit || 0; 
+      wrap.querySelector('#sale_cash').value      = s.cash || 0; 
+      wrap.querySelector('#sale_card').value      = s.card || 0; 
+      wrap.querySelector('#sale_bank').value      = s.bank || 0; 
+      wrap.querySelector('#sale_fin').value       = s.finance || 0;
+
+      wrap.querySelector('#sale_partex').value    = s.partex || ''; 
+      wrap.querySelector('#sale_pxReg').value     = s.pxReg || ''; 
+      wrap.querySelector('#sale_pxMake').value    = s.pxMake || ''; 
+      wrap.querySelector('#sale_pxModel').value   = s.pxModel || ''; 
+      wrap.querySelector('#sale_pxAllowance').value = s.pxAllowance || 0;
+
+      wrap.querySelector('#sale_finCo').value     = s.financeCompany || ''; 
+      wrap.querySelector('#sale_agree').value     = s.agreement || ''; 
+      wrap.querySelector('#sale_deliver').value   = s.deliverTo || ''; 
+      wrap.querySelector('#sale_keys').value      = s.keys || ''; 
+      wrap.querySelector('#sale_mot').value       = s.mot || ''; 
+      wrap.querySelector('#sale_sh').value        = s.serviceHistory || ''; 
+      wrap.querySelector('#sale_invNo').value     = s.invNo || ''; 
+
+      // ⭐ NEW: load Lead Source
+      const leadEl = wrap.querySelector('#sale_lead');
+      if (leadEl) leadEl.value = s.leadSource || '';
+
+      const stField = wrap.querySelector('#sale_status'); 
+      if (stField) stField.value = s.status || 'completed'; 
+
+      const wt = wrap.querySelector('#sale_warrantyType'); 
+      if (wt) wt.value = s.warrantyType || ''; 
+
+      const wp = wrap.querySelector('#sale_warrantyProvider'); 
+      if (wp) wp.value = s.warrantyProvider || ''; 
+
+      const wm = wrap.querySelector('#sale_warrantyMonths'); 
+      if (wm) wm.value = s.warrantyMonths || ''; 
+
+      const wpol = wrap.querySelector('#sale_warrantyPolicy'); 
+      if (wpol) wpol.value = s.warrantyPolicy || ''; 
+
+      updateWarn();
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
-    } else if(b.dataset.act==='inv'){ printInvoice(s.id); } else if(b.dataset.act==='proforma'){ printFinanceProforma(s.id); }
+    }
+
+    else if(b.dataset.act==='inv'){ printInvoice(s.id); } else if(b.dataset.act==='proforma'){ printFinanceProforma(s.id); }
   });
 
   wrap.querySelector('#sale_add').onclick = () => { 
@@ -3833,6 +3908,7 @@ function viewSales(){
     keys: wrap.querySelector('#sale_keys').value.trim(),
     mot: wrap.querySelector('#sale_mot').value.trim(),
     serviceHistory: wrap.querySelector('#sale_sh').value.trim(),
+    leadSource: (wrap.querySelector('#sale_lead')?.value || '').trim(),
     invNo: invNoValue || (Date.now() + '').slice(-6),
     status: saleStatus,
     warrantyType:      (wrap.querySelector('#sale_warrantyType')?.value || ''),
@@ -4399,7 +4475,7 @@ function viewCredit(){
             type: 'Credit/Return Adjustment',
             method: cr.method || 'bank',
             amount: -Number(kept), // negative reduces total cost
-            note: `Credit return: sold ${soldPrice}, refund paid ${refundPaid}, kept ${kept}. Inv ${cr.invoiceNo||cr.soldInvNo||''}`
+            note: `Refund to ${cr.customer} (${(v.reg||'').toUpperCase()}): sold ${fmtMoney(soldPrice)}, refund ${fmtMoney(refundPaid)}, kept ${fmtMoney(kept)}. Inv ${cr.invoiceNo||cr.soldInvNo||''}`
           };
 
           if(ex){
@@ -7199,6 +7275,110 @@ if (hardBtn) {
   
   return wrap;
 }
+
+/* ================================
+   GLOBAL BLOCK SAVE WITHOUT DATE
+   ================================ */
+
+(function blockSaveWithoutDate(){
+
+  document.addEventListener('click', function(e){
+
+    // SALE
+    if(e.target && e.target.id === 'sale_add'){
+      const d = document.getElementById('sale_date');
+      if(d && !d.value){
+        alert('Please select Sale Date');
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return false;
+      }
+    }
+
+    // PURCHASE
+    if(e.target && e.target.id === 'pi_add'){
+      const d = document.getElementById('pi_date');
+      if(d && !d.value){
+        alert('Please select Purchase Date');
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return false;
+      }
+    }
+
+    // CREDIT / REFUND
+    if(e.target && e.target.id === 'cr_add'){
+      const d = document.getElementById('cr_date');
+      if(d && !d.value){
+        alert('Please select Credit / Refund Date');
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return false;
+      }
+    }
+
+  }, true);
+
+})();
+
+/* ===============================
+   AUTO DATE + MANDATORY DATE
+   =============================== */
+
+function applyAutoTodayAndMandatoryDate(){
+  const today = new Date().toISOString().slice(0,10);
+
+  // Sale
+  const saleDate = document.getElementById('sale_date');
+  if(saleDate && !saleDate.value) saleDate.value = today;
+
+  const saleBtn = document.getElementById('sale_add');
+  if(saleBtn && !saleBtn.dataset.checked){
+    saleBtn.dataset.checked = "1";
+    saleBtn.addEventListener('click', e=>{
+      if(saleDate && !saleDate.value){
+        alert('Please select Sale Date');
+        e.stopImmediatePropagation();
+        return false;
+      }
+    }, true);
+  }
+
+  // Purchase
+  const piDate = document.getElementById('pi_date');
+  if(piDate && !piDate.value) piDate.value = today;
+
+  const piBtn = document.getElementById('pi_add');
+  if(piBtn && !piBtn.dataset.checked){
+    piBtn.dataset.checked = "1";
+    piBtn.addEventListener('click', e=>{
+      if(piDate && !piDate.value){
+        alert('Please select Purchase Date');
+        e.stopImmediatePropagation();
+        return false;
+      }
+    }, true);
+  }
+
+  // Credit / Refund
+  const crDate = document.getElementById('cr_date');
+  if(crDate && !crDate.value) crDate.value = today;
+
+  const crBtn = document.getElementById('cr_add');
+  if(crBtn && !crBtn.dataset.checked){
+    crBtn.dataset.checked = "1";
+    crBtn.addEventListener('click', e=>{
+      if(crDate && !crDate.value){
+        alert('Please select Credit / Refund Date');
+        e.stopImmediatePropagation();
+        return false;
+      }
+    }, true);
+  }
+}
+
+// Run repeatedly because forms are dynamic
+setInterval(applyAutoTodayAndMandatoryDate, 500);
 
 startAutoSyncFromSettings();
 render();
