@@ -503,79 +503,71 @@ function exportVehiclesCSV() {
 
 // Export Sales as CSV
 function exportSalesCSV() {
-    // Get all sales or filtered sales based on your current view
-    const sales = db.sales || [];
-    
-    // Define headers
-    const headers = [
-        'Date', 'Invoice #', 'Vehicle REG', 'Make', 'Model', 'Colour',
-        'Customer Name', 'Customer Address', 'Phone', 'Email',
-        'Sale Price', 'Deposit', 'Cash', 'Card', 'Bank Transfer', 'Finance',
-        'PX Allowance', 'PX REG', 'PX Make', 'PX Model', 'Finance Company',
-        'Agreement #', 'Deliver To', 'Keys', 'MOT Expiry', 'Service History',
-        'Mileage at Sale', 'First Registration'
-    ];
-    
-    // Create CSV rows
-    const rows = sales.map(s => {
-        const v = db.vehicles.find(x => x.id === s.vehicleId) || {};
-        return [
-            ddmmyyyy(s.date),
-            s.invNo || '',
-            v.reg || '',
-            v.make || '',
-            v.model || '',
-            v.colour || '',
-            s.buyer || '',
-            s.address || '',
-            s.phone || '',
-            s.email || '',
-            Number(s.salePrice || 0).toFixed(2),
-            Number(s.deposit || 0).toFixed(2),
-            Number(s.cash || 0).toFixed(2),
-            Number(s.card || 0).toFixed(2),
-            Number(s.bank || 0).toFixed(2),
-            Number(s.finance || 0).toFixed(2),
-            Number(s.pxAllowance || 0).toFixed(2),
-            s.pxReg || '',
-            s.pxMake || '',
-            s.pxModel || '',
-            s.financeCompany || '',
-            s.agreement || '',
-            s.deliverTo || '',
-            s.keys || '',
-            s.mot || '',
-            s.serviceHistory || '',
-            s.mileage || '',
-            ddmmyyyy(s.firstReg || '')
-        ];
+  const sales = db.sales || [];
+
+  const headers = [
+    'Date',
+    'Invoice #',
+    'Reg',
+    'Make',
+    'Model',
+    'Customer',
+    'Phone',
+    'Email',
+    'Sale Price',
+    'Lead Source',
+    'Finance Company',
+    'Warranty Type',
+    'Warranty Months'
+  ];
+
+  const lines = [];
+  lines.push(headers.join(','));
+
+  sales.forEach(s => {
+    const v = (db.vehicles || []).find(v => v.id === s.vehicleId) || {};
+
+    const row = [
+      ddmmyyyy(s.date),
+      s.invNo || '',
+      v.reg || '',
+      v.make || '',
+      v.model || '',
+      s.buyer || '',
+      s.phone || '',
+      s.email || '',
+      Number(s.salePrice || 0).toFixed(2),
+      s.leadSource || '',
+      s.financeCompany || '',
+      s.warrantyType || '',
+      s.warrantyMonths || 0
+    ].map(cell => {
+      const str = String(cell == null ? '' : cell);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
     });
-    
-    // Create CSV content
-    const csvContent = [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => 
-            typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n')) 
-                ? `"${cell.replace(/"/g, '""')}"` 
-                : cell
-        ).join(','))
-    ].join('\n');
-    
-    // Create and trigger download
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `sales_export_${new Date().toISOString().slice(0, 10)}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    // Log the export in audit trail
-    if (typeof addAudit === 'function') {
-        addAudit('export', 'sales', '', `Exported ${sales.length} sales to CSV`);
-    }
+
+    lines.push(row.join(','));
+  });
+
+  const csv = lines.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+
+  a.href = url;
+  a.download = 'sales_export_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+  if (typeof addAudit === 'function') {
+    addAudit('export', 'sales', '', `Exported ${sales.length} sales to CSV`);
+  }
 }
 
 // DVLA Response Validation Helper
@@ -2260,6 +2252,11 @@ function getNextInvoiceNo() {
   sales.forEach(s => {
     const raw = (s.invNo == null ? '' : String(s.invNo)).trim();
     if (!raw) return;
+
+    // ✅ Only use pure digits, and ignore silly-long numbers (e.g. 35454242)
+    if (!/^\d+$/.test(raw)) return;     // skip if it has letters or symbols
+    if (raw.length > 4) return;         // only count up to 4-digit invoices
+
     const n = parseInt(raw, 10);
     if (!isNaN(n) && n > maxNum) maxNum = n;
   });
@@ -3265,7 +3262,7 @@ function viewSales(){
     <label>Keys<input id="sale_keys" placeholder="e.g. 2 keys"></label>
     <label>MOT Expiry<input id="sale_mot" type="date" placeholder="e.g. 2025-11-30"></label>
     <label>Service History<input id="sale_sh" placeholder="Full / Part / None"></label>
-    <label>Invoice # (optional)<input id="sale_invNo" placeholder="Leave blank for auto"></label>
+    <label>Invoice # (optional)<input id="sale_invNo" placeholder="Leave blank for auto" maxlength="5" inputmode="numeric"></label>
     <label>Sale Type
       <select id="sale_status">
         <option value="completed" selected>Completed Sale (customer bought car)</option>
@@ -3277,9 +3274,9 @@ function viewSales(){
     <label>Warranty Type
       <select id="sale_warrantyType">
         <option value="">None / Not set</option>
-        <option value="inhouse">In-house Warranty</option>
-        <option value="thirdparty">Third-Party Warranty</option>
-        <option value="manufacturer">Manufacturer</option>
+        <option value="In-house">In-house Warranty</option>
+        <option value="Third-Party">Third-Party Warranty</option>
+        <option value="Manufacturer">Manufacturer</option>
       </select>
     </label>
     <label>Warranty Provider<input id="sale_warrantyProvider" placeholder="Handler / RAC / etc"></label>
@@ -3418,7 +3415,8 @@ function viewSales(){
     '#sale_dep', '#sale_cash', '#sale_card', '#sale_bank', '#sale_fin',
     '#sale_pxAllowance', '#sale_partex', '#sale_pxReg', '#sale_pxMake',
     '#sale_pxModel', '#sale_finCo', '#sale_agree', '#sale_deliver',
-    '#sale_keys', '#sale_mot', '#sale_sh'
+    '#sale_keys', '#sale_mot', '#sale_sh', '#sale_invNo', '#sale_warrantyType',
+    '#sale_warrantyProvider', '#sale_warrantyMonths', '#sale_warrantyPolicy'
   ];
     
   fields.forEach(selector => {
