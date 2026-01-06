@@ -3409,35 +3409,41 @@ function viewSales(){
 
   // Add function to clear the form
   function clearSaleForm() {
-  const fields = [
-    '#sale_reg', '#sale_date', '#sale_buyer', '#sale_addr', '#sale_phone',
-    '#sale_email', '#sale_mileage', '#sale_firstReg', '#sale_price',
-    '#sale_dep', '#sale_cash', '#sale_card', '#sale_bank', '#sale_fin',
-    '#sale_pxAllowance', '#sale_partex', '#sale_pxReg', '#sale_pxMake',
-    '#sale_pxModel', '#sale_finCo', '#sale_agree', '#sale_deliver',
-    '#sale_keys', '#sale_mot', '#sale_sh', '#sale_invNo', '#sale_warrantyType',
-    '#sale_warrantyProvider', '#sale_warrantyMonths', '#sale_warrantyPolicy'
-  ];
+    const fields = [
+      '#sale_reg', '#sale_date', '#sale_buyer', '#sale_addr', '#sale_phone',
+      '#sale_email', '#sale_mileage', '#sale_firstReg', '#sale_price',
+      '#sale_dep', '#sale_cash', '#sale_card', '#sale_bank', '#sale_fin',
+      '#sale_pxAllowance', '#sale_partex', '#sale_pxReg', '#sale_pxMake',
+      '#sale_pxModel', '#sale_finCo', '#sale_agree', '#sale_deliver',
+      '#sale_keys', '#sale_mot', '#sale_sh', '#sale_invNo', '#sale_warrantyType',
+      '#sale_warrantyProvider', '#sale_warrantyMonths', '#sale_warrantyPolicy'
+    ];
     
-  fields.forEach(selector => {
-    const el = wrap.querySelector(selector);
-    if (el) el.value = '';
-  });
+    fields.forEach(selector => {
+      const el = wrap.querySelector(selector);
+      if (el) el.value = '';
+    });
 
-  // ⭐ NEW: reset Lead Source dropdown
-  const leadEl = wrap.querySelector('#sale_lead');
-  if (leadEl) leadEl.value = '';
+    // ⭐ NEW: reset Lead Source dropdown
+    const leadEl = wrap.querySelector('#sale_lead');
+    if (leadEl) leadEl.value = '';
 
-  // Optionally reset sale status back to "completed"
-  const stField = wrap.querySelector('#sale_status');
-  if (stField) stField.value = 'completed';
+    // Optionally reset sale status back to "completed"
+    const stField = wrap.querySelector('#sale_status');
+    if (stField) stField.value = 'completed';
 
-  // Clear warning message
-  const warnEl = wrap.querySelector('#sale_warn');
-  if (warnEl) warnEl.textContent = '';
-    
-  // Reset edit ID
-  editId = null;
+    // Clear warning message
+    const warnEl = wrap.querySelector('#sale_warn');
+    if (warnEl) warnEl.textContent = '';
+  
+    // 🔢 Set next invoice number so user can see it
+    const invEl = wrap.querySelector('#sale_invNo');
+    if (invEl) {
+      invEl.value = getNextInvoiceNo();
+    }
+
+    // Reset edit ID
+    editId = null;
   }
   
   function rows(){ 
@@ -4018,6 +4024,7 @@ function viewSales(){
 };
   
   // Initial render
+  clearSaleForm();
   rows();
   return wrap;
 }
@@ -6136,14 +6143,14 @@ function viewComplaints(){
   <div class="row" style="flex-wrap:wrap;gap:8px">
     <input id="comp_mileageNow" type="number" placeholder="Mileage now" style="max-width:150px">
     <button id="comp_autofill" type="button">Auto-fill from sale</button>
-    <input id="comp_mechBook" type="datetime-local" placeholder="Booked with mechanic">
+    <input id="comp_mechBook" type="date" placeholder="Booked with mechanic">
     <input id="comp_mechName" placeholder="Mechanic / Garage name">
-    <input id="comp_delivered" type="datetime-local" placeholder="Delivered to mechanic">
+    <input id="comp_delivered" type="date" placeholder="Delivered to mechanic">
     <input id="comp_work" placeholder="Work carried out / fault found" style="flex:1;min-width:200px">
   </div>
 
   <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
-    <input id="comp_collected" type="datetime-local" placeholder="Customer collected">
+    <input id="comp_collected" type="date" placeholder="Customer collected">
     <input id="comp_collectedMileage" type="number" placeholder="Mileage at collection" style="max-width:170px">
     <input id="comp_handler" placeholder="Staff dealing with complaint">
   </div>
@@ -6622,6 +6629,9 @@ function viewComplaints(){
     const current = editId ? (db.complaints||[]).find(x => x.id === editId) : null;
 
     const baseDate = wrap.querySelector('#comp_date').value || (current && current.date) || new Date().toISOString().split('T')[0];
+    const mechRaw = wrap.querySelector('#comp_mechBook').value || '';
+    const delRaw  = wrap.querySelector('#comp_delivered').value || '';
+    const colRaw  = wrap.querySelector('#comp_collected').value || '';
 
     const comp = {
       id: editId || uid(),
@@ -6639,11 +6649,11 @@ function viewComplaints(){
 
       // LOG FIELDS
       mileageNow: Number(wrap.querySelector('#comp_mileageNow').value || 0),
-      mechanicBooked: wrap.querySelector('#comp_mechBook').value,
+      mechanicBooked: mechRaw ? mechRaw.substring(0,10) : '',
       mechanicName: wrap.querySelector('#comp_mechName').value.trim(),
-      deliveredDate: wrap.querySelector('#comp_delivered').value,
+      deliveredDate: delRaw ? delRaw.substring(0,10) : '',
       workDone: wrap.querySelector('#comp_work').value.trim(),
-      collectedDate: wrap.querySelector('#comp_collected').value,
+      collectedDate: colRaw ? colRaw.substring(0,10) : '',
       collectedMileage: Number(wrap.querySelector('#comp_collectedMileage').value || 0),
       handler: wrap.querySelector('#comp_handler').value.trim(),
 
@@ -6953,11 +6963,11 @@ function viewComplaints(){
             <tr><th style="text-align:left;padding:6px 4px">Cost:</th><td style="padding:6px 4px">${comp.cost ? fmtMoney(comp.cost) : 'None'}</td></tr>
 
             <tr><th style="text-align:left;padding:6px 4px">Mileage now:</th><td style="padding:6px 4px">${comp.mileageNow || ''}</td></tr>
-            <tr><th style="text-align:left;padding:6px 4px">Booked with mechanic:</th><td style="padding:6px 4px">${comp.mechanicBooked || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Booked with mechanic:</th><td style="padding:6px 4px">${ddmmyyyy(comp.mechanicBooked) || ''}</td></tr>
             <tr><th style="text-align:left;padding:6px 4px">Mechanic / Garage:</th><td style="padding:6px 4px">${comp.mechanicName || ''}</td></tr>
-            <tr><th style="text-align:left;padding:6px 4px">Delivered to mechanic:</th><td style="padding:6px 4px">${comp.deliveredDate || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Delivered to mechanic:</th><td style="padding:6px 4px">${ddmmyyyy(comp.deliveredDate) || ''}</td></tr>
             <tr><th style="text-align:left;padding:6px 4px">Work carried out:</th><td style="padding:6px 4px">${(comp.workDone || '').replace(/\n/g,'<br>')}</td></tr>
-            <tr><th style="text-align:left;padding:6px 4px">Customer collected:</th><td style="padding:6px 4px">${comp.collectedDate || ''}</td></tr>
+            <tr><th style="text-align:left;padding:6px 4px">Customer collected:</th><td style="padding:6px 4px">${ddmmyyyy(comp.collectedDate) || ''}</td></tr>
             <tr><th style="text-align:left;padding:6px 4px">Mileage at collection:</th><td style="padding:6px 4px">${comp.collectedMileage || ''}</td></tr>
             <tr><th style="text-align:left;padding:6px 4px">Handled by:</th><td style="padding:6px 4px">${comp.handler || comp.assigned || ''}</td></tr>
 
@@ -6989,11 +6999,11 @@ function viewComplaints(){
       wrap.querySelector('#comp_cost').value = comp.cost || '';
 
       wrap.querySelector('#comp_mileageNow').value = comp.mileageNow || '';
-      wrap.querySelector('#comp_mechBook').value = comp.mechanicBooked || '';
+      wrap.querySelector('#comp_mechBook').value = (comp.mechanicBooked || '').substring(0,10);
       wrap.querySelector('#comp_mechName').value = comp.mechanicName || '';
-      wrap.querySelector('#comp_delivered').value = comp.deliveredDate || '';
+      wrap.querySelector('#comp_delivered').value = (comp.deliveredDate || '').substring(0,10);
       wrap.querySelector('#comp_work').value = comp.workDone || '';
-      wrap.querySelector('#comp_collected').value = comp.collectedDate || '';
+      wrap.querySelector('#comp_collected').value = (comp.collectedDate || '').substring(0,10);
       wrap.querySelector('#comp_collectedMileage').value = comp.collectedMileage || '';
       wrap.querySelector('#comp_handler').value = comp.handler || '';
 
@@ -7326,53 +7336,43 @@ if (hardBtn) {
 function applyAutoTodayAndMandatoryDate(){
   const today = new Date().toISOString().slice(0,10);
 
-  // Sale
-  const saleDate = document.getElementById('sale_date');
-  if(saleDate && !saleDate.value) saleDate.value = today;
+  // Helper to wire multiple date fields
+  function wireDate(inputId, buttonId, message){
+    const d = document.getElementById(inputId);
+    if (d && !d.value) d.value = today;
 
-  const saleBtn = document.getElementById('sale_add');
-  if(saleBtn && !saleBtn.dataset.checked){
-    saleBtn.dataset.checked = "1";
-    saleBtn.addEventListener('click', e=>{
-      if(saleDate && !saleDate.value){
-        alert('Please select Sale Date');
-        e.stopImmediatePropagation();
-        return false;
-      }
-    }, true);
+    const btn = document.getElementById(buttonId);
+    if (btn && !btn.dataset.checked){
+      btn.dataset.checked = "1";
+      btn.addEventListener('click', e=>{
+        const d2 = document.getElementById(inputId);
+        if (d2 && !d2.value){
+          alert(message);
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          return false;
+        }
+      }, true);
+    }
   }
+
+  // Sale
+  wireDate('sale_date', 'sale_add', 'Please select Sale Date');
 
   // Purchase
-  const piDate = document.getElementById('pi_date');
-  if(piDate && !piDate.value) piDate.value = today;
-
-  const piBtn = document.getElementById('pi_add');
-  if(piBtn && !piBtn.dataset.checked){
-    piBtn.dataset.checked = "1";
-    piBtn.addEventListener('click', e=>{
-      if(piDate && !piDate.value){
-        alert('Please select Purchase Date');
-        e.stopImmediatePropagation();
-        return false;
-      }
-    }, true);
-  }
+  wireDate('pi_date', 'pi_add', 'Please select Purchase Date');
 
   // Credit / Refund
-  const crDate = document.getElementById('cr_date');
-  if(crDate && !crDate.value) crDate.value = today;
+  wireDate('cr_date', 'cr_add', 'Please select Credit / Refund Date');
 
-  const crBtn = document.getElementById('cr_add');
-  if(crBtn && !crBtn.dataset.checked){
-    crBtn.dataset.checked = "1";
-    crBtn.addEventListener('click', e=>{
-      if(crDate && !crDate.value){
-        alert('Please select Credit / Refund Date');
-        e.stopImmediatePropagation();
-        return false;
-      }
-    }, true);
-  }
+  // 🔹 Expenses
+  wireDate('e_date', 'e_add', 'Please select Expense Date');
+
+  // 🔹 Showroom
+  wireDate('s_date', 's_add', 'Please select Showroom Date');
+
+  // 🔹 Customer Complaint
+  wireDate('comp_date', 'comp_add', 'Please select Complaint Date');
 }
 
 // Run repeatedly because forms are dynamic
