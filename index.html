@@ -3088,8 +3088,22 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
     saveDB(); try{renderAlertBell();}catch(e){}; rows(); wrap.querySelector('#e_type').value=''; wrap.querySelector('#e_amt').value=''; wrap.querySelector('#e_note').value=''; hint();
   };
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
-    if(act==='del'){ if(!canAction('del')) return alert('No permission'); const delE=db.vehicleExpenses.find(x=>x.id===id); if(!confirm('Delete expense?')) return; db.vehicleExpenses=db.vehicleExpenses.filter(x=>x.id!==id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','vehicleExpense',id,delE?delE.type+' '+delE.amount:''); rows(); hint(); }
-    else if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const e=db.vehicleExpenses.find(x=>x.id===id); editId=id; const v=db.vehicles.find(x=>x.id===e.vehicleId)||{}; wrap.querySelector('#e_vehicle').value=(v.reg||'').toUpperCase(); wrap.querySelector('#e_date').value=e.date; wrap.querySelector('#e_type').value=e.type||''; wrap.querySelector('#e_method').value=e.method||'bank'; wrap.querySelector('#e_amt').value=e.amount||0; wrap.querySelector('#e_note').value=e.note||''; document.getElementById('app').scrollIntoView({ behavior: 'smooth' });}
+  if(act==='del'){ 
+    if(!canAction('del')) return alert('No permission'); 
+    const delE = db.vehicleExpenses.find(x=>x.id===id); 
+    if(!confirm('Delete expense?')) return; 
+
+    // track vehicle expense deletion
+    markDeleted('vehicleExpenses', id);
+
+    db.vehicleExpenses = db.vehicleExpenses.filter(x=>x.id!==id); 
+    saveDB(); 
+    try{renderAlertBell();}catch(e){}; 
+    addAudit('delete','vehicleExpense',id,delE?delE.type+' '+delE.amount:''); 
+    rows(); 
+    hint();
+  }
+  else if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const e=db.vehicleExpenses.find(x=>x.id===id); editId=id; const v=db.vehicles.find(x=>x.id===e.vehicleId)||{}; wrap.querySelector('#e_vehicle').value=(v.reg||'').toUpperCase(); wrap.querySelector('#e_date').value=e.date; wrap.querySelector('#e_type').value=e.type||''; wrap.querySelector('#e_method').value=e.method||'bank'; wrap.querySelector('#e_amt').value=e.amount||0; wrap.querySelector('#e_note').value=e.note||''; document.getElementById('app').scrollIntoView({ behavior: 'smooth' });}
   });
   function hint(){ const bal=calcBalances(); wrap.querySelector('#e_totHint').textContent='Live balance after expenses — Bank: '+fmtMoney(bal.bank)+' | Cash: '+fmtMoney(bal.cash); }
   hint();
@@ -3748,23 +3762,32 @@ function viewSales(){
   wrap.querySelector('#auto_balance').onclick=()=>{ const {price,dep,cash,card,bank,px}=getNums(); const paid=dep+cash+card+bank+px; const fin=Math.max(0,price-paid); wrap.querySelector('#sale_fin').value=fin; updateWarn(); };
 
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b)return; const s=db.sales.find(x=>x.id===b.dataset.id);
-    if(b.dataset.act==='del'){ if(!canAction('del')) return alert('No permission'); if(!confirm('Delete sale? Vehicle will go back to stock.')) return; if(s){ 
-    // Also delete any associated part-ex vehicle
-    const pxVehicle = (db.vehicles||[]).find(v => v.originalSaleId === s.id);
-    if(pxVehicle) {
-      db.vehicles = db.vehicles.filter(v => v.id !== pxVehicle.id);
-      db.vehicleExpenses = db.vehicleExpenses.filter(e => e.vehicleId !== pxVehicle.id);
+    if(b.dataset.act==='del'){ if(!canAction('del')) return alert('No permission');
+    if(!confirm('Delete this sale? Vehicle will go back to stock.')) return; 
+    if(s){ 
+      // Also delete any associated part-ex vehicle
+      const pxVehicle = (db.vehicles||[]).find(v => v.originalSaleId === s.id);
+      if(pxVehicle) {
+        // track PX vehicle deletion
+        markDeleted('vehicles', pxVehicle.id);
+        db.vehicles = db.vehicles.filter(v => v.id !== pxVehicle.id);
+        db.vehicleExpenses = db.vehicleExpenses.filter(e => e.vehicleId !== pxVehicle.id);
+      }
+
+      const v = db.vehicles.find(x=>x.id===s.vehicleId); 
+      if(v) v.status = 'for sale'; 
+
+      // track sale deletion
+      markDeleted('sales', s.id);
+      db.sales = db.sales.filter(x=>x.id!==s.id); 
+
+      saveDB();
+      try{renderAlertBell();}catch(e){}; 
+      addAudit('delete','sale',s.id,(v?v.reg:'')+' inv '+(s.invNo||'') + (pxVehicle ? ' and PX ' + pxVehicle.reg : '')); 
+      rows(); 
+    }
     }
   
-    const v=db.vehicles.find(x=>x.id===s.vehicleId); 
-    if(v) v.status='for sale'; 
-    db.sales=db.sales.filter(x=>x.id!==s.id); 
-    saveDB(); 
-    try{renderAlertBell();}catch(e){}; 
-    addAudit('delete','sale',s.id,(v?v.reg:'')+' inv '+(s.invNo||'') + (pxVehicle ? ' and PX ' + pxVehicle.reg : '')); 
-    rows(); 
-    } }
-
     else if(b.dataset.act==='edit'){ 
       if(!canAction('edit')) return alert('No permission'); 
       editId = s.id; 
@@ -4539,9 +4562,13 @@ function viewCredit(){
 
       // Also delete linked adjustment expense (if any)
       if (delCr && delCr.costAdjustExpenseId) {
+        // track vehicle expense deletion
+        markDeleted('vehicleExpenses', delCr.costAdjustExpenseId);
         db.vehicleExpenses = (db.vehicleExpenses||[]).filter(e => e.id !== delCr.costAdjustExpenseId);
       }
 
+      // track credit deletion
+      markDeleted('credits', id);
       db.credits = (db.credits||[]).filter(x=>x.id!==id);
 
       saveDB();
@@ -4986,13 +5013,24 @@ function viewDirectors(){ if(!canTab('Directors')) return document.createElement
   const sel=()=>wrap.querySelector('#d_sel');
   
   // Delete selected director
-  var __del=wrap.querySelector('#d_delbtn'); if(__del) __del.onclick=()=>{
-    const i=Number(sel().value||0); const p=(db.partners||[])[i]; if(!p) return;
+  var __del=wrap.querySelector('#d_delbtn'); 
+  if(__del) __del.onclick=()=>{
+    const i=Number(sel().value||0); 
+    const p=(db.partners||[])[i]; 
+    if(!p) return;
     if(!confirm('Delete director \"'+(p.name||'')+'\"? This will remove their record.')) return;
+
+    // track director deletion
+    markDeleted('partners', p.id);
+
     (db.partners||[]).splice(i,1);
-    saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','director',p.id,(p.name||'')); setTab('Directors');
+    saveDB(); 
+    try{renderAlertBell();}catch(e){}; 
+    addAudit('delete','director',p.id,(p.name||'')); 
+    setTab('Directors');
   };
-function renderBox(){ const i=Number(sel().value||0); const p=db.partners[i]; if(!p){ wrap.querySelector('#d_box').innerHTML=''; return; }
+
+  function renderBox(){ const i=Number(sel().value||0); const p=db.partners[i]; if(!p){ wrap.querySelector('#d_box').innerHTML=''; return; }
     const tx=(p.tx||[]).map(t=>`<tr><td>${ddmmyyyy(t.date||'')}</td><td>${t.type}</td><td>${t.method||'bank'}</td><td class="right">${fmtMoney(t.amount)}</td><td>${t.note||''}</td><td>${canAction('edit')?`<button data-act="edit" data-id="${t.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${t.id}">Delete</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6" class="small">No transactions</td></tr>';
     wrap.querySelector('#d_box').innerHTML=`<div class="row"><input id="d_date" type="date"><select id="d_type"><option value="invest">invest</option><option value="withdraw">withdraw</option><option value="profit">profit</option></select><select id="d_method"><option>bank</option><option>cash</option></select><input id="d_amt" type="number" placeholder="Amount"><input id="d_note" placeholder="Note"><button id="d_add" class="primary">Add / Update</button></div>
     <div class="row small"><b>Balance:</b> ${fmtMoney(p.balance||0)}</div><table class="table" style="margin-top:10px"><thead><tr><th>Date</th><th>Type</th><th>Method</th><th class="right">Amount</th><th>Note</th><th>Actions</th></tr></thead><tbody id="d_body">${tx}</tbody></table>`;
@@ -5187,7 +5225,10 @@ function viewInvestors(){ if(!canTab('Investors')) return document.createElement
       
       if(!confirm('Delete investor \"' + (inv.name||'') + '\"?')) return;
       
-      db.investors = (db.investors||[]).filter(x => x !== inv);
+      // track investor deletion
+      markDeleted('investors', id);
+
+      db.investors = (db.investors || []).filter(x => x.id !== id);
       saveDB(); 
       try{renderAlertBell();}catch(e){}
       addAudit('delete','investor',inv.id,(inv.name||''));
@@ -6096,7 +6137,23 @@ function viewTodo(){ if(!canTab('To-Do')) return document.createElement('div'); 
   rows();
   wrap.querySelector('#t_add').onclick=()=>{ if(!canAction('add')) return alert('No permission'); const t={id:uid(),date:document.getElementById('t_date').value,text:document.getElementById('t_text').value.trim(),assignedTo:document.getElementById('t_user').value,entity:document.getElementById('t_entity').value,entityId:document.getElementById('t_eid').value.trim(),done:false}; if(!t.text) return alert('Task text required'); (db.todo=db.todo||[]).unshift(t); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','todo',t.id,t.text); rows(); document.getElementById('t_text').value=''; };
   wrap.addEventListener('change',(ev)=>{ const cb=ev.target.closest('input[type=checkbox][data-act=toggle]'); if(!cb) return; const t=(db.todo||[]).find(x=>x.id===cb.dataset.id); if(!t) return; t.done=cb.checked; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','todo',t.id,t.text+' done='+t.done); });
-  wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; if(b.dataset.act==='del'){ if(!canAction('del')) return alert('No permission'); db.todo=db.todo.filter(x=>x.id!==b.dataset.id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','todo',b.dataset.id,''); rows(); } });
+  wrap.addEventListener('click',(ev)=>{ 
+  const b=ev.target.closest('button'); 
+  if(!b) return; 
+    if(b.dataset.act==='del'){ 
+      if(!canAction('del')) return alert('No permission'); 
+
+      const id = b.dataset.id;
+      // track todo deletion
+      markDeleted('todo', id);
+    
+      db.todo = db.todo.filter(x=>x.id!==id); 
+      saveDB(); 
+      try{renderAlertBell();}catch(e){}; 
+      addAudit('delete','todo',id,''); 
+      rows(); 
+    } 
+  });
   return wrap;
 }
 
@@ -7013,7 +7070,11 @@ function viewComplaints(){
     else if(act === 'del') {
       if(!canAction('del')) return alert('No permission');
       if(!confirm('Delete this complaint?')) return;
+
+      // track complaint deletion
+      markDeleted('complaints', id);
       db.complaints = (db.complaints||[]).filter(x => x.id !== id);
+
       saveDB();
       try{renderAlertBell();}catch(e){}
       addAudit('delete', 'complaint', id, comp.customer || '');
@@ -7037,7 +7098,7 @@ function viewUsers(){ if(!canTab('Users')) return document.createElement('div');
     (db.users||[]).forEach(u=>{ const key=(u.username||u.name||'')+'|'+(u.role||''); if(!seen.has(key)){ seen.add(key); out.push(u); }});
     if(out.length !== (db.users||[]).length){ db.users=out; saveDB(); }
   })();
-const body=wrap.querySelector('#u_body'); (db.users||[]).forEach(u=>{ const p=normalizePerms(u.perms);
+    const body=wrap.querySelector('#u_body'); (db.users||[]).forEach(u=>{ const p=normalizePerms(u.perms);
       const tabChecks=tabs.map(t=>`<label class="small" style="display:inline-block;min-width:110px"><input data-user="${u.id}" data-k="tab" data-tab="${t}" type="checkbox" ${p.tabs[t]?'checked':''}> ${t}</label>`).join(' ');
       const actionChecks=['view','add','edit','del'].map(a=>`<label class="small"><input data-user="${u.id}" data-k="act" data-act="${a}" type="checkbox" ${p.actions[a]?'checked':''}> ${a}</label>`).join(' ');
       const extraChecks=`<label class="small"><input data-user="${u.id}" data-k="profit" type="checkbox" ${p.profit?'checked':''}> can see profit</label> <label class="small"><input data-user="${u.id}" data-k="settings" type="checkbox" ${p.settings?'checked':''}> can edit settings</label>`;
@@ -7048,7 +7109,21 @@ const body=wrap.querySelector('#u_body'); (db.users||[]).forEach(u=>{ const p=no
     wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const u=(db.users||[]).find(x=>x.id===b.dataset.id);
       if(b.dataset.act==='chpass'){ const p1=prompt("New password for '"+u.username+"':"); if(p1===null) return; if(!p1.trim()) return alert('Password cannot be empty'); const p2=prompt('Confirm new password:'); if(p2===null) return; if(p1!==p2) return alert('Passwords do not match'); u.password=p1; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','userPass',u.id,'Admin changed for '+u.username); alert('Password updated for '+u.username); return; }
       if(b.dataset.act==='reset'){ u.password='1234'; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','user',u.id,u.username+' reset'); alert("Password reset to '1234'"); return; }
-      if(b.dataset.act==='del'){ if(u.username==='admin') return alert('Cannot delete admin'); db.users=db.users.filter(x=>x.id!==u.id); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('delete','user',u.id,u.username); renderTable(); return; } });
+      
+      if(b.dataset.act==='del'){ 
+        if(u.username==='admin') return alert('Cannot delete admin'); 
+
+        // track user deletion
+        markDeleted('users', u.id);
+
+        db.users = db.users.filter(x=>x.id!==u.id); 
+        saveDB(); 
+        try{renderAlertBell();}catch(e){}; 
+        addAudit('delete','user',u.id,u.username); 
+        renderTable(); 
+        return; 
+      }
+    });
     wrap.querySelector('#u_add').onclick=()=>{ const name=wrap.querySelector('#u_name').value.trim(); if(!name) return alert('Username required'); const u={id:uid(),username:name,password:(wrap.querySelector('#u_pass').value||'1234'),role:wrap.querySelector('#u_role').value,perms:defaultPerms()}; (db.users=db.users||[]).push(u); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','user',u.id,u.username); renderTable(); };
   }
   renderTable(); return wrap;
