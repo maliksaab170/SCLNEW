@@ -3262,6 +3262,7 @@ function viewSales(){
     <label>Card £<input id="sale_card" type="number" placeholder="0"></label>
     <label>Bank Transfer £<input id="sale_bank" type="number" placeholder="0"></label>
     <label>Finance £<input id="sale_fin" type="number" placeholder="0"></label>
+    <label>Finance Admin Fee £<input id="sale_finFee" type="number" placeholder="0"></label>
     <label>PX Allowance £<input id="sale_pxAllowance" type="number" placeholder="0"></label>
     <button id="auto_balance">Auto-balance</button><span id="sale_warn" class="small"></span>
   </div>
@@ -3430,7 +3431,8 @@ function viewSales(){
       '#sale_pxAllowance', '#sale_partex', '#sale_pxReg', '#sale_pxMake',
       '#sale_pxModel', '#sale_finCo', '#sale_agree', '#sale_deliver',
       '#sale_keys', '#sale_mot', '#sale_sh', '#sale_invNo', '#sale_warrantyType',
-      '#sale_warrantyProvider', '#sale_warrantyMonths', '#sale_warrantyPolicy'
+      '#sale_warrantyProvider', '#sale_warrantyMonths', '#sale_warrantyPolicy',
+      '#sale_finFee'
     ];
     
     fields.forEach(selector => {
@@ -3809,6 +3811,7 @@ function viewSales(){
       wrap.querySelector('#sale_card').value      = s.card || 0; 
       wrap.querySelector('#sale_bank').value      = s.bank || 0; 
       wrap.querySelector('#sale_fin').value       = s.finance || 0;
+      wrap.querySelector('#sale_finFee').value    = s.financeAdminFee || 0;
 
       wrap.querySelector('#sale_partex').value    = s.partex || ''; 
       wrap.querySelector('#sale_pxReg').value     = s.pxReg || ''; 
@@ -3924,6 +3927,8 @@ function viewSales(){
     card: Number(wrap.querySelector('#sale_card').value || 0),
     bank: Number(wrap.querySelector('#sale_bank').value || 0),
     finance: Number(wrap.querySelector('#sale_fin').value || 0),
+    financeAdminFee: Number(wrap.querySelector('#sale_finFee')?.value || 0),
+    financeAdminFeeExpenseId: base.financeAdminFeeExpenseId || '',
     partex: wrap.querySelector('#sale_partex').value.trim(),
     pxReg: (wrap.querySelector('#sale_pxReg').value || '').trim().toUpperCase(),
     pxMake: wrap.querySelector('#sale_pxMake').value.trim(),
@@ -3943,6 +3948,47 @@ function viewSales(){
     warrantyMonths:    Number((wrap.querySelector('#sale_warrantyMonths')?.value || 0)),
     warrantyPolicy:    (wrap.querySelector('#sale_warrantyPolicy')?.value || '').trim()
   };
+
+  // ✅ Finance admin fee -> store as a vehicle expense so profit is correct
+  (function applyFinanceAdminFeeExpense(){
+    const fee = Number(s.financeAdminFee || 0);
+    if (!s.vehicleId) return;
+
+    // If fee is 0, remove previously linked expense (if any)
+    if (fee <= 0) {
+      if (s.financeAdminFeeExpenseId) {
+        // track deletion if you’re using multi-PC delete sync
+        if (typeof markDeleted === 'function') markDeleted('vehicleExpenses', s.financeAdminFeeExpenseId);
+
+        db.vehicleExpenses = (db.vehicleExpenses || []).filter(e => e.id !== s.financeAdminFeeExpenseId);
+        s.financeAdminFeeExpenseId = '';
+      }
+      return;
+    }
+
+    // Create or update the linked expense
+    let exp = (db.vehicleExpenses || []).find(e => e.id === s.financeAdminFeeExpenseId);
+    if (!exp) {
+      exp = {
+        id: uid(),
+        vehicleId: s.vehicleId,
+        date: s.date || new Date().toISOString().slice(0,10),
+        type: 'Finance admin fee',
+        method: 'bank',
+        amount: fee,
+        note: `Finance company: ${s.financeCompany || ''} • Inv: ${s.invNo || ''}`
+      };
+      (db.vehicleExpenses = db.vehicleExpenses || []).unshift(exp);
+      s.financeAdminFeeExpenseId = exp.id;
+    } else {
+      exp.vehicleId = s.vehicleId;
+      exp.date = s.date || exp.date;
+      exp.type = 'Finance admin fee';
+      exp.method = exp.method || 'bank';
+      exp.amount = fee;
+      exp.note = `Finance company: ${s.financeCompany || ''} • Inv: ${s.invNo || ''}`;
+    }
+  })();
 
   // Auto-set warranty expiry based on sale date + months (for quick reference)
   (function(){
@@ -4039,7 +4085,7 @@ function viewSales(){
       ensurePartExVehicle(s, vStat);
     }
   }
-
+  
   saveDB(); 
   try{renderAlertBell();}catch(e){}; 
   rows(); 
