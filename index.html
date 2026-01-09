@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Star Cars — v48 Upgraded</title>
@@ -5792,7 +5793,7 @@ function viewReports(){
   <button id="r_run">Run</button><button id="r_export">Export CSV</button></div><div id="r_out" class="small"></div>
   <details id="r_fold"><summary>Show audit entries (<span id="r_count">0</span>)</summary><div id="r_tblwrap"><table class="table" style="margin-top:8px"><thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody id="r_body"></tbody></table></div></details></div>
 
-  <div class="card"><h3>Monthly Summary</h3><div class="row"><input id="rm_month" type="month" value="${new Date().toISOString().slice(0,7)}"><label class="small"><input type="checkbox" id="rm_cover"> Pretend showroom expenses covered by monthly profit</label><button id="rm_go">Calculate</button></div><div id="rm_box"></div></div>
+  <div class="card"><h3>Monthly Summary</h3><div class="row"><input id="rm_month" type="month" value="${new Date().toISOString().slice(0,7)}"><label class="small"><input type="checkbox" id="rm_cover"> Pretend showroom expenses covered by monthly profit</label><button id="rm_go">Calculate</button><button id="rm_export_xlsx">Export Excel (Month + Sold cars)</button></div><div id="rm_box"></div></div>
 
   <div class="card"><h3>Month Close (Directors & Investors)</h3>
     <div class="row"><input id="mc_month" type="month" value="${new Date().toISOString().slice(0,7)}"> <button id="mc_prev">Preview</button><button id="mc_post" class="primary">Post</button><button id="mc_export">Export PDF</button><span id="mc_warn" class="small" style="margin-left:8px;color:#ffb3b3"></span></div><div id="mc_box" class="small"></div>
@@ -5834,7 +5835,10 @@ function viewReports(){
     
     const cover = wrap.querySelector('#rm_cover').checked; 
     const showExpShown = cover ? 0 : showExp; 
-    const net = sales - purchases - vehExp - showExpShown;
+
+    // ✅ Net Profit/Loss (Month Close method)
+    const c = calcMonthClose(k);
+    const netMonthClose = Number(c.remainder || 0);
     
     const box=wrap.querySelector('#rm_box'); 
     box.innerHTML='<table class="table"><tbody>'
@@ -5844,8 +5848,250 @@ function viewReports(){
       +'<tr><th>Total Vehicle Purchases (purchased this month)</th><td class="right">'+fmtMoney(purchases)+'</td></tr>'
       +'<tr><th>Vehicle Expenses (this month)</th><td class="right">'+fmtMoney(vehExp)+'</td></tr>'
       +'<tr><th>Showroom Expenses '+(cover?'(covered by profit, shown as £0)':'')+'</th><td class="right">'+fmtMoney(showExpShown)+'</td></tr>'
-      +'<tr><th>Net Profit/Loss</th><td class="right">'+fmtMoney(net)+'</td></tr>'
+      +'<tr><th>Net Profit/Loss</th><td class="right">'+fmtMoney(netMonthClose)+'</td></tr>'
       +'</tbody></table>';
+  };
+
+  wrap.querySelector('#rm_export_xlsx').onclick = ()=>{
+    const k = (wrap.querySelector('#rm_month').value || '').slice(0,7);
+    if(!k) return alert('Pick a month');
+
+    if(!window.XLSX) return alert('Excel library not loaded. Add the SheetJS <script> in <head>.');
+
+    const c = calcMonthClose(k);
+
+    // ---------- Sheet 1: Month Close Summary ----------
+    const summaryRows = [
+      ['Month', k],
+      ['Sold cars count', c.items.length],
+      ['Gross profit on sold vehicles', c.totalGross],
+      ['Mgmt flat (£175) total', c.totalFlat],
+      ['Mgmt 20% total', c.totalPct],
+      ['Investor 30% total', c.totalInvestor],
+      ['Post-sale expenses total', c.postExpTotal],
+      ['Remainder before showroom', c.remainderBeforeShowroom],
+      ['Showroom expenses (net) this month', c.showroomMonthTotal],
+      ['NET Profit/Loss (Month Close remainder)', c.remainder],
+      ['Directors share each', (c.directorEach ?? c.directorHalf)]
+    ];
+
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+
+    // ---------- Sheet 2: Sold Cars (with Total Cost) ----------
+    const soldHeader = [
+      'Sale Date','Inv No','Reg','Make','Model','Owner Type','Investor',
+      'Sale Price','Purchase','Vehicle Expenses','Total Cost','Gross',
+      'Mgmt Flat','Mgmt 20%','Investor 30%','Remainder After Investor'
+    ];
+
+    const soldRows = c.items.map(x=>{
+      const v = x.v || {};
+      const s = x.s || {};
+      const purchase = Number(v.purchase || 0);
+
+      // Recalculate expenses total same way Month Close does:
+      const vexpTotal = (db.vehicleExpenses||[])
+        .filter(e=>e.vehicleId===s.vehicleId)
+        .reduce((t,e)=>t + Number(e.amount||0), 0);
+
+      const totalCost = purchase + vexpTotal;
+      const gross = Number(s.salePrice||0) - totalCost;
+
+      return [
+        s.date || '',
+        s.invNo || '',
+        v.reg || '',
+        v.make || '',
+        v.model || '',
+        v.ownerType || '',
+        x.investorName || '',
+        Number(s.salePrice||0),
+        purchase,
+        vexpTotal,
+        totalCost,
+        gross,
+        Number(x.mgmtFlat||0),
+        Number(x.mgmtPct||0),
+        Number(x.investorShare||0),
+        Number(x.afterInvestor||0)
+      ];
+    });
+
+    const wsSold = XLSX.utils.aoa_to_sheet([soldHeader, ...soldRows]);
+
+    // ---------- Sheet 3 (optional): Post-sale expenses ----------
+    const postHeader = ['Expense Date','Type','Amount','Vehicle Reg','Note'];
+    const postRows = (c.postExp||[]).map(pe=>[
+      pe.date||'',
+      pe.type||'',
+      Number(pe.amount||0),
+      pe.reg||'',
+      pe.note||''
+    ]);
+    const wsPost = XLSX.utils.aoa_to_sheet([postHeader, ...postRows]);
+
+    // ---------- Sheet 4: Cashflow Summary (old Monthly Summary style) ----------
+    const monthStart = k + '-01';
+    const monthEnd = (function(){
+      const [yy,mm]=k.split('-').map(Number);
+      const d=new Date(yy, mm, 0); // last day of month
+      return d.toISOString().slice(0,10);
+    })();
+
+    const inMonth = d => (d||'') >= monthStart && (d||'') <= monthEnd;
+
+    // totals (cashflow style)
+    const salesCash = (db.sales||[])
+      .filter(s=> inMonth(s.date))
+      .reduce((t,s)=> t + Number(s.salePrice||0), 0);
+
+    const purchasesCash = (db.vehicles||[])
+      .filter(v=> inMonth(v.purchaseDate))
+      .reduce((t,v)=> t + Number(v.purchase||0), 0);
+
+    const vehExpCash = (db.vehicleExpenses||[])
+      .filter(e=> inMonth(e.date))
+      .reduce((t,e)=> t + Number(e.amount||0), 0);
+
+    // showroom expenses (net of credit notes) - same method your summary uses
+    const showExpCash = ((db.showroomExpenses||[])
+      .filter(e=> inMonth(e.date))
+      .reduce((t,e)=> t + Number(e.amount||0), 0))
+      - ((db.showroomExpenseCredits||[])
+        .filter(c=> inMonth(c.date))
+        .reduce((t,c)=> t + Number(c.amount||0), 0));
+
+    const netCashflow = salesCash - purchasesCash - vehExpCash - showExpCash;
+
+    // month close (posting) profit
+    const netMonthClose = Number(c.remainder || 0);
+
+    const cashflowRows = [
+      ['Month', k],
+      ['Sales total (invoice values)', salesCash],
+      ['Purchases total (cars bought this month)', purchasesCash],
+      ['Vehicle expenses total (dated this month)', vehExpCash],
+      ['Showroom expenses net (dated this month)', showExpCash],
+      ['NET (Cashflow method)', netCashflow],
+      [''],
+      ['NET (Month Close / Posting method)', netMonthClose],
+      ['Note', 'Cashflow includes stock purchases not yet sold. Month Close matches the posting screen.']
+    ];
+
+    const wsCash = XLSX.utils.aoa_to_sheet(cashflowRows);
+
+    // ---------- Sheet 5: Transactions – This Month ----------
+    const txHeader = ['Date','Type','Category','Reg','Inv No','Counterparty','Method','Amount','Note','ID'];
+
+    const txRows = [];
+
+    // SALES (money in)
+    (db.sales||[])
+      .filter(s=> inMonth(s.date))
+      .forEach(s=>{
+        const v = (db.vehicles||[]).find(x=>x.id===s.vehicleId) || {};
+        txRows.push([
+          s.date || '',
+          'IN',
+          'Sale',
+          v.reg || '',
+          s.invNo || '',
+          s.customer || '',
+          (s.finance>0 ? 'finance' : (s.method || '')),
+          Number(s.salePrice||0),
+          (s.financeCompany ? ('Finance: ' + s.financeCompany) : ''),
+          s.id || ''
+        ]);
+      });
+
+    // PURCHASES (money out)
+    (db.vehicles||[])
+      .filter(v=> inMonth(v.purchaseDate))
+      .forEach(v=>{
+        txRows.push([
+          v.purchaseDate || '',
+          'OUT',
+          'Purchase',
+          v.reg || '',
+          v.purchaseInv || '',
+          v.supplier || '',
+          v.purchaseMethod || '',
+          Number(v.purchase||0),
+          v.purchaseNote || '',
+          v.id || ''
+        ]);
+      });
+
+    // VEHICLE EXPENSES (money out)
+    (db.vehicleExpenses||[])
+      .filter(e=> inMonth(e.date))
+      .forEach(e=>{
+        const v = (db.vehicles||[]).find(x=>x.id===e.vehicleId) || {};
+        txRows.push([
+          e.date || '',
+          'OUT',
+          'Vehicle Expense',
+          v.reg || '',
+          '',
+          e.supplier || '',
+          e.method || '',
+          Number(e.amount||0),
+          e.note || e.type || '',
+          e.id || ''
+        ]);
+      });
+
+    // SHOWROOM EXPENSES (money out)
+    (db.showroomExpenses||[])
+      .filter(e=> inMonth(e.date))
+      .forEach(e=>{
+        txRows.push([
+          e.date || '',
+          'OUT',
+          'Showroom Expense',
+          '',
+          e.invNo || '',
+          e.supplier || '',
+          e.method || '',
+          Number(e.amount||0),
+          e.note || e.type || '',
+          e.id || ''
+        ]);
+      });
+
+    // SHOWROOM EXPENSE CREDITS (money in / negative expense)
+    (db.showroomExpenseCredits||[])
+      .filter(cn=> inMonth(cn.date))
+      .forEach(cn=>{
+        txRows.push([
+          cn.date || '',
+          'IN',
+          'Showroom Credit Note',
+          '',
+          cn.invNo || '',
+          cn.supplier || '',
+          cn.method || '',
+          -Math.abs(Number(cn.amount||0)),   // negative
+          cn.note || cn.type || '',
+          cn.id || ''
+        ]);
+      });
+
+    // Sort by date (then by category)
+    txRows.sort((a,b)=> (a[0]||'').localeCompare(b[0]||'') || (a[2]||'').localeCompare(b[2]||''));
+
+    const wsTx = XLSX.utils.aoa_to_sheet([txHeader, ...txRows]);
+
+    // Build workbook
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Month Close Summary');
+    XLSX.utils.book_append_sheet(wb, wsSold, 'Sold Cars (Total Cost)');
+    XLSX.utils.book_append_sheet(wb, wsPost, 'Post-Sale Expenses');
+    XLSX.utils.book_append_sheet(wb, wsCash, 'Cashflow Summary');
+    XLSX.utils.book_append_sheet(wb, wsTx, 'Transactions - This Month');
+
+    // Download
+    XLSX.writeFile(wb, `StarCars_Report_${k}.xlsx`);
   };
 
   /* Month Close */
@@ -5901,9 +6147,22 @@ function viewReports(){
 
     const remainderBeforeShowroom = items.reduce((t,x)=>t+x.afterInvestor,0) - postExpTotal;
     const remainder = remainderBeforeShowroom - showroomMonthTotal;
-    const directorHalf = remainder/2;
-    return {items,totalGross,totalFlat,totalPct,totalInvestor,remainder,directorHalf,postExp,postExpTotal,showroomMonthTotal,remainderBeforeShowroom};
-  }
+
+    // ✅ count directors properly (unique non-empty names)
+    const norm = s => String(s||'').trim().toLowerCase();
+    const directorsUnique = (db.partners||[])
+      .filter(p => norm(p && p.name))
+      .filter((p,i,arr)=> arr.findIndex(x => norm(x.name) === norm(p.name)) === i);
+
+    const directorCount = Math.max(1, directorsUnique.length);
+    const directorEach = remainder / directorCount;
+
+    return {
+      items,totalGross,totalFlat,totalPct,totalInvestor,
+      remainder,directorEach,directorCount,
+      postExp,postExpTotal,showroomMonthTotal,remainderBeforeShowroom
+    }};
+
     function purgeMonthClose(k){
     const marker='MonthClose '+k;
     // Remove prior director profit entries for this month
@@ -5935,7 +6194,7 @@ function alreadyPosted(k){
       + 'Investor 30% total: '+fmtMoney(c.totalInvestor)+'<br>'
       + 'Showroom expenses this month (net): ' + fmtMoney(c.showroomMonthTotal) + '<br>'
       + 'Post-sale expenses (this month on earlier sales): '+fmtMoney(c.postExpTotal)+'<br>'
-      + '<b>Remainder for directors (50/50):</b> '+fmtMoney(c.remainder)+' ⇒ '+fmtMoney(c.directorHalf)+' each<br><br>'
+      + '<b>Remainder for directors:</b> ' + fmtMoney(c.remainder) + ' ⇒ ' + fmtMoney(c.directorEach) + ' each (Directors: ' + c.directorCount + ')<br><br>'
       + '<div class="card small" style="margin:8px 0;padding:8px">'
       + '<b>Breakdown</b><br>'
       + '<table class="table"><tbody>'
@@ -5986,14 +6245,28 @@ function alreadyPosted(k){
       inv.balance+=(+amt||0);
     });
 
-    // 3) Directors single entry each (50/50)
+    // 3) Directors single entry each (split by number of directors)
     const marker='MonthClose '+k;
-    (db.partners||[]).forEach(p=>{
-      const amt=c.directorHalf;
-      p.tx=p.tx||[]; p.tx.unshift({id:mcId(k, 'director_profit', p.id, '', ''),date:lastDayOfMonth(k),type:'profit',method:'bank',amount:amt,note:marker});
-      p.balance=(p.tx||[]).reduce((bal,x)=> bal+((x.type==='invest'||x.type==='profit')?+x.amount:-x.amount),0);
-    });
 
+    const norm = s => String(s||'').trim().toLowerCase();
+    const directorsUnique = (db.partners||[])
+      .filter(p => norm(p && p.name))
+      .filter((p,i,arr)=> arr.findIndex(x => norm(x.name) === norm(p.name)) === i);
+
+    directorsUnique.forEach(p=>{
+      const amt = c.directorEach;
+      p.tx = p.tx || [];
+      p.tx.unshift({
+        id: mcId(k, 'director_profit', p.id, '', ''),
+        date: lastDayOfMonth(k),
+        type: 'profit',
+        method: 'bank',
+        amount: amt,
+        note: marker
+      });
+      p.balance = (p.tx||[]).reduce((bal,x)=> bal + ((x.type==='invest'||x.type==='profit')? +x.amount : -x.amount), 0);
+    });
+    
     saveDB(); try{renderAlertBell();}catch(e){}; addAudit('monthClose','reports','monthClose',marker); alert('Month close posted.');
     previewClose();
   }
