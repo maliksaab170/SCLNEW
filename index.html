@@ -358,6 +358,22 @@ function lastDayOfMonth(ym) {
   return d.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+// ===== Option 8 helpers =====
+function findVehicleByReg(reg){
+  reg = String(reg||'').trim().toUpperCase();
+  if(!reg) return null;
+  return (db.vehicles||[]).find(v => String(v.reg||'').trim().toUpperCase() === reg) || null;
+}
+
+function vehicleTotalCostByVehicleId(vehicleId){
+  const v = (db.vehicles||[]).find(x=>x.id===vehicleId) || {};
+  const purchase = Number(v.purchase||0);
+  const exp = (db.vehicleExpenses||[])
+    .filter(e => e.vehicleId === vehicleId)
+    .reduce((t,e)=> t + Number(e.amount||0), 0);
+  return { purchase, exp, total: purchase + exp };
+}
+
 function mcId(ym, type, a, b, c) {
   // stable, deterministic IDs for MonthClose postings
   const safe = (x) => String(x || '').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,60);
@@ -3389,7 +3405,6 @@ function viewSales(){
   .map(v => `<option value="${(v.reg || '').toUpperCase()}">`)
   .join('');
 
-  
   wrap.innerHTML=`<h2>Sales</h2>
   <!-- Search and Filter Section -->
   <div class="row" style="margin-bottom: 16px; padding: 10px; background: rgba(19, 26, 43, 0.5); border-radius: 10px;">
@@ -3425,6 +3440,7 @@ function viewSales(){
     <div id="sale_vehicleInfo" class="small" style="color:#9fb4ff; margin-left:6px;">
       Select a reg to see vehicle details
     </div>
+    <div id="sale_costProfitInfo" class="small" style="color:#9fb4ff; margin-left:6px; margin-top:4px;"></div>
     <label>Sale Date<input id="sale_date" type="date"></label>
     <label>Customer Name<input id="sale_buyer" placeholder="Customer name"></label>
     <label>Customer Address<input id="sale_addr" placeholder="Address"></label>
@@ -3507,7 +3523,7 @@ function viewSales(){
         <th>Customer</th>
         <th class="right">Price</th>
         <th>Breakdown</th>
-        ${canProfit()?'<th class="right">Profit</th>':''}
+        ${canProfit()?'<th class="right">Total Cost</th><th class="right">Profit</th>':''}
         <th>Payout</th>
         <th>Actions</th>
       </tr>
@@ -3646,6 +3662,42 @@ function viewSales(){
     };
   }
 
+  // ===== Option 8: Live Cost/Profit preview on Sales form =====
+  function updateSaleCostProfitPreview(){
+    const out = wrap.querySelector('#sale_costProfitInfo');
+    if(!out) return;
+
+    const reg = wrap.querySelector('#sale_reg')?.value || '';
+    const v = findVehicleByReg(reg);
+
+    if(!v){
+      out.innerHTML = '';
+      return;
+    }
+
+    const cost = vehicleTotalCostByVehicleId(v.id);
+    const salePrice = Number(wrap.querySelector('#sale_price')?.value || 0);
+    const gross = salePrice - cost.total;
+
+    out.innerHTML =
+      `Total Cost: <b>${fmtMoney(cost.total)}</b> ` +
+      `(Purchase ${fmtMoney(cost.purchase)} + Exp ${fmtMoney(cost.exp)})` +
+      ` &nbsp; | &nbsp; Gross: <b>${fmtMoney(gross)}</b>`;
+  }
+
+  // Hook to REG + sale price inputs
+  (function(){
+    const regEl = wrap.querySelector('#sale_reg');
+    const priceEl = wrap.querySelector('#sale_price');
+
+    if(regEl) regEl.addEventListener('input', updateSaleCostProfitPreview);
+    if(regEl) regEl.addEventListener('change', updateSaleCostProfitPreview);
+    if(priceEl) priceEl.addEventListener('input', updateSaleCostProfitPreview);
+
+    // Run once on Sales tab load
+    updateSaleCostProfitPreview();
+  })();
+
   function backfillSaleDebtors(){
     let changed = false;
     (db.sales||[]).forEach(s=>{
@@ -3768,7 +3820,7 @@ function viewSales(){
     
     if (filteredSales.length === 0) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td colspan="${canProfit() ? 7 : 6}" class="small" style="text-align: center; padding: 20px;">
+      tr.innerHTML = `<td colspan="${canProfit() ? 8 : 6}" class="small" style="text-align: center; padding: 20px;">
         No sales found${currentFilter.search ? ' for "' + currentFilter.search + '"' : ''}${currentFilter.month ? ' in ' + currentFilter.month : ''}
       </td>`;
       body.appendChild(tr);
@@ -3778,7 +3830,12 @@ function viewSales(){
         const vexp = (db.vehicleExpenses||[])
           .filter(e => e.vehicleId === s.vehicleId)
           .reduce((t,x) => t + Number(x.amount||0), 0);
-        const profit = Number(s.salePrice||0) - Number(v.purchase||0) - vexp; 
+
+        const totalCost = (s.vehicleTotalCostAtSale != null && s.vehicleTotalCostAtSale !== '')
+          ? Number(s.vehicleTotalCostAtSale || 0)
+          : (Number(v.purchase||0) + vexp);
+
+        const profit = Number(s.salePrice||0) - totalCost; 
 
         const br = `£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
         const partexVehicle = (db.vehicles||[]).find(vv => vv.originalSaleId === s.id);
@@ -3818,7 +3875,7 @@ function viewSales(){
           <td>${s.buyer||''}${statusBadge}</td>
           <td class="right">${fmtMoney(s.salePrice)}</td>
           <td>${br}${partexInfo}</td>
-          ${canProfit()?('<td class="right">'+fmtMoney(profit)+'</td>'):''}
+          ${canProfit()? ('<td class="right">'+fmtMoney(totalCost)+'</td><td class="right"><b>'+fmtMoney(profit)+'</b></td>'): ''}
           <td>
             ${payoutDisplay}<br>${payoutActionBtn}</td>
             <button data-act="inv" data-id="${s.id}">Invoice</button>
@@ -4291,6 +4348,20 @@ function viewSales(){
     warrantyMonths:    Number((wrap.querySelector('#sale_warrantyMonths')?.value || 0)),
     warrantyPolicy:    (wrap.querySelector('#sale_warrantyPolicy')?.value || '').trim()
   };
+
+  // ✅ FREEZE VEHICLE COST AT TIME OF SALE
+  try {
+    const v = (db.vehicles || []).find(x => x.id === s.vehicleId) || {};
+
+    // total vehicle expenses up to that moment
+    const expTotal = (db.vehicleExpenses || [])
+      .filter(e => e.vehicleId === s.vehicleId)
+      .reduce((t, e) => t + Number(e.amount || 0), 0);
+
+    s.vehiclePurchaseAtSale = Number(v.purchase || 0);
+    s.vehicleExpensesAtSale = Number(expTotal || 0);
+    s.vehicleTotalCostAtSale = Number(s.vehiclePurchaseAtSale + s.vehicleExpensesAtSale);
+  } catch (e) {}
 
   // store paid/due/status in the sale record
   const _sum = calcSalePaymentSummary(wrap);
@@ -6274,7 +6345,10 @@ function viewReports(){
         .filter(e=>e.vehicleId===s.vehicleId)
         .reduce((t,e)=>t + Number(e.amount||0), 0);
 
-      const totalCost = purchase + vexpTotal;
+      const totalCost = (s.vehicleTotalCostAtSale != null)
+        ? Number(s.vehicleTotalCostAtSale || 0)
+        : (Number(v.purchase||0) + vexpTotal);
+
       const gross = Number(s.salePrice||0) - totalCost;
 
       return [
@@ -6541,7 +6615,8 @@ function viewReports(){
       items,totalGross,totalFlat,totalPct,totalInvestor,
       remainder,directorEach,directorCount,
       postExp,postExpTotal,showroomMonthTotal,remainderBeforeShowroom
-    }};
+    }
+  };
 
     function purgeMonthClose(k){
     const marker='MonthClose '+k;
@@ -6556,8 +6631,8 @@ function viewReports(){
       const t=String(e.type||'');
       return !(t.includes('Mgmt flat £175') || t.includes('Mgmt 20%'));
     });
-  }
-function alreadyPosted(k){
+    }
+    function alreadyPosted(k){
     // Heuristic: if both directors have a 'profit' tx on k month with same note marker, block.
     const marker='MonthClose '+k;
     const both=(db.partners||[]).filter(p=>(p.tx||[]).some(t=>t.type==='profit' && (t.note||'').includes(marker))).length>=2;
