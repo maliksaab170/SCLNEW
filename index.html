@@ -6220,6 +6220,49 @@ function viewReports(){
   
   <button id="rep_fin_unpaid">Finance Unpaid</button>
   <div id="rep_fin_unpaid_out"></div>
+
+  <div class="card">
+    <h3>Sales Insights (Accounts)</h3>
+    <div class="row">
+      <label>Month
+        <input id="si_month" type="month" value="${new Date().toISOString().slice(0,7)}">
+      </label>
+      <button id="si_run" class="primary">Run</button>
+      <button id="si_export_csv">Export CSV</button>
+    </div>
+
+    <div class="grid2" style="margin-top:10px">
+      <div class="card">
+        <h4 style="margin:0 0 8px 0">Top Make / Model</h4>
+        <div id="si_top_mm" class="small"></div>
+        <div id="si_tbl_mm"></div>
+      </div>
+
+      <div class="card">
+        <h4 style="margin:0 0 8px 0">Price Range Sold</h4>
+        <div id="si_top_price" class="small"></div>
+        <div id="si_tbl_price"></div>
+      </div>
+
+      <div class="card">
+        <h4 style="margin:0 0 8px 0">Customer Areas (Postcode Outward)</h4>
+        <div id="si_top_area" class="small"></div>
+        <div id="si_tbl_area"></div>
+      </div>
+
+      <div class="card">
+        <h4 style="margin:0 0 8px 0">Stock List “As At” Month End</h4>
+        <div class="row">
+          <button id="si_stock_run">Build Stock List</button>
+          <button id="si_stock_export_csv">Export Stock CSV</button>
+        </div>
+        <div id="si_stock_sum" class="small" style="margin-top:8px"></div>
+        <div id="si_tbl_stock" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <div id="si_debug" class="small" style="margin-top:10px"></div>
+  </div>
   `;
   
   /* Audit Log */
@@ -6274,6 +6317,315 @@ function viewReports(){
       +'<tr><th>Net Profit/Loss (Month Close method)</th><td class="right"><b>'+fmtMoney(netMonthClose)+'</b></td></tr>'
       +'</tbody></table>';
   };
+
+  (function(){
+  // Helpers
+  const num = v => Number(v || 0);
+
+  function getMonthRange(ym){
+    const start = ym + "-01";
+    const end = lastDayOfMonth(ym);          // you already have this
+    return { start, end };
+  }
+
+  function safeUpper(s){ return String(s||'').trim().toUpperCase(); }
+
+  function getPurchaseDate(v){
+    // matches your Monthly Summary logic
+    return (v && (v.purchaseDate || v.dateAdded || v.createdAt || '')) || '';
+  }
+
+  function getOutwardPostcode(address){
+    // tries to find a UK postcode in the address string and returns outward code (e.g. "E4", "IG8", "EN9")
+    const s = safeUpper(address);
+    if(!s) return '';
+    // basic UK postcode pattern: outward + inward
+    const m = s.match(/([A-Z]{1,2}\d{1,2}[A-Z]?)\s*\d[A-Z]{2}\b/);
+    return m ? m[1] : '';
+  }
+
+  function bucketPrice(p){
+    p = num(p);
+    if(p < 3000) return "£0–£2,999";
+    if(p < 5000) return "£3,000–£4,999";
+    if(p < 7000) return "£5,000–£6,999";
+    if(p < 10000) return "£7,000–£9,999";
+    if(p < 15000) return "£10,000–£14,999";
+    if(p < 20000) return "£15,000–£19,999";
+    return "£20,000+";
+  }
+
+  function topN(mapObj, n=10){
+    return Object.entries(mapObj)
+      .sort((a,b)=> (b[1]||0) - (a[1]||0))
+      .slice(0,n);
+  }
+
+  function renderSimpleTable(headers, rows){
+    return `
+      <table class="table">
+        <thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${rows.length ? rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('') :
+            `<tr><td colspan="${headers.length}">No data</td></tr>`}
+        </tbody>
+      </table>
+    `;
+  }
+
+  // Core: get REAL sales in month (uses your isRealSale)
+  function getSalesInMonth(ym){
+    return (db.sales||[]).filter(s => (s.date||'').slice(0,7)===ym && isRealSale(s));
+  }
+
+  // Build insights rows (also used for CSV export)
+  function buildInsights(ym){
+    const sales = getSalesInMonth(ym);
+
+    // counts
+    const makeCount = {};
+    const modelCount = {};
+    const makeModelCount = {}; // "MAKE||MODEL"
+    const priceBandCount = {};
+    const areaCount = {};
+
+    const rowsForCsv = [];
+
+    for(const s of sales){
+      const v = (db.vehicles||[]).find(x=>x.id===s.vehicleId) || {};
+      const make = (v.make || '').trim() || 'Unknown';
+      const model = (v.model || '').trim() || 'Unknown';
+      const mmKey = make + "||" + model;
+
+      makeCount[make] = (makeCount[make]||0) + 1;
+      modelCount[model] = (modelCount[model]||0) + 1;
+      makeModelCount[mmKey] = (makeModelCount[mmKey]||0) + 1;
+
+      const band = bucketPrice(s.salePrice);
+      priceBandCount[band] = (priceBandCount[band]||0) + 1;
+
+      const outward = getOutwardPostcode(s.address || '');
+      if(outward) areaCount[outward] = (areaCount[outward]||0) + 1;
+
+      rowsForCsv.push({
+        month: ym,
+        date: s.date || '',
+        invNo: s.invNo || '',
+        reg: v.reg || '',
+        make, model,
+        salePrice: num(s.salePrice).toFixed(2),
+        priceBand: band,
+        outwardPostcode: outward,
+        customer: s.customer || ''
+      });
+    }
+
+    // Find top single items
+    const topMake = topN(makeCount, 1)[0];
+    const topModel = topN(modelCount, 1)[0];
+    const topBand = topN(priceBandCount, 1)[0];
+    const topArea = topN(areaCount, 1)[0];
+
+    // Make/Model table (top 10 combos)
+    const mmRows = topN(makeModelCount, 10).map(([k,qty])=>{
+      const [mk,md] = k.split('||');
+      return [mk, md, qty];
+    });
+
+    // Price bands table (all, sorted by count)
+    const priceRows = Object.entries(priceBandCount)
+      .sort((a,b)=>(b[1]||0)-(a[1]||0))
+      .map(([band,qty])=>[band, qty]);
+
+    // Area table (top 10)
+    const areaRows = topN(areaCount, 10).map(([pc,qty])=>[pc, qty]);
+
+    return {
+      salesCount: sales.length,
+      topMake, topModel, topBand, topArea,
+      mmRows, priceRows, areaRows,
+      csvRows: rowsForCsv
+    };
+  }
+
+  // Stock “as at” month end (accounting)
+  function buildStockAsAt(ym){
+    const { end } = getMonthRange(ym);
+
+    // sales up to month end (real sales only)
+    const soldIdsUpToEnd = new Set(
+      (db.sales||[])
+        .filter(s => isRealSale(s))
+        .filter(s => (s.date||'') && (s.date <= end))
+        .map(s => s.vehicleId)
+        .filter(Boolean)
+    );
+
+    // vehicles purchased on/before end, and not sold by end
+    const stockVehicles = (db.vehicles||[])
+      .filter(v=>{
+        const pd = getPurchaseDate(v).slice(0,10);
+        if(!pd) return false;
+        return pd <= end && !soldIdsUpToEnd.has(v.id);
+      });
+
+    // expenses up to month end per vehicle
+    const expByVeh = {};
+    for(const e of (db.vehicleExpenses||[])){
+      const d = (e.date||'').slice(0,10);
+      if(!d || d > end) continue;
+      const vid = e.vehicleId;
+      if(!vid) continue;
+      expByVeh[vid] = (expByVeh[vid]||0) + num(e.amount);
+    }
+
+    const rows = stockVehicles.map(v=>{
+      const purchase = num(v.purchase);
+      const exp = num(expByVeh[v.id]);
+      const total = purchase + exp;
+      return {
+        reg: v.reg || '',
+        make: v.make || '',
+        model: v.model || '',
+        purchaseDate: (getPurchaseDate(v)||'').slice(0,10),
+        purchase: purchase.toFixed(2),
+        expensesToEnd: exp.toFixed(2),
+        stockValue: total.toFixed(2)
+      };
+    }).sort((a,b)=> (a.make+a.model+a.reg).localeCompare(b.make+b.model+b.reg));
+
+    const totalStockValue = rows.reduce((t,r)=>t + num(r.stockValue), 0);
+
+    return { end, rows, totalStockValue };
+  }
+
+  // ---------- Wire it to your Reports UI (IDs from the HTML block) ----------
+  const monthEl = wrap.querySelector('#si_month');
+  const runBtn = wrap.querySelector('#si_run');
+  const exportBtn = wrap.querySelector('#si_export_csv');
+
+  const topMm = wrap.querySelector('#si_top_mm');
+  const tblMm = wrap.querySelector('#si_tbl_mm');
+
+  const topPrice = wrap.querySelector('#si_top_price');
+  const tblPrice = wrap.querySelector('#si_tbl_price');
+
+  const topArea = wrap.querySelector('#si_top_area');
+  const tblArea = wrap.querySelector('#si_tbl_area');
+
+  const stockRunBtn = wrap.querySelector('#si_stock_run');
+  const stockExportBtn = wrap.querySelector('#si_stock_export_csv');
+  const stockSum = wrap.querySelector('#si_stock_sum');
+  const tblStock = wrap.querySelector('#si_tbl_stock');
+
+  const debug = wrap.querySelector('#si_debug');
+
+  function runInsights(){
+    const ym = (monthEl.value || '').slice(0,7);
+    if(!ym) return alert('Pick a month');
+
+    const r = buildInsights(ym);
+
+    topMm.innerHTML =
+      `Sales count: <b>${r.salesCount}</b><br>` +
+      `Top Make: <b>${r.topMake ? r.topMake[0] : '—'}</b> (${r.topMake ? r.topMake[1] : 0})<br>` +
+      `Top Model: <b>${r.topModel ? r.topModel[0] : '—'}</b> (${r.topModel ? r.topModel[1] : 0})`;
+
+    tblMm.innerHTML = renderSimpleTable(
+      ['Make','Model','Qty'],
+      r.mmRows
+    );
+
+    topPrice.innerHTML =
+      `Most common price band: <b>${r.topBand ? r.topBand[0] : '—'}</b> (${r.topBand ? r.topBand[1] : 0})`;
+
+    tblPrice.innerHTML = renderSimpleTable(
+      ['Price band','Qty'],
+      r.priceRows
+    );
+
+    topArea.innerHTML =
+      `Top outward postcode: <b>${r.topArea ? r.topArea[0] : '—'}</b> (${r.topArea ? r.topArea[1] : 0})`;
+
+    tblArea.innerHTML = renderSimpleTable(
+      ['Outward postcode','Qty'],
+      r.areaRows
+    );
+
+    // keep latest CSV rows for export
+    wrap.__si_last_csv_rows = r.csvRows;
+
+    debug.textContent = r.salesCount ? '' : 'No sales found in this month (only REAL/Completed sales are counted).';
+  }
+
+  runBtn.onclick = runInsights;
+
+  exportBtn.onclick = ()=>{
+    const rows = wrap.__si_last_csv_rows || [];
+    if(!rows.length) return alert('Run the report first (no rows to export).');
+
+    const headers = ['month','date','invNo','reg','make','model','salePrice','priceBand','outwardPostcode','customer'];
+    const csv = [headers.join(',')].concat(
+      rows.map(r => headers.map(h=>{
+        const s = (r[h]==null?'':String(r[h]));
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+      }).join(','))
+    ).join('\n');
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    a.download = 'sales_insights_' + (monthEl.value||'') + '.csv';
+    a.click();
+  };
+
+  // Stock buttons
+  stockRunBtn.onclick = ()=>{
+    const ym = (monthEl.value || '').slice(0,7);
+    if(!ym) return alert('Pick a month');
+
+    const r = buildStockAsAt(ym);
+
+    stockSum.innerHTML =
+      `As at <b>${r.end}</b> — Vehicles in stock: <b>${r.rows.length}</b> — Total stock value: <b>${fmtMoney(r.totalStockValue)}</b>`;
+
+    tblStock.innerHTML = renderSimpleTable(
+      ['Reg','Make','Model','Purchase date','Purchase £','Expenses to end £','Stock value £'],
+      r.rows.map(x=>[
+        x.reg, x.make, x.model,
+        x.purchaseDate,
+        fmtMoney(x.purchase),
+        fmtMoney(x.expensesToEnd),
+        fmtMoney(x.stockValue)
+      ])
+    );
+
+    wrap.__si_last_stock_rows = r.rows;
+    wrap.__si_last_stock_end = r.end;
+  };
+
+  stockExportBtn.onclick = ()=>{
+    const rows = wrap.__si_last_stock_rows || [];
+    if(!rows.length) return alert('Build Stock List first (no rows to export).');
+
+    const end = wrap.__si_last_stock_end || '';
+    const headers = ['reg','make','model','purchaseDate','purchase','expensesToEnd','stockValue'];
+
+    const csv = [headers.join(',')].concat(
+      rows.map(r => headers.map(h=>{
+        const s = (r[h]==null?'':String(r[h]));
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+      }).join(','))
+    ).join('\n');
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    a.download = 'stock_as_at_' + end + '.csv';
+    a.click();
+  };
+
+  // auto-run once so it shows something
+  setTimeout(runInsights, 50);
+  })();
 
   wrap.querySelector('#rep_fin_unpaid').onclick = ()=>{
     const rows = (db.sales||[])
