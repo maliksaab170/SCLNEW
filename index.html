@@ -3575,24 +3575,51 @@ function viewSales(){
     <label>Cash £<input id="sale_cash" type="number" placeholder="0"></label>
     <label>Card £<input id="sale_card" type="number" placeholder="0"></label>
     <label>Bank Transfer £<input id="sale_bank" type="number" placeholder="0"></label>
-    <label>Finance £<input id="sale_fin" type="number" placeholder="0"></label>
-    <label>Finance Admin Fee £<input id="sale_finFee" type="number" placeholder="0"></label>
-    <label>Payout status<select id="sale_finPayout" placeholder="Status"><option value="">Unpaid</option><option value="paid">Paid</option></select></label>
-    <label>Payout Date<input id="sale_finPayoutDate" type="date"></label>
-    <label>Payout Amount £<input id="sale_finPayoutAmount" type="number" placeholder="0"></label>
     <label>PX Allowance £<input id="sale_pxAllowance" type="number" placeholder="0"></label>
     <label>Total Paid £<input id="sale_totalPaid" type="number" readonly></label>
     <label>Balance Due £<input id="sale_balanceDue" type="number" readonly></label>
     <label>Status<input id="sale_payStatus" readonly></label>
     <button id="auto_balance">Auto-balance</button><span id="sale_warn" class="small"></span>
+    <div class="card">
+      <label style="display: flex; flex-direction: column; align-items: center;">
+        <input id="sale_hasFinance" type="checkbox" style="margin-bottom:4px;">
+        <span style="user-select:none;">Finance deal?</span>
+      </label>
+    </div>
+    <div class="card">
+      <label style="display: flex; flex-direction: column; align-items: center;">
+        <input id="sale_hasPX" type="checkbox" style="margin-bottom:4px;">
+        <span style="user-select:none;">Part-Ex (PX)?</span>
+      </label>
+    </div>
   </div>
-  <div class="row">
+
+  <div id="sale_fin_section" class="row" style="display:none; margin-top:6px; padding:10px; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
+    <div class="small" style="width:100%; color:#9fb4ff; margin-bottom:6px; font-weight:600;">Finance Details</div>
+    <label>Finance Company<input id="sale_finCo" placeholder="Finance company"></label>
+    <label>Agreement #<input id="sale_agree" placeholder="Agreement #"></label>
+    <label>Finance £<input id="sale_fin" type="number" placeholder="0"></label>
+    <label>Finance Admin Fee £<input id="sale_finFee" type="number" placeholder="0"></label>
+
+    <label>Payout status
+      <select id="sale_finPayout" placeholder="Status">
+        <option value="">Unpaid</option>
+        <option value="paid">Paid</option>
+      </select>
+    </label>
+    <label>Payout Date<input id="sale_finPayoutDate" type="date"></label>
+    <label>Payout Amount £<input id="sale_finPayoutAmount" type="number" placeholder="0"></label>
+  </div>
+
+  <div id="sale_px_section" class="row" style="display:none; margin-top:6px; padding:10px; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
+    <div class="small" style="width:100%; color:#9fb4ff; margin-bottom:6px; font-weight:600;">PX Details</div>
     <label>Part-ex Notes<input id="sale_partex" style="min-width:320px" placeholder="Optional notes"></label>
     <label>PX Reg<input id="sale_pxReg" placeholder="AB12CDE"></label>
     <label>PX Make<input id="sale_pxMake" placeholder="Make"></label>
     <label>PX Model<input id="sale_pxModel" placeholder="Model"></label>
-    <label>Finance Company<input id="sale_finCo" placeholder="Finance company"></label>
-    <label>Agreement #<input id="sale_agree" placeholder="Agreement #"></label>
+  </div>
+
+  <div class="row">
     <label>Deliver To<input id="sale_deliver" placeholder="Name/address"></label>
     <label>Keys<input id="sale_keys" placeholder="e.g. 2 keys"></label>
     <label>MOT Expiry<input id="sale_mot" type="date" placeholder="e.g. 2025-11-30"></label>
@@ -3742,6 +3769,58 @@ function viewSales(){
 
     return sales;
   }
+
+  (function initSaleCollapsibleSections(){
+    const pxToggle  = wrap.querySelector('#sale_hasPX');
+    const finToggle = wrap.querySelector('#sale_hasFinance');
+
+    const pxBox  = wrap.querySelector('#sale_px_section');
+    const finBox = wrap.querySelector('#sale_fin_section');
+
+    function setVisible(el, on){
+      if(!el) return;
+      el.style.display = on ? '' : 'none';
+    }
+
+    function clearPX(){
+      const ids = ['#sale_partex','#sale_pxReg','#sale_pxMake','#sale_pxModel','#sale_pxAllowance'];
+      ids.forEach(sel=>{
+        const el = wrap.querySelector(sel);
+        if(el) el.value = '';
+      });
+      // keep payment summary correct
+      try { calcSalePaymentSummary(wrap); } catch(_) {}
+    }
+
+    function clearFinance(){
+      // NOTE: do NOT clear #sale_fin if you still want to keep finance amount typed in the payments row.
+      // If you want it cleared too, add '#sale_fin' below.
+      const ids = ['#sale_finCo','#sale_agree','#sale_finFee','#sale_finPayout','#sale_finPayoutDate','#sale_finPayoutAmount'];
+      ids.forEach(sel=>{
+        const el = wrap.querySelector(sel);
+        if(el) el.value = '';
+      });
+      try { calcSalePaymentSummary(wrap); } catch(_) {}
+    }
+
+    function apply(){
+      const hasPX = !!pxToggle?.checked;
+      const hasFin = !!finToggle?.checked;
+
+      setVisible(pxBox, hasPX);
+      setVisible(finBox, hasFin);
+
+      // If unticked → clear those fields so it doesn’t get saved by mistake
+      if(!hasPX) clearPX();
+      if(!hasFin) clearFinance();
+    }
+
+    if(pxToggle)  pxToggle.addEventListener('change', apply);
+    if(finToggle) finToggle.addEventListener('change', apply);
+
+    // Default: hidden
+    apply();
+  })();
 
   const debtBtn = wrap.querySelector('#sales_debtors');
   if(debtBtn){
@@ -3906,6 +3985,17 @@ function viewSales(){
       '#sale_warrantyProvider', '#sale_warrantyMonths', '#sale_warrantyPolicy',
       '#sale_finFee', '#sale_finPayoutAmount', '#sale_finPayoutDate', '#sale_finPayout'
     ];
+
+    // Reset collapsible toggles + hide sections
+    const pxToggle  = wrap.querySelector('#sale_hasPX');
+    const finToggle = wrap.querySelector('#sale_hasFinance');
+    if(pxToggle) pxToggle.checked = false;
+    if(finToggle) finToggle.checked = false;
+
+    const pxBox  = wrap.querySelector('#sale_px_section');
+    const finBox = wrap.querySelector('#sale_fin_section');
+    if(pxBox)  pxBox.style.display = 'none';
+    if(finBox) finBox.style.display = 'none';
     
     fields.forEach(selector => {
       const el = wrap.querySelector(selector);
@@ -4335,7 +4425,23 @@ function viewSales(){
       wrap.querySelector('#sale_keys').value = s.keys || ''; 
       wrap.querySelector('#sale_mot').value = s.mot || ''; 
       wrap.querySelector('#sale_sh').value = s.serviceHistory || ''; 
-      wrap.querySelector('#sale_invNo').value = s.invNo || ''; 
+      wrap.querySelector('#sale_invNo').value = s.invNo || '';
+
+      // Auto-open collapsible sections on edit
+      const hasPX = !!(String(s.pxReg||'').trim() || String(s.pxMake||'').trim() || String(s.pxModel||'').trim() || Number(s.pxAllowance||0) > 0);
+      const hasFin = !!(String(s.financeCompany||'').trim() || String(s.agreement||'').trim() || Number(s.finance||0) > 0 || Number(s.financeAdminFee||0) > 0);
+
+      const pxToggle  = wrap.querySelector('#sale_hasPX');
+      const finToggle = wrap.querySelector('#sale_hasFinance');
+
+      if(pxToggle) pxToggle.checked = hasPX;
+      if(finToggle) finToggle.checked = hasFin;
+
+      // force show/hide after setting checks
+      const pxBox  = wrap.querySelector('#sale_px_section');
+      const finBox = wrap.querySelector('#sale_fin_section');
+      if(pxBox)  pxBox.style.display = hasPX ? '' : 'none';
+      if(finBox) finBox.style.display = hasFin ? '' : 'none';
 
       // Load payout fields
       if (wrap.querySelector('#sale_finPayout')) {
