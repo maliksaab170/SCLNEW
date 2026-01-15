@@ -2697,6 +2697,8 @@ function viewVehicles(){
     <button onclick="exportVehiclesCSV()">Export CSV</button>
   </div>
 
+  <div id="veh_totals" class="small" style="margin-top:10px"></div>
+
   <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>Engine Size</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
   
@@ -2715,6 +2717,22 @@ function viewVehicles(){
   function rows(q='', mode='instock'){
   body.innerHTML='';
   q=(q||'').toLowerCase().trim();
+
+  // totals UI
+  const totalsEl = wrap.querySelector('#veh_totals');
+
+  // build expenses map per vehicle (for totals)
+  const expByVeh = {};
+  (db.vehicleExpenses || []).forEach(e=>{
+    const vid = e.vehicleId;
+    if(!vid) return;
+    expByVeh[vid] = (expByVeh[vid] || 0) + Number(e.amount || 0);
+  });
+
+  // totals values
+  let shownCount = 0;
+  let totalPurchase = 0;
+  let totalWithVehExp = 0;
   
   // Get filter states
   const instockOnly = wrap.querySelector('#veh_instock')?.checked;
@@ -2756,24 +2774,28 @@ function viewVehicles(){
         const diffMs = expiry - today;
         const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
         
-        switch(motFilter) {
-          case 'expired':
-            if (diffDays >= 0) return; // Skip if not expired
-            break;
-          case '30':
-            if (diffDays <= 0 || diffDays > 30) return;
-            break;
-          case '60':
-            if (diffDays <= 0 || diffDays > 60) return;
-            break;
-          case '90':
-            if (diffDays <= 0 || diffDays > 90) return;
-            break;
-          case 'valid':
-            if (diffDays < 0) return; // Skip if expired
-            break;
-        }
+    switch(motFilter) {
+      case 'expired':
+        if (diffDays >= 0) return; // Skip if not expired
+        break;
+      case '30':
+        if (diffDays <= 0 || diffDays > 30) return;
+        break;
+      case '60':
+        if (diffDays <= 0 || diffDays > 60) return;
+        break;
+      case '90':
+        if (diffDays <= 0 || diffDays > 90) return;
+        break;
+      case 'valid':
+        if (diffDays < 0) return; // Skip if expired
+        break;
       }
+    }
+
+    shownCount++;
+    totalPurchase += Number(v.purchase || 0);
+    totalWithVehExp += Number(v.purchase || 0) + Number(expByVeh[v.id] || 0);
     
     const tr=document.createElement('tr');
     const mcount=(v.media||[]).length + ((v.video&&1)||0);
@@ -2795,6 +2817,18 @@ function viewVehicles(){
     <td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''} ${v.originalSaleId?`<button data-act="viewSale" data-id="${v.originalSaleId}" title="View original sale" style="margin-left:4px;">📋</button>`:''}</td>`;
     body.appendChild(tr);
     });
+
+    // Show totals only when Not Ready ticked
+    if(totalsEl){
+    if(notReadyOnly){
+      totalsEl.innerHTML =
+        `Not ready in stock: <b>${shownCount}</b>` +
+        ` • Purchase total: <b>${fmtMoney(totalPurchase)}</b>` +
+        ` • Purchase + vehicle expenses: <b>${fmtMoney(totalWithVehExp)}</b>`;
+    } else {
+      totalsEl.textContent = '';
+    }
+  }
   };
   rows('', 'instock');
 
