@@ -6813,7 +6813,31 @@ function viewReports(){
           next: v.prepNotes||''
         }));
 
-      sumEl.innerHTML = `Not ready in stock: <b>${rows.length}</b>`;
+      // ---- totals for not-ready stock ----
+      let totalPurchase = 0;
+      let totalWithVehExp = 0;
+
+      // build a quick expense map per vehicle
+      const expByVeh = {};
+      (db.vehicleExpenses || []).forEach(e=>{
+        const vid = e.vehicleId;
+        if(!vid) return;
+        expByVeh[vid] = (expByVeh[vid] || 0) + Number(e.amount || 0);
+      });
+
+      rows.forEach(r=>{
+        // r came from v, so we need the vehicle to read purchase/expenses correctly
+        const v = (db.vehicles || []).find(x => (x.reg||'') === r.reg) || null;
+        if(!v) return;
+        totalPurchase += Number(v.purchase || 0);
+        totalWithVehExp += Number(v.purchase || 0) + Number(expByVeh[v.id] || 0);
+      });
+
+      sumEl.innerHTML =
+        `Not ready in stock: <b>${rows.length}</b>` +
+        ` • Purchase total: <b>${fmtMoney(totalPurchase)}</b>` +
+        ` • Purchase + vehicle expenses: <b>${fmtMoney(totalWithVehExp)}</b>`;
+
       tblEl.innerHTML = table(rows);
       wrap.__nr_rows = rows;
     }
