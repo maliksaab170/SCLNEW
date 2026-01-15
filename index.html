@@ -358,6 +358,11 @@ function lastDayOfMonth(ym) {
   return d.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+function escapeHtml(s){
+  s = (s==null) ? '' : String(s);
+  return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
 // ===== Option 8 helpers =====
 function findVehicleByReg(reg){
   reg = String(reg||'').trim().toUpperCase();
@@ -3658,6 +3663,53 @@ function viewSales(){
         <option value="Other">Other</option>
       </select>
     </label>
+
+    <div class="card" style="margin-top:10px; padding:10px; background: rgba(19,26,43,.45);">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:700;">Funds to Receive (Settlements)</div>
+          <div class="small" style="opacity:.85">
+            Track card settlement & finance payouts (multiple lines allowed).
+          </div>
+        </div>
+
+        <div class="row" style="margin:0;">
+          <label class="small">Type
+            <select id="rc_type">
+              <option value="card">Card settlement</option>
+              <option value="finance">Finance payout</option>
+              <option value="bank">Bank transfer</option>
+              <option value="cash">Cash</option>
+              <option value="deposit">Deposit</option>
+            </select>
+          </label>
+
+          <label class="small">Amount £<input id="rc_amount" type="number" placeholder="0" style="min-width:120px;"></label>
+          <label class="small">Expected date<input id="rc_expected" type="date" style="min-width:150px;"></label>
+          <label class="small">Note<input id="rc_note" placeholder="e.g. Stripe / Close Brothers part 1" style="min-width:240px;"></label>
+
+          <button id="rc_addLine" class="primary" type="button">Add line</button>
+          <button id="rc_autoCard" type="button">Auto Card +3 days</button>
+        </div>
+      </div>
+
+      <div id="rc_summary" class="small" style="margin-top:8px;"></div>
+
+      <table class="table" style="margin-top:8px;">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th class="right">Amount</th>
+            <th>Expected</th>
+            <th>Status</th>
+            <th>Received date</th>
+            <th>Note</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="rc_body"></tbody>
+      </table>
+    </div>
     
     <button id="sale_add" class="primary">Record / Update</button>
   </div>
@@ -3973,6 +4025,153 @@ function viewSales(){
 
   hookSalePaymentSummary(wrap);
 
+  // ===== Receipts / Settlements (Funds to receive) =====
+  function ensureReceiptsOnSale(s){
+    if(!s) return s;
+    if(!Array.isArray(s.receipts)) s.receipts = [];
+    return s;
+  }
+  function receiptsFromForm(){
+    return wrap._currentReceipts || [];
+  }
+  function receiptsToForm(arr){
+    wrap._currentReceipts = Array.isArray(arr) ? arr : [];
+    renderReceiptsTable();
+  }
+  function fmtType(t){
+    t = String(t||'').toLowerCase();
+    if(t==='card') return 'Card settlement';
+    if(t==='finance') return 'Finance payout';
+    if(t==='bank') return 'Bank transfer';
+    if(t==='cash') return 'Cash';
+    if(t==='deposit') return 'Deposit';
+    return t || '';
+  }
+  function calcReceiptsSummary(){
+    const arr = receiptsFromForm();
+    const total = arr.reduce((t,x)=>t+Number(x.amount||0),0);
+    const received = arr.filter(x=>x.status==='received').reduce((t,x)=>t+Number(x.amount||0),0);
+    const pending = total - received;
+    const el = wrap.querySelector('#rc_summary');
+    if(el){
+      el.innerHTML = `Lines: <b>${arr.length}</b> • Total: <b>${fmtMoney(total)}</b> • Received: <b>${fmtMoney(received)}</b> • Pending: <b>${fmtMoney(pending)}</b>`;
+    }
+  }
+  function renderReceiptsTable(){
+    const body = wrap.querySelector('#rc_body');
+    if(!body) return;
+    const arr = receiptsFromForm();
+    body.innerHTML = '';
+
+    arr.forEach((r, idx) => {
+      const tr = document.createElement('tr');
+      const status = r.status === 'received' ? '✅ Received' : '⏳ Pending';
+      tr.innerHTML = `
+        <td>${fmtType(r.type)}</td>
+        <td class="right">${fmtMoney(r.amount||0)}</td>
+        <td>${ddmmyyyy(r.expectedDate||'')}</td>
+        <td>${status}</td>
+        <td>${ddmmyyyy(r.receivedDate||'')}</td>
+        <td>${escapeHtml(r.note||'')}</td>
+        <td>
+          <button data-rc="toggle" data-i="${idx}" type="button">${r.status==='received'?'Mark pending':'Mark received'}</button>
+          <button class="danger" data-rc="del" data-i="${idx}" type="button">Delete</button>
+        </td>
+      `;
+      body.appendChild(tr);
+    });
+
+    calcReceiptsSummary();
+  }
+
+  // Add line
+  const addBtn = wrap.querySelector('#rc_addLine');
+  if(addBtn){
+    addBtn.onclick = () => {
+      const t = wrap.querySelector('#rc_type')?.value || 'card';
+      const amt = Number(wrap.querySelector('#rc_amount')?.value || 0);
+      const exp = wrap.querySelector('#rc_expected')?.value || '';
+      const note = wrap.querySelector('#rc_note')?.value || '';
+
+      if(!amt || amt <= 0) return alert('Enter Amount > 0');
+      if(!exp) return alert('Enter Expected date');
+
+      const arr = receiptsFromForm();
+      arr.push({
+        type: t,
+        amount: Math.round(amt*100)/100,
+        expectedDate: exp,
+        status: 'pending',
+        receivedDate: '',
+        note: note
+      });
+
+      if(wrap.querySelector('#rc_amount')) wrap.querySelector('#rc_amount').value = '';
+      if(wrap.querySelector('#rc_note')) wrap.querySelector('#rc_note').value = '';
+      renderReceiptsTable();
+    };
+  }
+
+  // Auto card +3 days
+  const autoCardBtn = wrap.querySelector('#rc_autoCard');
+  if(autoCardBtn){
+    autoCardBtn.onclick = () => {
+      const cardAmt = Number(wrap.querySelector('#sale_card')?.value || 0);
+      if(!cardAmt || cardAmt<=0) return alert('Card amount is 0. Put Card £ first.');
+
+      const d = new Date();
+      d.setDate(d.getDate()+3);
+      const exp = d.toISOString().slice(0,10);
+
+      const arr = receiptsFromForm();
+      arr.push({
+        type: 'card',
+        amount: Math.round(cardAmt*100)/100,
+        expectedDate: exp,
+        status: 'pending',
+        receivedDate: '',
+        note: 'Auto: card settlement'
+      });
+      renderReceiptsTable();
+    };
+  }
+
+  // table actions
+  wrap.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if(!b) return;
+    const act = b.dataset.rc;
+    if(!act) return;
+
+    const i = Number(b.dataset.i);
+    const arr = receiptsFromForm();
+    const r = arr[i];
+    if(!r) return;
+
+    if(act === 'del'){
+      if(!confirm('Delete this receipt line?')) return;
+      arr.splice(i,1);
+      renderReceiptsTable();
+    }
+
+    if(act === 'toggle'){
+      if(r.status === 'received'){
+        r.status = 'pending';
+        r.receivedDate = '';
+      } else {
+        const today = new Date().toISOString().slice(0,10);
+        const d = prompt('Received date (YYYY-MM-DD)', today);
+        if(d === null) return;
+        r.status = 'received';
+        r.receivedDate = d || today;
+      }
+      renderReceiptsTable();
+    }
+  });
+
+  // init blank for new sale
+  receiptsToForm([]);
+
   // Add function to clear the form
   function clearSaleForm() {
     const fields = [
@@ -4022,6 +4221,8 @@ function viewSales(){
 
     // Reset edit ID
     editId = null;
+
+    receiptsToForm([]);
   }
   
   function rows(){ 
@@ -4467,7 +4668,10 @@ function viewSales(){
       if (wm) wm.value = s.warrantyMonths || ''; 
 
       const wpol = wrap.querySelector('#sale_warrantyPolicy'); 
-      if (wpol) wpol.value = s.warrantyPolicy || ''; 
+      if (wpol) wpol.value = s.warrantyPolicy || '';
+
+      ensureReceiptsOnSale(s);
+      receiptsToForm(s.receipts);
 
       updateWarn();
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
@@ -4569,11 +4773,14 @@ function viewSales(){
     leadSource: (wrap.querySelector('#sale_lead')?.value || '').trim(),
     invNo: invNoValue || (Date.now() + '').slice(-6),
     status: saleStatus,
-    warrantyType:      (wrap.querySelector('#sale_warrantyType')?.value || ''),
-    warrantyProvider:  (wrap.querySelector('#sale_warrantyProvider')?.value || '').trim(),
-    warrantyMonths:    Number((wrap.querySelector('#sale_warrantyMonths')?.value || 0)),
-    warrantyPolicy:    (wrap.querySelector('#sale_warrantyPolicy')?.value || '').trim()
+    receipts: receiptsFromForm(),
+    warrantyType: (wrap.querySelector('#sale_warrantyType')?.value || ''),
+    warrantyProvider: (wrap.querySelector('#sale_warrantyProvider')?.value || '').trim(),
+    warrantyMonths: Number((wrap.querySelector('#sale_warrantyMonths')?.value || 0)),
+    warrantyPolicy: (wrap.querySelector('#sale_warrantyPolicy')?.value || '').trim()
   };
+
+  s.receipts = receiptsFromForm();
 
   // ✅ FREEZE VEHICLE COST AT TIME OF SALE
   try {
@@ -6448,6 +6655,30 @@ function viewReports(){
   <details id="r_fold"><summary>Show audit entries (<span id="r_count">0</span>)</summary><div id="r_tblwrap"><table class="table" style="margin-top:8px"><thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody id="r_body"></tbody></table></div></details></div>
 
   <div class="card"><h3>Monthly Summary</h3><div class="row"><input id="rm_month" type="month" value="${new Date().toISOString().slice(0,7)}"><label class="small"><input type="checkbox" id="rm_cover"> Pretend showroom expenses covered by monthly profit</label><button id="rm_go">Calculate</button><button id="rm_export_xlsx">Export Excel (Month + Sold cars)</button></div><div id="rm_box"></div></div>
+  
+  <div class="card" style="margin-top:12px">
+    <details open>
+      <summary style="cursor:pointer; font-weight:bold; font-size:1.05em;">Funds To Receive (Pending settlements)</summary>
+      <div class="row" style="margin-top:10px; align-items:flex-end;">
+        <label class="small">From<input id="rtf_from" type="date"></label>
+        <label class="small">To<input id="rtf_to" type="date"></label>
+        <label class="small">Type
+          <select id="rtf_type">
+            <option value="">All</option>
+            <option value="card">Card settlement</option>
+            <option value="finance">Finance payout</option>
+            <option value="bank">Bank</option>
+            <option value="cash">Cash</option>
+            <option value="deposit">Deposit</option>
+          </select>
+        </label>
+        <button id="rtf_run" class="primary" type="button">Run</button>
+      </div>
+
+      <div id="rtf_sum" class="small" style="margin-top:10px"></div>
+      <div id="rtf_out" style="margin-top:10px"></div>
+    </details>
+  </div>
 
   <div class="card"><h3>Month Close (Directors & Investors)</h3>
     <div class="row"><input id="mc_month" type="month" value="${new Date().toISOString().slice(0,7)}"> <button id="mc_prev">Preview</button><button id="mc_post" class="primary">Post</button><button id="mc_export">Export PDF</button><span id="mc_warn" class="small" style="margin-left:8px;color:#ffb3b3"></span></div><div id="mc_box" class="small"></div>
@@ -6768,6 +6999,89 @@ function viewReports(){
       +'<tr><th>Net Profit/Loss (Month Close method)</th><td class="right"><b>'+fmtMoney(netMonthClose)+'</b></td></tr>'
       +'</tbody></table>';
   };
+
+  // ===== Funds To Receive report =====
+  function buildFundsToReceive(){
+    const from = wrap.querySelector('#rtf_from')?.value || '';
+    const to   = wrap.querySelector('#rtf_to')?.value || '';
+    const type = wrap.querySelector('#rtf_type')?.value || '';
+
+    const lines = [];
+
+    (db.sales || []).forEach(s=>{
+      if(!isRealSale(s)) return;
+      if(!Array.isArray(s.receipts)) return;
+
+      const v = (db.vehicles || []).find(x=>x.id===s.vehicleId) || {};
+      s.receipts.forEach(r=>{
+        if(!r) return;
+        if(r.status === 'received') return; // only pending
+        if(type && String(r.type||'') !== type) return;
+
+        const d = String(r.expectedDate||'');
+        if(from && d < from) return;
+        if(to && d > to) return;
+
+        lines.push({
+          expectedDate: d,
+          type: r.type,
+          reg: (v.reg||'').toUpperCase(),
+          customer: s.buyer || '',
+          inv: s.invNo || '',
+          amount: Number(r.amount||0),
+          note: r.note || ''
+        });
+      });
+    });
+
+    lines.sort((a,b)=> (a.expectedDate||'').localeCompare(b.expectedDate||''));
+
+    const total = lines.reduce((t,x)=>t+Number(x.amount||0),0);
+    const sumEl = wrap.querySelector('#rtf_sum');
+    if(sumEl){
+      sumEl.innerHTML = `Pending lines: <b>${lines.length}</b> • Total pending: <b>${fmtMoney(total)}</b>`;
+    }
+
+    const out = wrap.querySelector('#rtf_out');
+    if(!out) return;
+
+    if(!lines.length){
+      out.innerHTML = `<div class="small">No pending funds in this filter.</div>`;
+      return;
+    }
+
+    out.innerHTML = `
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Expected</th>
+            <th>Type</th>
+            <th>Reg</th>
+            <th>Customer</th>
+            <th>Inv</th>
+            <th class="right">Amount</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lines.map(x=>`
+            <tr>
+              <td>${ddmmyyyy(x.expectedDate)}</td>
+              <td>${(function(t){t=String(t||''); if(t==='card')return 'Card settlement'; if(t==='finance')return 'Finance payout'; if(t==='bank')return 'Bank transfer'; if(t==='cash')return 'Cash'; if(t==='deposit')return 'Deposit'; return t;})(x.type)}</td>
+              <td>${x.reg}</td>
+              <td>${escapeHtml(x.customer)}</td>
+              <td>${escapeHtml(String(x.inv))}</td>
+              <td class="right">${fmtMoney(x.amount)}</td>
+              <td>${escapeHtml(x.note)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  const rtfBtn = wrap.querySelector('#rtf_run');
+  if(rtfBtn) rtfBtn.onclick = buildFundsToReceive;
 
   function norm(s){ return String(s||'').trim(); }
   function monthKey(d){ return String(d||'').slice(0,7); }
