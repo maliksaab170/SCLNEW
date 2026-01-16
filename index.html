@@ -2484,6 +2484,13 @@ function viewDashboard(){
     <input id="dash_reg" list="reglist" placeholder="Type REG… (e.g., AB12CDE)" style="min-width:220px">
     <datalist id="reglist">${options}</datalist>
     <button id="dash_show" class="primary">Show</button>
+    <label class="small" style="margin-left:8px; display:inline-block">Expense sort:
+      <select id="dash_exp_sort" style="min-width:110px;">
+        <option value="">Default</option>
+        <option value="low">Lowest first</option>
+        <option value="high">Highest first</option>
+      </select>
+    </label>
   </div>
   <div id="dash_result" class="card" style="margin-top:10px"></div>`;
 
@@ -2640,7 +2647,15 @@ function viewDashboard(){
       `;
     }
     
-    let rows=vexp.map(e=>`<tr><td>${ddmmyyyy(e.date||'')}</td><td>${e.type||''}</td><td class="right">${fmtMoney(e.amount)}</td><td>${e.note||''}</td></tr>`).join('');
+    // Read selected sort from dropdown
+    const expSortEl = card.querySelector('#dash_exp_sort');
+    let vexpSorted = vexp.slice(); // clone array to not affect the original
+    if (expSortEl && expSortEl.value === 'low') {
+      vexpSorted.sort((a, b) => Number(a.amount || 0) - Number(b.amount || 0));
+    } else if (expSortEl && expSortEl.value === 'high') {
+      vexpSorted.sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
+    }
+    let rows = vexpSorted.map(e => `<tr><td>${ddmmyyyy(e.date||'')}</td><td>${e.type||''}</td><td class="right">${fmtMoney(e.amount)}</td><td>${e.note||''}</td></tr>`).join('');
     if(!rows) rows='<tr><td colspan="4" class="small">No expenses yet</td></tr>';
     
     out.innerHTML=`<div class="row"><span class="badge">${v.status||'for sale'}</span>&nbsp;<b>${v.reg}</b>&nbsp;${v.make||''} ${v.model||''}</div>
@@ -2659,7 +2674,8 @@ function viewDashboard(){
   card.querySelector('#dash_show').onclick=()=>showResultByReg(card.querySelector('#dash_reg').value);
   card.querySelector('#dash_reg').addEventListener('change',()=>showResultByReg(card.querySelector('#dash_reg').value));
   card.querySelector('#dash_reg').addEventListener('keydown',(e)=>{ if(e.key==='Enter') showResultByReg(card.querySelector('#dash_reg').value); });
-  
+  card.querySelector('#dash_exp_sort').addEventListener('change',()=>showResultByReg(card.querySelector('#dash_reg').value));
+
   return card;
 }
 
@@ -4185,11 +4201,18 @@ function viewSales(){
     addBtn.onclick = () => {
       const t = wrap.querySelector('#rc_type')?.value || 'card';
       const amt = Number(wrap.querySelector('#rc_amount')?.value || 0);
-      const exp = wrap.querySelector('#rc_expected')?.value || '';
+
+      // AUTO expected date:
+      // use sale date if present, otherwise today
+      const saleISO = String(wrap.querySelector('#sale_date')?.value || '').trim();
+      const autoExp = saleISO || new Date().toISOString().slice(0,10);
+
+      let exp = wrap.querySelector('#rc_expected')?.value || '';
+      exp = exp || autoExp;
+
       const note = wrap.querySelector('#rc_note')?.value || '';
 
       if(!amt || amt <= 0) return alert('Enter Amount > 0');
-      if(!exp) return alert('Enter Expected date');
 
       const arr = receiptsFromForm();
       arr.push({
@@ -4254,11 +4277,16 @@ function viewSales(){
         r.status = 'pending';
         r.receivedDate = '';
       } else {
-        const today = new Date().toISOString().slice(0,10);
-        const d = prompt('Received date (YYYY-MM-DD)', today);
-        if(d === null) return;
+        const now = new Date();
+        const defDMY = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+        const recDMY = prompt('Received date (DD/MM/YYYY)', defDMY);
+        if(recDMY === null) return;
+
+        const recISO = isoFromDMY(recDMY);
+        if(!recISO) return alert('Invalid date. Use DD/MM/YYYY');
+
         r.status = 'received';
-        r.receivedDate = d || today;
+        r.receivedDate = recISO;
       }
       renderReceiptsTable();
     }
@@ -4834,9 +4862,6 @@ function viewSales(){
       if (t === 'card') d.setDate(d.getDate() + 3);
       const defDMY = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
 
-      const expDMY = prompt(`Expected date (DD/MM/YYYY) for ${typeLabel(t)}:`, defDMY);
-      if (expDMY === null) return;
-
       const expISO = String(s.date || new Date().toISOString().slice(0,10)).slice(0,10);
       if (!expISO) return alert('Invalid date. Use DD/MM/YYYY');
 
@@ -5063,7 +5088,7 @@ function viewSales(){
     });
   }
 
-  s.receipts = receiptsFromForm();
+  receiptsToForm(s.receipts);
 
   // ✅ FREEZE VEHICLE COST AT TIME OF SALE
   try {
