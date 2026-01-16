@@ -345,9 +345,19 @@ function fmtMoney(n){ n=Number(n||0); const s=n<0?'-':''; n=Math.abs(n); return 
 
 function ddmmyyyy(d){
   if(!d) return '';
-  const t=(d||'').split('T')[0]||d;
-  const a=t.split('-'); // yyyy-mm-dd
-  return a.length===3 ? (a[2]+'/'+a[1]+'/'+a[0]) : d; // dd/mm/yyyy
+  let t = String(d).trim();
+  t = (t.split('T')[0] || t).slice(0,10);
+
+  // If already DD/MM/YYYY, keep it
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(t)) return t;
+
+  // Support YYYY/MM/DD or YYYY-MM-DD
+  t = t.replace(/\//g,'-'); // normalize slashes to hyphen
+
+  const a = t.split('-'); // yyyy-mm-dd
+  if(a.length === 3 && a[0].length === 4) return `${a[2]}/${a[1]}/${a[0]}`;
+
+  return t;
 }
 
 function isoFromDMY(dmy){
@@ -2515,13 +2525,14 @@ function viewDashboard(){
 
       const rows = currentList.slice(0,50).map(v=>{
         const exp = getMotExpiry(v);
+        const expDisp = exp ? ddmmyyyy(exp) : '';
         const dt = daysToDate(exp);
         const daysTxt = (dt===null) ? '' : (dt<0 ? `(${dt}d)` : `(+${dt}d)`);
         return `<tr>
           <td>${(v.reg||'').toUpperCase()}</td>
           <td>${v.make||''}</td>
           <td>${v.model||''}</td>
-          <td>${exp||''} ${daysTxt}</td>
+          <td>${expDisp} ${daysTxt}</td>
         </tr>`;
       }).join('');
 
@@ -2577,8 +2588,8 @@ function viewDashboard(){
           v.status || '',
           v.supplier || '',
           v.vin || '',
-          v.lastMotDate || '',
-          v.lastMotExpiry || v.motExpiry || '',
+          (v.lastMotDate ? ddmmyyyy(v.lastMotDate) : ''),
+          (ddmmyyyy(v.lastMotExpiry || v.motExpiry || '')),
           v.lastMotMileage || ''
         ]);
 
