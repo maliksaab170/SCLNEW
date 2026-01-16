@@ -348,6 +348,26 @@ function ddmmyyyy(d){
   const a=t.split('-'); // yyyy-mm-dd
   return a.length===3 ? (a[2]+'-'+a[1]+'-'+a[0]) : d; // dd-mm-yyyy
 }
+
+function isoFromDMY(dmy){
+  // Accepts "DD/MM/YYYY" or "D/M/YYYY"
+  dmy = String(dmy||'').trim();
+  const m = dmy.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(!m) return '';
+  const dd = String(m[1]).padStart(2,'0');
+  const mm = String(m[2]).padStart(2,'0');
+  const yy = m[3];
+  return `${yy}-${mm}-${dd}`; // ISO
+}
+
+function dmyFromISO(iso){
+  // Accepts "YYYY-MM-DD"
+  iso = String(iso||'').trim();
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return '';
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
 function ymStr(d){ return (d||'').slice(0,7); } // yyyy-mm
 
 function lastDayOfMonth(ym) {
@@ -2062,23 +2082,39 @@ function ensureIdsEverywhere(){
 }
 
 function dedupeVehiclesByReg(){
+  // ✅ PRO FIX:
+  // Do NOT dedupe by REG anymore, because the same reg can come back as PX later.
+  // Only dedupe true duplicates by ID (same record repeated).
   if (!Array.isArray(db.vehicles)) return;
-  const seen = new Set();
-  const out = [];
-  // keep newest first if createdAt exists
-  const arr = db.vehicles.slice().sort((a,b)=>{
-    const da = (a && (a.createdAt || a.updatedAt)) ? String(a.createdAt || a.updatedAt) : '';
-    const dbb = (b && (b.createdAt || b.updatedAt)) ? String(b.createdAt || b.updatedAt) : '';
-    return dbb.localeCompare(da);
-  });
 
-  for(const v of arr){
-    const reg = String(v?.reg || '').toUpperCase().replace(/\s+/g,'').trim();
-    if(!reg){ out.push(v); continue; }
-    if(seen.has(reg)) continue;
-    seen.add(reg);
-    out.push(v);
+  const byId = Object.create(null);
+  const out = [];
+
+  for (const v of db.vehicles){
+    if (!v) continue;
+
+    // ensure id exists
+    if (!v.id) v.id = uid();
+
+    // if exact same id repeats, keep the newest (by createdAt/updatedAt)
+    const id = v.id;
+    if (!byId[id]){
+      byId[id] = v;
+    } else {
+      const a = byId[id];
+      const da = String(a.createdAt || a.updatedAt || '');
+      const dv = String(v.createdAt || v.updatedAt || '');
+      if (dv.localeCompare(da) > 0) byId[id] = v;
+    }
   }
+
+  // Keep stable order (newest first if createdAt exists)
+  out.push(...Object.values(byId).sort((a,b)=>{
+    const da = String(a.createdAt || a.updatedAt || '');
+    const dbb = String(b.createdAt || b.updatedAt || '');
+    return dbb.localeCompare(da);
+  }));
+
   db.vehicles = out;
 }
 
@@ -2102,10 +2138,29 @@ function relinkVehicleRefsByReg(){
       const reg = normReg(getRegFn(rec));
       if (!reg) return;
       const newVid = regToId[reg];
-      if (newVid && rec.vehicleId && rec.vehicleId !== newVid){
-        rec.vehicleId = newVid;
-        changed++;
-      }
+      
+      const fixList = (arrName, getRegFn) => {
+        if (!Array.isArray(db[arrName])) return;
+        let changed = 0;
+
+        db[arrName].forEach(rec=>{
+          const reg = normReg(getRegFn(rec));
+          if (!reg) return;
+
+          const newVid = regToId[reg];
+
+          // ✅ PRO FIX:
+          // Only attach vehicleId if it's missing.
+          // NEVER overwrite an existing vehicleId (that would destroy history).
+          if (newVid && !rec.vehicleId){
+            rec.vehicleId = newVid;
+            changed++;
+          }
+        });
+
+        return changed;
+      };
+
       // If vehicleId missing but reg exists, attach it
       if (newVid && !rec.vehicleId){
         rec.vehicleId = newVid;
@@ -3983,12 +4038,12 @@ function viewSales(){
 
   // calculate payment summary from SALES form
   function calcSalePaymentSummary(wrap){
-    const salePrice   = _num(wrap, '#sale_price');
-    const deposit     = _num(wrap, '#sale_dep');
-    const cash        = _num(wrap, '#sale_cash');
-    const card        = _num(wrap, '#sale_card');
-    const bank        = _num(wrap, '#sale_bank');
-    const finance     = _num(wrap, '#sale_fin');
+    const salePrice = _num(wrap, '#sale_price');
+    const deposit = _num(wrap, '#sale_dep');
+    const cash = _num(wrap, '#sale_cash');
+    const card = _num(wrap, '#sale_card');
+    const bank = _num(wrap, '#sale_bank');
+    const finance = _num(wrap, '#sale_fin');
     const pxAllowance = _num(wrap, '#sale_pxAllowance');
 
     // pxAllowance reduces what the customer owes, so count it as paid value
@@ -4024,6 +4079,50 @@ function viewSales(){
   }
 
   hookSalePaymentSummary(wrap);
+
+  function buildAutoReceiptsFromSale(s){
+    // Auto-create pending receipt lines from filled payment fields.
+    // Stores dates as ISO (YYYY-MM-DD). UI already displays dd/mm/yyyy via ddmmyyyy().
+    const out = [];
+
+    const saleDate = String(s.date || '').trim();
+    const baseDate = saleDate || new Date().toISOString().slice(0,10);
+
+    function addDaysISO(iso, days){
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0,10);
+    }
+
+    function push(type, amount, expectedDate, note){
+      amount = Number(amount || 0);
+      if (amount <= 0) return;
+      out.push({
+        type,
+        amount: Math.round(amount*100)/100,
+        expectedDate: expectedDate || baseDate,
+        status: 'pending',
+        receivedDate: '',
+        note: note || ''
+      });
+    }
+
+    // Expected dates (you can change rules here)
+    push('deposit', s.deposit, baseDate, 'Auto: deposit');
+    push('cash',    s.cash,    baseDate, 'Auto: cash');
+    push('bank',    s.bank,    baseDate, 'Auto: bank transfer');
+
+    // Card usually settles later (default +3 days)
+    push('card',    s.card,    addDaysISO(baseDate, 3), 'Auto: card settlement');
+
+    // Finance: default expected = sale date (change to +1/+2 if you want)
+    // Also include finance company name if available
+    const finNote = s.financeCompany ? `Auto: finance payout (${s.financeCompany})` : 'Auto: finance payout';
+    push('finance', s.finance, baseDate, finNote);
+
+    return out;
+  }
 
   // ===== Receipts / Settlements (Funds to receive) =====
   function ensureReceiptsOnSale(s){
@@ -4276,8 +4375,6 @@ function viewSales(){
         const payoutPaid = !!s.financePayoutPaid;
         const payoutDate = s.financePayoutDate || '';
         const payoutAmount = Number(s.financePayoutAmount || 0);
-        const payoutDisplay = payoutPaid ? `✅ Paid ${ddmmyyyy(payoutDate)} ${fmtMoney(payoutAmount)}` : '❌ Unpaid';
-        const payoutActionBtn = `<button data-act="togglePayout" data-id="${s.id}">${payoutPaid ? 'Mark unpaid' : 'Mark paid'}</button>`;
       
         // 🔹 Main sale row
         const tr = document.createElement('tr'); 
@@ -4288,12 +4385,42 @@ function viewSales(){
           <td>${br}${partexInfo}</td>
           ${canProfit()? ('<td class="right">'+fmtMoney(totalCost)+'</td><td class="right"><b>'+fmtMoney(profit)+'</b></td>'): ''}
           <td>
-            ${payoutDisplay}<br>${payoutActionBtn}</td>
+            ${(function(){
+                const pending = (Array.isArray(s.receipts)?s.receipts:[]).filter(r=>r && r.status!=='received');
+                return pending.length
+                  ? `<button data-act="rcQuick" data-id="${s.id}" title="Mark a pending settlement as received">Receive Funds (${pending.length})</button>`
+                  : '';
+              })()
+            }
+
+            ${(function(){
+                // ✅ Quick add buttons show only if method used
+                const btns = [];
+                const card = Number(s.card||0);
+                const fin  = Number(s.finance||0);
+                const bank = Number(s.bank||0);
+                const cash = Number(s.cash||0);
+                const dep  = Number(s.deposit||0);
+                const px   = Number(s.pxAllowance||0);
+
+                if(card>0) btns.push(`<button data-act="rcAuto" data-type="card" data-id="${s.id}">+ Card Settlement</button>`);
+                if(fin>0)  btns.push(`<button data-act="rcAuto" data-type="finance" data-id="${s.id}">+ Finance Payout</button>`);
+                if(bank>0) btns.push(`<button data-act="rcAuto" data-type="bank" data-id="${s.id}">+ Bank</button>`);
+                if(cash>0) btns.push(`<button data-act="rcAuto" data-type="cash" data-id="${s.id}">+ Cash</button>`);
+                if(dep>0)  btns.push(`<button data-act="rcAuto" data-type="deposit" data-id="${s.id}">+ Deposit</button>`);
+                if(px>0)   btns.push(`<button data-act="rcAuto" data-type="px" data-id="${s.id}">+ PX Allow.</button>`);
+                return btns.join(' ');
+              })()
+            }
+          </td>
+          
+          <td>
             <button data-act="inv" data-id="${s.id}">Invoice</button>
             <button data-act="proforma" data-id="${s.id}">Finance Proforma</button>
             ${canAction('edit')?`<button data-act="edit" data-id="${s.id}">Edit</button>`:''}
             ${canAction('del')?` <button class="danger" data-act="del" data-id="${s.id}">Delete</button>`:''}
-          </td>`; 
+          </td>
+          `; 
         body.appendChild(tr); 
 
         // 🔻 Extra rows for Refund / Credit Note linked to this sale
@@ -4593,7 +4720,152 @@ function viewSales(){
       try { renderAlertBell(); } catch(_) {}
       rows(); // refresh sales table
     }
-  
+
+    else if (b.dataset.act === 'rcQuick') {
+      if (!canAction('edit')) return alert('No permission');
+
+      const saleId = b.dataset.id;
+      const s = db.sales.find(x => x.id === saleId);
+      if (!s) return;
+
+      if (!Array.isArray(s.receipts) || s.receipts.length === 0) {
+        return alert('No receipt lines found. Open Edit and add Card/Finance settlement lines first.');
+      }
+
+      const pendingIdx = [];
+      const lines = [];
+
+      function typeLabel(t){
+        t = String(t||'').toLowerCase();
+        if (t === 'card') return 'Card settlement';
+        if (t === 'finance') return 'Finance payout';
+        if (t === 'bank') return 'Bank transfer';
+        if (t === 'cash') return 'Cash';
+        if (t === 'deposit') return 'Deposit';
+        return t || '';
+      }
+
+      s.receipts.forEach((r, i) => {
+        if (!r) return;
+        if (r.status === 'received') return;
+        pendingIdx.push(i);
+        lines.push(
+          `${pendingIdx.length}) ${typeLabel(r.type)} | £${Number(r.amount||0).toFixed(2)} | Exp: ${r.expectedDate||''}${r.note ? ' | ' + r.note : ''}`
+        );
+      });
+
+      if (pendingIdx.length === 0) return alert('No pending funds on this sale.');
+
+      const pick = prompt(
+        `Select which settlement to mark received:\n\n${lines.join('\n')}\n\nEnter number (1-${pendingIdx.length}):`,
+        '1'
+      );
+      if (pick === null) return;
+
+      const n = Number(pick);
+      if (!Number.isFinite(n) || n < 1 || n > pendingIdx.length) return alert('Invalid selection.');
+
+      const realIndex = pendingIdx[n - 1];
+      const r = s.receipts[realIndex];
+      if (!r) return;
+
+      // Ask received date in DD/MM/YYYY
+      const now = new Date();
+      const todayDMY = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+      const recDMY = prompt('Received date (DD/MM/YYYY):', todayDMY);
+      if (recDMY === null) return;
+
+      const recISO = isoFromDMY(recDMY);
+      if (!recISO) return alert('Invalid date. Use DD/MM/YYYY');
+
+      // Ask received amount (can be different)
+      const amtIn = prompt('Amount received (£):', String(Number(r.amount||0).toFixed(2)));
+      if (amtIn === null) return;
+      const amt = Number(amtIn);
+      if (!amt || amt <= 0) return alert('Amount must be > 0');
+
+      r.amount = Math.round(amt * 100) / 100;   // update amount if different
+      r.status = 'received';
+      r.receivedDate = recISO;
+
+      addAudit('update', 'sale', s.id, `Receipt received: ${typeLabel(r.type)} £${Number(r.amount||0).toFixed(2)} on ${r.receivedDate}`);
+      saveDB();
+      rows(); // refresh table
+    }
+
+    else if (b.dataset.act === 'rcAuto') {
+      if (!canAction('edit')) return alert('No permission');
+
+      const saleId = b.dataset.id;
+      const t = b.dataset.type; // card / finance / bank / cash / deposit / px
+      const s = db.sales.find(x => x.id === saleId);
+      if (!s) return;
+
+      if (!Array.isArray(s.receipts)) s.receipts = [];
+
+      function typeLabel(tt){
+        tt = String(tt||'').toLowerCase();
+        if (tt === 'card') return 'Card settlement';
+        if (tt === 'finance') return 'Finance payout';
+        if (tt === 'bank') return 'Bank transfer';
+        if (tt === 'cash') return 'Cash';
+        if (tt === 'deposit') return 'Deposit';
+        if (tt === 'px') return 'PX allowance';
+        return tt || '';
+      }
+
+      // Default amount from sale fields
+      let amt = 0;
+      if (t === 'card') amt = Number(s.card || 0);
+      if (t === 'finance') amt = Number(s.finance || 0);
+      if (t === 'bank') amt = Number(s.bank || 0);
+      if (t === 'cash') amt = Number(s.cash || 0);
+      if (t === 'deposit') amt = Number(s.deposit || 0);
+      if (t === 'px') amt = Number(s.pxAllowance || 0);
+
+      if (!amt || amt <= 0) return alert(`${typeLabel(t)} amount is 0 on this sale.`);
+
+      // Ask amount (editable)
+      const amtIn = prompt(`Amount for ${typeLabel(t)} (£):`, String(amt.toFixed(2)));
+      if (amtIn === null) return;
+      amt = Number(amtIn);
+      if (!amt || amt <= 0) return alert('Amount must be > 0');
+
+      // Default expected date:
+      // - Card default: today+3 days
+      // - Others default: today
+      const d = new Date();
+      if (t === 'card') d.setDate(d.getDate() + 3);
+      const defDMY = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+
+      const expDMY = prompt(`Expected date (DD/MM/YYYY) for ${typeLabel(t)}:`, defDMY);
+      if (expDMY === null) return;
+
+      const expISO = isoFromDMY(expDMY);
+      if (!expISO) return alert('Invalid date. Use DD/MM/YYYY');
+
+      const noteDefault =
+        (t === 'card') ? 'Auto: card settlement' :
+        (t === 'finance') ? (s.financeCompany ? `Auto: ${s.financeCompany}` : 'Auto: finance payout') :
+        `Auto: ${typeLabel(t)}`;
+
+      const note = prompt('Note (optional):', noteDefault);
+      if (note === null) return;
+
+      s.receipts.push({
+        type: (t === 'px' ? 'deposit' : t), // store px allowance as "deposit" or keep as "px" if you prefer
+        amount: Math.round(amt * 100) / 100,
+        expectedDate: expISO,
+        status: 'pending',
+        receivedDate: '',
+        note: note || noteDefault
+      });
+
+      addAudit('update', 'sale', s.id, `Receipt added: ${typeLabel(t)} £${amt.toFixed(2)} exp ${expDMY}`);
+      saveDB();
+      rows(); // refresh sales table
+    }
+
     else if(b.dataset.act==='edit'){ 
       if(!canAction('edit')) return alert('No permission'); 
       editId = s.id; 
@@ -4780,6 +5052,21 @@ function viewSales(){
     warrantyPolicy: (wrap.querySelector('#sale_warrantyPolicy')?.value || '').trim()
   };
 
+  // ✅ Auto-create expected receipt lines from payment fields
+  // If user already has receipt lines (manual split finance etc), keep them.
+  if (!Array.isArray(s.receipts) || s.receipts.length === 0) {
+    s.receipts = buildAutoReceiptsFromSale(s);
+  } else {
+    // If editing: optionally auto-add missing lines for newly-entered payments
+    const auto = buildAutoReceiptsFromSale(s);
+    const key = r => `${r.type}|${Number(r.amount||0).toFixed(2)}`;
+
+    const existingKeys = new Set(s.receipts.map(key));
+    auto.forEach(r=>{
+      if(!existingKeys.has(key(r))) s.receipts.push(r);
+    });
+  }
+
   s.receipts = receiptsFromForm();
 
   // ✅ FREEZE VEHICLE COST AT TIME OF SALE
@@ -4890,8 +5177,6 @@ function viewSales(){
       vin: '',
       status: 'for sale',
       createdAt: new Date().toISOString(),
-      media: [],
-      video: ''
     };
     db.vehicles.unshift(px);
     addAudit('add', 'vehicle', px.id, 'PX ' + px.reg + ' ' + px.make + ' ' + px.model + ' from sale ' + sale.invNo + ' (' + (vStat?.reg || 'Unknown') + ')');
@@ -6657,7 +6942,7 @@ function viewReports(){
   <div class="card"><h3>Monthly Summary</h3><div class="row"><input id="rm_month" type="month" value="${new Date().toISOString().slice(0,7)}"><label class="small"><input type="checkbox" id="rm_cover"> Pretend showroom expenses covered by monthly profit</label><button id="rm_go">Calculate</button><button id="rm_export_xlsx">Export Excel (Month + Sold cars)</button></div><div id="rm_box"></div></div>
   
   <div class="card" style="margin-top:12px">
-    <details open>
+    <details>
       <summary style="cursor:pointer; font-weight:bold; font-size:1.05em;">Funds To Receive (Pending settlements)</summary>
       <div class="row" style="margin-top:10px; align-items:flex-end;">
         <label class="small">From<input id="rtf_from" type="date"></label>
@@ -6686,6 +6971,46 @@ function viewReports(){
   
   <button id="rep_fin_unpaid">Finance Unpaid</button>
   <div id="rep_fin_unpaid_out"></div>
+
+  <div class="card" style="margin-top:12px">
+    <details>
+      <summary style="cursor:pointer;">
+        <h3 style="display:inline;">Money Received (by method) + Details</h3>
+      </summary>
+
+      <div class="row" style="margin-top:10px; align-items:flex-end;">
+        <label class="small">Month
+          <input id="rr_month" type="month" value="${new Date().toISOString().slice(0,7)}">
+        </label>
+
+        <label class="small">Show
+          <select id="rr_mode">
+            <option value="received">Received in month</option>
+            <option value="pending">Pending (Expected in month)</option>
+            <option value="both">Both</option>
+          </select>
+        </label>
+
+        <button id="rr_run" class="primary" type="button">Run</button>
+        <button id="rr_export" type="button">Export CSV</button>
+      </div>
+
+      <div id="rr_summary" class="small" style="margin-top:10px"></div>
+
+      <div id="rr_breakdown" style="margin-top:10px"></div>
+
+      <details style="margin-top:10px" open>
+        <summary style="cursor:pointer; font-weight:700;">Detailed lines</summary>
+        <div id="rr_lines" style="margin-top:10px"></div>
+      </details>
+
+      <details style="margin-top:10px">
+        <summary style="cursor:pointer; font-weight:700;">Pending / Expected lines</summary>
+        <div id="rr_pending" style="margin-top:10px"></div>
+      </details>
+
+    </details>
+  </div>
 
   <div class="card">
     <details>
@@ -6999,6 +7324,246 @@ function viewReports(){
       +'<tr><th>Net Profit/Loss (Month Close method)</th><td class="right"><b>'+fmtMoney(netMonthClose)+'</b></td></tr>'
       +'</tbody></table>';
   };
+
+  // ===== Receipts Report (Money Received / Pending) =====
+  function typeLabel(t){
+    t = String(t||'').toLowerCase();
+    if(t==='deposit') return 'Deposit';
+    if(t==='cash') return 'Cash';
+    if(t==='card') return 'Card';
+    if(t==='bank') return 'Bank';
+    if(t==='finance') return 'Finance';
+    return t || 'Other';
+  }
+
+  function ymKey(isoDate){
+    return String(isoDate||'').slice(0,7);
+  }
+
+  function buildReceiptsReport(monthKey, mode){
+    const linesReceived = [];
+    const linesPending = [];
+
+    // Build lists
+    (db.sales || []).forEach(s=>{
+      if(!isRealSale(s)) return; // your function exists :contentReference[oaicite:3]{index=3}
+      const v = (db.vehicles || []).find(x=>x.id===s.vehicleId) || {};
+      const inv = s.invNo || s.id || '';
+
+      const receipts = Array.isArray(s.receipts) ? s.receipts : [];
+
+      receipts.forEach(r=>{
+        if(!r) return;
+        const amt = Number(r.amount||0);
+
+        // Received lines
+        if(r.status === 'received' && r.receivedDate && ymKey(r.receivedDate) === monthKey){
+          linesReceived.push({
+            saleId: s.id,
+            inv,
+            saleDate: s.date || '',
+            reg: (v.reg||'').toUpperCase(),
+            make: v.make || '',
+            model: v.model || '',
+            customer: s.buyer || '',
+            method: typeLabel(r.type),
+            date: r.receivedDate,
+            amount: amt,
+            note: r.note || ''
+          });
+        }
+
+        // Pending/Expected lines
+        if(r.status !== 'received' && r.expectedDate && ymKey(r.expectedDate) === monthKey){
+          linesPending.push({
+            saleId: s.id,
+            inv,
+            saleDate: s.date || '',
+            reg: (v.reg||'').toUpperCase(),
+            make: v.make || '',
+            model: v.model || '',
+            customer: s.buyer || '',
+            method: typeLabel(r.type),
+            date: r.expectedDate,
+            amount: amt,
+            note: r.note || ''
+          });
+        }
+      });
+    });
+
+    // Sort by date then reg
+    linesReceived.sort((a,b)=> (a.date||'').localeCompare(b.date||'') || (a.reg||'').localeCompare(b.reg||''));
+    linesPending.sort((a,b)=> (a.date||'').localeCompare(b.date||'') || (a.reg||'').localeCompare(b.reg||''));
+
+    // Totals by method (received)
+    const byMethod = {};
+    linesReceived.forEach(x=>{
+      if(!byMethod[x.method]) byMethod[x.method] = 0;
+      byMethod[x.method] += Number(x.amount||0);
+    });
+
+    const totalReceived = linesReceived.reduce((t,x)=>t+Number(x.amount||0),0);
+    const totalPending  = linesPending.reduce((t,x)=>t+Number(x.amount||0),0);
+
+    // Summary
+    const sumEl = wrap.querySelector('#rr_summary');
+    if(sumEl){
+      sumEl.innerHTML =
+        `<b>${monthKey}</b> • Received lines: <b>${linesReceived.length}</b> • Total received: <b>${fmtMoney(totalReceived)}</b>` +
+        ` • Pending lines: <b>${linesPending.length}</b> • Total pending: <b>${fmtMoney(totalPending)}</b>`;
+    }
+
+    // Breakdown table (received by method)
+    const bdEl = wrap.querySelector('#rr_breakdown');
+    if(bdEl){
+      const rows = Object.keys(byMethod).sort().map(m=>`
+        <tr><td>${m}</td><td class="right">${fmtMoney(byMethod[m])}</td></tr>
+      `).join('');
+      bdEl.innerHTML = `
+        <table class="table">
+          <thead><tr><th>Method (Received)</th><th class="right">Amount</th></tr></thead>
+          <tbody>
+            ${rows || `<tr><td colspan="2" class="small">No received lines in this month.</td></tr>`}
+            <tr><th>Total</th><th class="right">${fmtMoney(totalReceived)}</th></tr>
+          </tbody>
+        </table>
+      `;
+    }
+
+    // Detailed lines table (received)
+    const linesEl = wrap.querySelector('#rr_lines');
+    if(linesEl){
+      if(!linesReceived.length){
+        linesEl.innerHTML = `<div class="small">No received payments recorded in this month.</div>`;
+      } else {
+        linesEl.innerHTML = `
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Received Date</th>
+                <th>Method</th>
+                <th>Reg</th>
+                <th>Vehicle</th>
+                <th>Customer</th>
+                <th>Inv</th>
+                <th>Sale Date</th>
+                <th class="right">Amount</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${linesReceived.map(x=>`
+                <tr>
+                  <td>${ddmmyyyy(x.date)}</td>
+                  <td>${x.method}</td>
+                  <td>${x.reg}</td>
+                  <td>${x.make} ${x.model}</td>
+                  <td>${escapeHtml(x.customer)}</td>
+                  <td>${escapeHtml(String(x.inv))}</td>
+                  <td>${ddmmyyyy(x.saleDate)}</td>
+                  <td class="right">${fmtMoney(x.amount)}</td>
+                  <td>${escapeHtml(x.note)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      }
+    }
+
+    // Pending lines table
+    const pendEl = wrap.querySelector('#rr_pending');
+    if(pendEl){
+      if(!linesPending.length){
+        pendEl.innerHTML = `<div class="small">No pending/expected settlements in this month.</div>`;
+      } else {
+        pendEl.innerHTML = `
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Expected Date</th>
+                <th>Method</th>
+                <th>Reg</th>
+                <th>Vehicle</th>
+                <th>Customer</th>
+                <th>Inv</th>
+                <th>Sale Date</th>
+                <th class="right">Amount</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${linesPending.map(x=>`
+                <tr>
+                  <td>${ddmmyyyy(x.date)}</td>
+                  <td>${x.method}</td>
+                  <td>${x.reg}</td>
+                  <td>${x.make} ${x.model}</td>
+                  <td>${escapeHtml(x.customer)}</td>
+                  <td>${escapeHtml(String(x.inv))}</td>
+                  <td>${ddmmyyyy(x.saleDate)}</td>
+                  <td class="right">${fmtMoney(x.amount)}</td>
+                  <td>${escapeHtml(x.note)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      }
+    }
+
+    // Save for export
+    wrap._rr_cache = { monthKey, linesReceived, linesPending, byMethod, totalReceived, totalPending };
+  }
+
+  function exportReceiptsCSV(){
+    const c = wrap._rr_cache;
+    if(!c) return alert('Run the report first.');
+
+    const mode = wrap.querySelector('#rr_mode')?.value || 'received';
+
+    const out = [];
+    const pushRows = (arr, kind) => {
+      arr.forEach(x=>{
+        out.push({
+          kind,
+          month: c.monthKey,
+          received_or_expected_date: dmyFromISO ? dmyFromISO(x.date) : ddmmyyyy(x.date),
+          method: x.method,
+          reg: x.reg,
+          vehicle: (x.make + ' ' + x.model).trim(),
+          customer: x.customer,
+          invoice: x.inv,
+          sale_date: dmyFromISO ? dmyFromISO(x.saleDate) : ddmmyyyy(x.saleDate),
+          amount: Number(x.amount||0),
+          note: x.note
+        });
+      });
+    };
+
+    if(mode === 'received') pushRows(c.linesReceived, 'RECEIVED');
+    else if(mode === 'pending') pushRows(c.linesPending, 'PENDING');
+    else { pushRows(c.linesReceived, 'RECEIVED'); pushRows(c.linesPending, 'PENDING'); }
+
+    if(!out.length) return alert('Nothing to export for this selection.');
+    downloadCSV(out, `receipts_${c.monthKey}_${mode}.csv`);
+  }
+
+  // Hook buttons
+  const rrRunBtn = wrap.querySelector('#rr_run');
+  const rrExportBtn = wrap.querySelector('#rr_export');
+  if(rrRunBtn){
+    rrRunBtn.onclick = () => {
+      const m = (wrap.querySelector('#rr_month').value || '').slice(0,7);
+      const mode = wrap.querySelector('#rr_mode')?.value || 'received';
+      if(!m) return alert('Please select a month');
+      buildReceiptsReport(m, mode);
+    };
+  }
+  if(rrExportBtn){
+    rrExportBtn.onclick = exportReceiptsCSV;
+  }
 
   // ===== Funds To Receive report =====
   function buildFundsToReceive(){
