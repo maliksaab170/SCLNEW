@@ -546,10 +546,20 @@ function exportVehiclesCSV() {
     // CSV headers
     const headers = [
         'REG', 'Make', 'Model', 'Colour', 'Fuel', 'Mileage', 
-        'First Registration', 'Purchase Date', 'Purchase Price', 
+        'First Registration', 'Purchase Date', 'Days In Stock', 'Purchase Price', 
         'Owner Type', 'Investor', 'Status', 'Supplier', 'Supplier Note',
         'VIN', 'Created At', 'Last MOT Date', 'Last MOT Expiry', 'Last MOT Mileage'
     ];
+
+    function calcDaysInStock(v) {
+      const pd = v.purchaseDate || v.createdAt || '';
+      if (!pd) return '';
+      const d1 = new Date(pd);
+      const d2 = new Date();
+      d1.setHours(0,0,0,0); d2.setHours(0,0,0,0);
+      if (isNaN(d1) || isNaN(d2)) return '';
+      return Math.max(0, Math.ceil((d2 - d1)/(1000*60*60*24)));
+    }
     
     // Rows
     const rows = filteredVehicles.map(v => [
@@ -561,6 +571,7 @@ function exportVehiclesCSV() {
         v.mileage || 0,
         ddmmyyyy(v.firstReg || ''),
         ddmmyyyy(v.purchaseDate || ''),
+        calcDaysInStock(v),
         Number(v.purchase || 0).toFixed(2),
         v.ownerType || 'owned',
         v.investor || '',
@@ -2785,13 +2796,18 @@ function viewVehicles(){
         <option value="valid">Valid MOT</option>
       </select>
     </label>
+
+    <label class="small" style="display: flex; align-items: center; margin: 0;">
+      Days In Stock
+      <input id="veh_daysFilter" type="number" min="0" placeholder="e.g. 30" style="width:90px; margin-left:4px;">
+    </label>
     <button onclick="exportVehiclesCSV()">Export CSV</button>
   </div>
 
   <div id="veh_totals" class="small" style="margin-top:10px"></div>
 
   <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>Engine Size</th><th>First Reg</th><th>Purchase Date</th><th>Days in Stock</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
-  <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
+  `;
   
   // Populate investor dropdown from db.investors
   const invSel = wrap.querySelector('#v_investor');
@@ -2832,6 +2848,7 @@ function viewVehicles(){
   const pxOnly = wrap.querySelector('#veh_pxonly')?.checked;
   const notReadyOnly = wrap.querySelector('#veh_notready')?.checked;
   const motFilter = wrap.querySelector('#veh_motFilter')?.value || '';
+  const daysFilter = wrap.querySelector('#veh_daysFilter')?.value;
   
   (db.vehicles||[]).forEach(v=>{
     // Apply filters...
@@ -2904,6 +2921,8 @@ function viewVehicles(){
         daysInStock = Math.max(0, Math.ceil((d2 - d1)/(1000*60*60*24)));
       }
     }
+
+    if (daysFilter && daysInStock !== '' && daysInStock < Number(daysFilter)) return;
 
     tr.innerHTML=`<td>${v.reg||''}</td>
     <td>${v.make||''}</td>
@@ -3032,10 +3051,15 @@ function viewVehicles(){
     applyVehFilter();
   });
 
-  // NEW: MOT filter change listener
+  // MOT filter change listener
   const MOT_FILTER = wrap.querySelector('#veh_motFilter');
   if(MOT_FILTER) {
     MOT_FILTER.addEventListener('change', applyVehFilter);
+  }
+
+  const DAYS_FILTER = wrap.querySelector('#veh_daysFilter');
+  if (DAYS_FILTER) {
+    DAYS_FILTER.addEventListener('input', applyVehFilter);
   }
 
   wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const id=b.dataset.id,act=b.dataset.act;
@@ -6982,7 +7006,29 @@ function viewReports(){
   <details id="r_fold"><summary>Show audit entries (<span id="r_count">0</span>)</summary><div id="r_tblwrap"><table class="table" style="margin-top:8px"><thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody id="r_body"></tbody></table></div></details></div>
 
   <div class="card"><h3>Monthly Summary</h3><div class="row"><input id="rm_month" type="month" value="${new Date().toISOString().slice(0,7)}"><label class="small"><input type="checkbox" id="rm_cover"> Pretend showroom expenses covered by monthly profit</label><button id="rm_go">Calculate</button><button id="rm_export_xlsx">Export Excel (Month + Sold cars)</button></div><div id="rm_box"></div></div>
+
+  <div class="card"><h3>Month Close (Directors & Investors)</h3>
+    <div class="row"><input id="mc_month" type="month" value="${new Date().toISOString().slice(0,7)}"> <button id="mc_prev">Preview</button><button id="mc_post" class="primary">Post</button><button id="mc_export">Export PDF</button><span id="mc_warn" class="small" style="margin-left:8px;color:#ffb3b3"></span></div><div id="mc_box" class="small"></div>
+  </div>
   
+  <button id="rep_fin_unpaid">Finance Unpaid</button>
+  <div id="rep_fin_unpaid_out"></div>
+
+  <div class="card" style="margin-top:12px">
+    <details id="stockDays_fold">
+      <summary style="cursor:pointer; font-weight:bold; font-size:1.17em;">Stock In Days (In Stock Vehicles)</summary>
+      <div class="row" style="align-items: flex-end; gap: 8px;">
+        <label class="small">Days
+          <input id="sid_minDays" type="number" min="1" style="width:90px;" placeholder="e.g. 30">
+        </label>
+        <button id="sid_run" class="primary">Run</button>
+        <button id="sid_export">Export CSV</button>
+      </div>
+      <div id="sid_sum" class="small" style="margin-top:10px"></div>
+      <div id="sid_tbl" style="margin-top:10px"></div>
+    </details>
+  </div>
+
   <div class="card" style="margin-top:12px">
     <details>
       <summary style="cursor:pointer; font-weight:bold; font-size:1.05em;">Funds To Receive (Pending settlements)</summary>
@@ -7006,13 +7052,6 @@ function viewReports(){
       <div id="rtf_out" style="margin-top:10px"></div>
     </details>
   </div>
-
-  <div class="card"><h3>Month Close (Directors & Investors)</h3>
-    <div class="row"><input id="mc_month" type="month" value="${new Date().toISOString().slice(0,7)}"> <button id="mc_prev">Preview</button><button id="mc_post" class="primary">Post</button><button id="mc_export">Export PDF</button><span id="mc_warn" class="small" style="margin-left:8px;color:#ffb3b3"></span></div><div id="mc_box" class="small"></div>
-  </div>
-  
-  <button id="rep_fin_unpaid">Finance Unpaid</button>
-  <div id="rep_fin_unpaid_out"></div>
 
   <div class="card" style="margin-top:12px">
     <details>
@@ -7158,6 +7197,127 @@ function viewReports(){
     </details>
   </div>
   `;
+
+  setTimeout(() => {
+    const runBtn = document.getElementById('sid_run');
+    const daysEl = document.getElementById('sid_minDays');
+    const sumEl = document.getElementById('sid_sum');
+    const tblEl = document.getElementById('sid_tbl');
+    const exportBtn = document.getElementById('sid_export'); // Add this line
+    let rowsCache = []; // Variable to keep rows for export
+
+    function calcDaysInStock(v) {
+      const pd = v.purchaseDate || v.createdAt || '';
+      if (!pd) return '';
+      const d1 = new Date(pd);
+      const d2 = new Date();
+      d1.setHours(0, 0, 0, 0);
+      d2.setHours(0, 0, 0, 0);
+      if (isNaN(d1) || isNaN(d2)) return '';
+      return Math.max(0, Math.ceil((d2 - d1) / (1000 * 60 * 60 * 24)));
+    }
+    function run() {
+      const minDays = Number(daysEl?.value || 0);
+      if (!minDays) {
+        tblEl.innerHTML = '<div class="small">Enter minimum days in stock.</div>';
+        sumEl.textContent = '';
+        rowsCache = [];
+        return;
+      }
+      const stock = (window.db.vehicles || []).filter(v => String(v.status || '').toLowerCase() !== 'sold');
+      const filtered = stock.filter(v => calcDaysInStock(v) >= minDays);
+
+      let totalPurchase = 0;
+      let totalWithVehExp = 0;
+      const expByVeh = {};
+      (window.db.vehicleExpenses || []).forEach(e => {
+        const vid = e.vehicleId;
+        if (!vid) return;
+        expByVeh[vid] = (expByVeh[vid] || 0) + Number(e.amount || 0);
+      });
+
+      filtered.forEach(v => {
+        totalPurchase += Number(v.purchase || 0);
+        totalWithVehExp += Number(v.purchase || 0) + Number(expByVeh[v.id] || 0);
+      });
+
+      sumEl.innerHTML =
+        `In stock ${filtered.length} vehicle${filtered.length !== 1 ? 's' : ''} with ≥${minDays} days in stock` +
+        ` • Purchase: <b>£${totalPurchase.toFixed(2)}</b>` +
+        ` • Purchase + vehicle expenses: <b>£${totalWithVehExp.toFixed(2)}</b>`;
+
+      tblEl.innerHTML = `
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Reg</th>
+              <th>Make</th>
+              <th>Model</th>
+              <th>Purchase Date</th>
+              <th>Days In Stock</th>
+              <th>Purchase £</th>
+              <th>Expenses £</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.map(v => `
+              <tr>
+                <td>${v.reg || ''}</td>
+                <td>${v.make || ''}</td>
+                <td>${v.model || ''}</td>
+                <td>${v.purchaseDate || v.createdAt || ''}</td>
+                <td class="right">${calcDaysInStock(v)}</td>
+                <td class="right">${v.purchase || 0}</td>
+                <td class="right">${expByVeh[v.id] || 0}</td>
+                <td>${v.status || ''}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+      // Store for export!
+      rowsCache = filtered.map(v => ({
+        reg: v.reg || '',
+        make: v.make || '',
+        model: v.model || '',
+        purchaseDate: v.purchaseDate || v.createdAt || '',
+        daysInStock: calcDaysInStock(v),
+        purchase: v.purchase || 0,
+        expenses: expByVeh[v.id] || 0,
+        status: v.status || ''
+      }));
+    }
+
+    if (runBtn) runBtn.onclick = run;
+
+    // ---- CSV EXPORT BUTTON ----
+    if (exportBtn) {
+      exportBtn.onclick = function () {
+        if (!rowsCache.length) {
+          alert('Nothing to export – run the report first.');
+          return;
+        }
+        const headers = ['Reg', 'Make', 'Model', 'Purchase Date', 'Days In Stock', 'Purchase £', 'Expenses £', 'Status'];
+        const csv = [headers.join(',')]
+          .concat(rowsCache.map(row =>
+            [
+              row.reg, row.make, row.model, row.purchaseDate, row.daysInStock, row.purchase, row.expenses, row.status
+            ].map(val => {
+              val = (val == null ? '' : String(val));
+              return /[",\n]/.test(val) ? `"${val.replace(/"/g, '""')}"` : val;
+            }).join(',')
+          ))
+          .join('\n');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+        a.download = `stock_in_days_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      };
+    }
+  }, 10);
   
   /* Audit Log */
   const body=wrap.querySelector('#r_body'); const out=wrap.querySelector('#r_out');
