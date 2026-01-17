@@ -586,12 +586,12 @@ function exportVehiclesCSV() {
     ]);
     
     const csvContent = [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => 
-            typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n'))
-                ? `"${cell.replace(/"/g,'""')}"`
-                : cell
-        ).join(','))
+      headers.join(','),
+      ...rows.map(row => row.map(cell => 
+          (typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n')))
+            ? `"${cell.replace(/"/g,'""')}"`
+            : cell
+      ).join(','))
     ].join('\n');
     
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -3011,7 +3011,7 @@ function viewVehicles(){
   if(CHK_INVESTOR) CHK_INVESTOR.addEventListener('change', (e)=>{ 
     if(e.target.checked){ 
       const instock = wrap.querySelector('#veh_instock');
-      if(instock) instock.checked = false;
+      if(instock) instock.checked = true;
 
       const sold = wrap.querySelector('#veh_soldonly');
       if(sold) sold.checked = false;
@@ -4370,14 +4370,24 @@ function viewSales(){
         r.status = 'pending';
         r.receivedDate = '';
       } else {
+        // mark received (allow edit amount + date)
         const now = new Date();
         const defDMY = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+
+        // amount prompt (default to expected)
+        const defAmt = Number(r.amount || 0).toFixed(2);
+        const amtStr = prompt('Received amount (£)', defAmt);
+        if(amtStr === null) return;
+        const newAmt = Number(amtStr);
+        if(!isFinite(newAmt) || newAmt <= 0) return alert('Invalid amount');
+
         const recDMY = prompt('Received date (DD/MM/YYYY)', defDMY);
         if(recDMY === null) return;
 
         const recISO = isoFromDMY(recDMY);
         if(!recISO) return alert('Invalid date. Use DD/MM/YYYY');
 
+        r.amount = Math.round(newAmt * 100) / 100;
         r.status = 'received';
         r.receivedDate = recISO;
       }
