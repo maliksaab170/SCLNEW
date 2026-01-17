@@ -477,20 +477,23 @@ function exportVehiclesCSV() {
     const vehicles = db.vehicles || [];
     
     // Apply the same filters as the current view
-    const searchTerm   = (document.getElementById('veh_search')?.value || '').toLowerCase().trim();
-    const instockOnly  = document.getElementById('veh_instock')?.checked;
-    const soldOnly     = document.getElementById('veh_soldonly')?.checked;
+    const searchTerm = (document.getElementById('veh_search')?.value || '').toLowerCase().trim();
+    const instockOnly = document.getElementById('veh_instock')?.checked;
+    const soldOnly = document.getElementById('veh_soldonly')?.checked;
     const investorOnly = document.getElementById('veh_investoronly')?.checked;
-    const pxOnly       = document.getElementById('veh_pxonly')?.checked;
-    const motFilter    = document.getElementById('veh_motFilter')?.value || '';
+    const pxOnly = document.getElementById('veh_pxonly')?.checked;
+    const motFilter = document.getElementById('veh_motFilter')?.value || '';
     
     let filteredVehicles = vehicles.filter(v => {
         // Stock status
         if (instockOnly && v.status === 'sold') return false;
-        if (soldOnly    && v.status !== 'sold') return false;
+        if (soldOnly && v.status !== 'sold') return false;
         
         // Investor stock only
-        if (investorOnly && v.ownerType !== 'investor') return false;
+        if (investorOnly) {
+          if (v.ownerType !== 'investor') return false;
+          if (v.status === 'sold') return false;
+        }
         
         // Part-ex only
         if (pxOnly && v.supplier !== 'PART-EX') return false;
@@ -2787,7 +2790,7 @@ function viewVehicles(){
 
   <div id="veh_totals" class="small" style="margin-top:10px"></div>
 
-  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>Engine Size</th><th>First Reg</th><th>Purchase Date</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
+  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>Engine Size</th><th>First Reg</th><th>Purchase Date</th><th>Days in Stock</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
   <div class="small" style="margin-top:8px">Note: DVLA proxy required in Settings. DVLA may not return Model/VIN.</div>`;
   
   // Populate investor dropdown from db.investors
@@ -2836,7 +2839,10 @@ function viewVehicles(){
     if (soldOnly && v.status !== 'sold') return;
     
     // Apply investor stock filter
-    if (investorOnly && v.ownerType !== 'investor') return;
+    if (investorOnly) {
+      if (v.ownerType !== 'investor') return;
+      if (v.status === 'sold') return;
+    }
     
     // Apply part-ex filter
     if (pxOnly && v.supplier !== 'PART-EX') return;
@@ -2887,6 +2893,18 @@ function viewVehicles(){
     
     const tr=document.createElement('tr');
     const mcount=(v.media||[]).length + ((v.video&&1)||0);
+
+    let purchaseDate = v.purchaseDate || v.createdAt || '';
+    let daysInStock = '';
+    if (purchaseDate) {
+      const d1 = new Date(purchaseDate);
+      const d2 = new Date();
+      d1.setHours(0,0,0,0); d2.setHours(0,0,0,0);
+      if (!isNaN(d1) && !isNaN(d2)) {
+        daysInStock = Math.max(0, Math.ceil((d2 - d1)/(1000*60*60*24)));
+      }
+    }
+
     tr.innerHTML=`<td>${v.reg||''}</td>
     <td>${v.make||''}</td>
     <td>${v.model||''}</td>
@@ -2896,6 +2914,7 @@ function viewVehicles(){
     <td>${v.engineSize||''}</td>
     <td>${ddmmyyyy(v.firstReg||'')}</td>
     <td>${ddmmyyyy(v.purchaseDate||'')}</td>
+    <td>${daysInStock}</td>
     <td>${v.ownerType||'owned'}</td>
     <td>${v.investor||''}</td>
     <td class="right">${fmtMoney(v.purchase||0)}</td>
@@ -2971,16 +2990,20 @@ function viewVehicles(){
 
   const CHK_INVESTOR=wrap.querySelector('#veh_investoronly'); 
   if(CHK_INVESTOR) CHK_INVESTOR.addEventListener('change', (e)=>{ 
-  if(e.target.checked){ 
-    const s=wrap.querySelector('#veh_instock'); 
-    if(s) s.checked=false; 
-    const sold=wrap.querySelector('#veh_soldonly'); 
-    if(sold) sold.checked=false; 
-    const px=wrap.querySelector('#veh_pxonly'); 
-    if(px) px.checked=false;
-    const nr = wrap.querySelector('#veh_notready'); if(nr) nr.checked = false; 
-  } 
-  applyVehFilter(); 
+    if(e.target.checked){ 
+      const instock = wrap.querySelector('#veh_instock');
+      if(instock) instock.checked = false;
+
+      const sold = wrap.querySelector('#veh_soldonly');
+      if(sold) sold.checked = false;
+
+      const px = wrap.querySelector('#veh_pxonly');
+      if(px) px.checked = false;
+
+      const nr = wrap.querySelector('#veh_notready');
+      if(nr) nr.checked = false;
+    }
+    applyVehFilter();
   });
 
   const CHK_PX=wrap.querySelector('#veh_pxonly'); 
@@ -3905,6 +3928,24 @@ function viewSales(){
     return sales;
   }
 
+  function receiptExpectedAmount(r){
+    return Number((r && r.expectedAmount != null) ? r.expectedAmount : (r ? r.amount : 0)) || 0;
+  }
+
+  function receiptReceivedAmount(r){
+    return Number((r && r.receivedAmount != null) ? r.receivedAmount : (r ? r.amount : 0)) || 0;
+  }
+
+  function typeLabel(t){
+    t = String(t||'').toLowerCase();
+    if (t === 'card') return 'Card';
+    if (t === 'finance') return 'Finance';
+    if (t === 'bank') return 'Bank';
+    if (t === 'cash') return 'Cash';
+    if (t === 'deposit') return 'Deposit';
+    return t || '';
+  }
+
   (function initSaleCollapsibleSections(){
     const pxToggle  = wrap.querySelector('#sale_hasPX');
     const finToggle = wrap.querySelector('#sale_hasFinance');
@@ -4001,22 +4042,35 @@ function viewSales(){
     const out = wrap.querySelector('#sale_costProfitInfo');
     if(!out) return;
 
-    const reg = wrap.querySelector('#sale_reg')?.value || '';
-    const v = findVehicleByReg(reg);
+    // Staff cannot see profit/cost
+    if(!canProfit()){
+      out.innerHTML = '';
+      return;
+    }
 
+    // Managers/admin: show preview
+    const reg = (wrap.querySelector('#sale_reg')?.value || '').trim().toUpperCase();
+    const v = (db.vehicles||[]).find(x => (x.reg||'').toUpperCase() === reg);
     if(!v){
       out.innerHTML = '';
       return;
     }
 
-    const cost = vehicleTotalCostByVehicleId(v.id);
-    const salePrice = Number(wrap.querySelector('#sale_price')?.value || 0);
-    const gross = salePrice - cost.total;
+    const vexp = (db.vehicleExpenses||[])
+      .filter(e => e.vehicleId === v.id)
+      .reduce((t,e)=>t+Number(e.amount||0),0);
 
-    out.innerHTML =
-      `Total Cost: <b>${fmtMoney(cost.total)}</b> ` +
-      `(Purchase ${fmtMoney(cost.purchase)} + Exp ${fmtMoney(cost.exp)})` +
-      ` &nbsp; | &nbsp; Gross: <b>${fmtMoney(gross)}</b>`;
+    const totalCost = Number(v.purchase||0) + vexp;
+    const salePrice = Number(wrap.querySelector('#sale_price')?.value || 0);
+    const gross = salePrice - totalCost;
+
+    out.innerHTML = `
+      <div style="margin-top:6px; padding:8px; border:1px dashed rgba(255,255,255,.12); border-radius:10px;">
+        <b>Cost/Profit (Admin only)</b><br>
+        Total Cost: <b>${fmtMoney(totalCost)}</b> &nbsp; | &nbsp;
+        Gross: <b>${fmtMoney(gross)}</b>
+      </div>
+    `;
   }
 
   // Hook to REG + sale price inputs
@@ -4109,10 +4163,7 @@ function viewSales(){
   hookSalePaymentSummary(wrap);
 
   function buildAutoReceiptsFromSale(s){
-    // Auto-create pending receipt lines from filled payment fields.
-    // Stores dates as ISO (YYYY-MM-DD). UI already displays dd/mm/yyyy via ddmmyyyy().
     const out = [];
-
     const saleDate = String(s.date || '').trim();
     const baseDate = saleDate || new Date().toISOString().slice(0,10);
 
@@ -4136,13 +4187,20 @@ function viewSales(){
       });
     }
 
-    // Expected dates (same day as Sale Date for ALL)
     push('deposit', s.deposit, baseDate, 'Auto: deposit');
     push('cash',    s.cash,    baseDate, 'Auto: cash');
     push('bank',    s.bank,    baseDate, 'Auto: bank transfer');
-    push('card',    s.card,    baseDate, 'Auto: card settlement');
-    const finNote = s.financeCompany ? `Auto: finance payout (${s.financeCompany})` : 'Auto: finance payout';
-    push('finance', s.finance, baseDate, finNote);
+
+    // ✅ Card usually settles 2-3 days later
+    if (Number(s.card||0) > 0) {
+      push('card', s.card, addDaysISO(baseDate, 3), 'Auto: card settlement (+3 days)');
+    }
+
+    // ✅ Finance payout usually 5-7 days later
+    if (Number(s.finance||0) > 0) {
+      const finNote = s.financeCompany ? `Auto: finance payout (${s.financeCompany})` : 'Auto: finance payout';
+      push('finance', s.finance, addDaysISO(baseDate, 7), finNote + ' (+7 days)');
+    }
 
     return out;
   }
@@ -4421,32 +4479,37 @@ function viewSales(){
           ${canProfit()? ('<td class="right">'+fmtMoney(totalCost)+'</td><td class="right"><b>'+fmtMoney(profit)+'</b></td>'): ''}
           <td>
             ${(function(){
-                const pending = (Array.isArray(s.receipts)?s.receipts:[]).filter(r=>r && r.status!=='received');
-                return pending.length
-                  ? `<button data-act="rcQuick" data-id="${s.id}" title="Mark a pending settlement as received">Receive Funds (${pending.length})</button>`
-                  : '';
-              })()
-            }
+              const receipts = Array.isArray(s.receipts) ? s.receipts : [];
+              if (!receipts.length) return `<span class="small">No funds</span>`;
 
-            ${(function(){
-                // ✅ Quick add buttons show only if method used
-                const btns = [];
-                const card = Number(s.card||0);
-                const fin  = Number(s.finance||0);
-                const bank = Number(s.bank||0);
-                const cash = Number(s.cash||0);
-                const dep  = Number(s.deposit||0);
-                const px   = Number(s.pxAllowance||0);
+              const pending = receipts.filter(r => r && r.status !== 'received');
+              const allPaid = pending.length === 0;
 
-                if(card>0) btns.push(`<button data-act="rcAuto" data-type="card" data-id="${s.id}">+ Card Settlement</button>`);
-                if(fin>0)  btns.push(`<button data-act="rcAuto" data-type="finance" data-id="${s.id}">+ Finance Payout</button>`);
-                if(bank>0) btns.push(`<button data-act="rcAuto" data-type="bank" data-id="${s.id}">+ Bank</button>`);
-                if(cash>0) btns.push(`<button data-act="rcAuto" data-type="cash" data-id="${s.id}">+ Cash</button>`);
-                if(dep>0)  btns.push(`<button data-act="rcAuto" data-type="deposit" data-id="${s.id}">+ Deposit</button>`);
-                if(px>0)   btns.push(`<button data-act="rcAuto" data-type="px" data-id="${s.id}">+ PX Allow.</button>`);
-                return btns.join(' ');
-              })()
-            }
+              if (allPaid) {
+                const totalRec = receipts.reduce((t,r)=> t + receiptReceivedAmount(r), 0);
+                return `<span style="font-size:12px;font-weight:800;color:#2ecc71;">✅ PAID</span>
+                        <div class="small">Received: ${fmtMoney(totalRec)}</div>`;
+              }
+
+              const parts = receipts.map((r, i) => {
+                if (!r) return '';
+                const exp = receiptExpectedAmount(r);
+                const rec = receiptReceivedAmount(r);
+
+                if (r.status === 'received') {
+                  return `<span class="badge" style="border-color:#2ecc71;">
+                            ✅ ${typeLabel(r.type)} ${fmtMoney(rec)} • ${ddmmyyyy(r.receivedDate||'')}
+                          </span>`;
+                }
+
+                // pending = show button
+                return `<button data-act="rcLine" data-id="${s.id}" data-idx="${i}" title="Mark ${typeLabel(r.type)} as received">
+                          ${typeLabel(r.type)} ${fmtMoney(exp)}
+                        </button>`;
+              }).join(' ');
+
+              return parts + `<div class="small" style="margin-top:6px;">Click a method to mark received</div>`;
+            })()}
           </td>
           
           <td>
@@ -4756,146 +4819,67 @@ function viewSales(){
       rows(); // refresh sales table
     }
 
-    else if (b.dataset.act === 'rcQuick') {
+    else if (b.dataset.act === 'rcLine') {
       if (!canAction('edit')) return alert('No permission');
 
       const saleId = b.dataset.id;
+      const idx = Number(b.dataset.idx);
       const s = db.sales.find(x => x.id === saleId);
-      if (!s) return;
+      if (!s || !Array.isArray(s.receipts) || !s.receipts[idx]) return;
 
-      if (!Array.isArray(s.receipts) || s.receipts.length === 0) {
-        return alert('No receipt lines found. Open Edit and add Card/Finance settlement lines first.');
-      }
+      const r = s.receipts[idx];
 
-      const pendingIdx = [];
-      const lines = [];
+      // Make sure expectedAmount exists (never lose expected)
+      if (r.expectedAmount == null) r.expectedAmount = Number(r.amount || 0);
 
-      function typeLabel(t){
-        t = String(t||'').toLowerCase();
-        if (t === 'card') return 'Card settlement';
-        if (t === 'finance') return 'Finance payout';
-        if (t === 'bank') return 'Bank transfer';
-        if (t === 'cash') return 'Cash';
-        if (t === 'deposit') return 'Deposit';
-        return t || '';
-      }
+      const expected = receiptExpectedAmount(r);
 
-      s.receipts.forEach((r, i) => {
-        if (!r) return;
-        if (r.status === 'received') return;
-        pendingIdx.push(i);
-        lines.push(
-          `${pendingIdx.length}) ${typeLabel(r.type)} | £${Number(r.amount||0).toFixed(2)} | Exp: ${r.expectedDate||''}${r.note ? ' | ' + r.note : ''}`
-        );
-      });
-
-      if (pendingIdx.length === 0) return alert('No pending funds on this sale.');
-
-      const pick = prompt(
-        `Select which settlement to mark received:\n\n${lines.join('\n')}\n\nEnter number (1-${pendingIdx.length}):`,
-        '1'
-      );
-      if (pick === null) return;
-
-      const n = Number(pick);
-      if (!Number.isFinite(n) || n < 1 || n > pendingIdx.length) return alert('Invalid selection.');
-
-      const realIndex = pendingIdx[n - 1];
-      const r = s.receipts[realIndex];
-      if (!r) return;
-
-      // Ask received date in DD/MM/YYYY
+      // Default date = today (DD/MM/YYYY), user can change
       const now = new Date();
       const todayDMY = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
-      const recDMY = prompt('Received date (DD/MM/YYYY):', todayDMY);
+
+      const recDMY = prompt(`${typeLabel(r.type)} received date (DD/MM/YYYY):`, todayDMY);
       if (recDMY === null) return;
 
       const recISO = isoFromDMY(recDMY);
       if (!recISO) return alert('Invalid date. Use DD/MM/YYYY');
 
-      // Ask received amount (can be different)
-      const amtIn = prompt('Amount received (£):', String(Number(r.amount||0).toFixed(2)));
+      // Default amount = expected, user can change (less/more)
+      const amtIn = prompt(`${typeLabel(r.type)} amount received (£):`, String(expected.toFixed(2)));
       if (amtIn === null) return;
-      const amt = Number(amtIn);
-      if (!amt || amt <= 0) return alert('Amount must be > 0');
 
-      r.amount = Math.round(amt * 100) / 100;   // update amount if different
+      const received = Number(amtIn);
+      if (!Number.isFinite(received) || received <= 0) return alert('Amount must be > 0');
+
+      // Mark this line received
       r.status = 'received';
       r.receivedDate = recISO;
+      r.receivedAmount = Math.round(received * 100) / 100;
 
-      addAudit('update', 'sale', s.id, `Receipt received: ${typeLabel(r.type)} £${Number(r.amount||0).toFixed(2)} on ${r.receivedDate}`);
-      saveDB();
-      rows(); // refresh table
-    }
+      // If received less than expected -> create remaining pending line automatically
+      const diff = Math.round((expected - r.receivedAmount) * 100) / 100;
 
-    else if (b.dataset.act === 'rcAuto') {
-      if (!canAction('edit')) return alert('No permission');
-
-      const saleId = b.dataset.id;
-      const t = b.dataset.type; // card / finance / bank / cash / deposit / px
-      const s = db.sales.find(x => x.id === saleId);
-      if (!s) return;
-
-      if (!Array.isArray(s.receipts)) s.receipts = [];
-
-      function typeLabel(tt){
-        tt = String(tt||'').toLowerCase();
-        if (tt === 'card') return 'Card settlement';
-        if (tt === 'finance') return 'Finance payout';
-        if (tt === 'bank') return 'Bank transfer';
-        if (tt === 'cash') return 'Cash';
-        if (tt === 'deposit') return 'Deposit';
-        if (tt === 'px') return 'PX allowance';
-        return tt || '';
+      if (diff > 0.009) {
+        s.receipts.push({
+          type: r.type,
+          expectedAmount: diff,
+          amount: diff,              // keep compatibility with older report code too
+          status: 'pending',
+          expectedDate: (r.expectedDate || s.date || recISO || new Date().toISOString().slice(0,10)),
+          receivedDate: '',
+          receivedAmount: null,
+          note: `Remaining from ${typeLabel(r.type)} (partial received ${fmtMoney(r.receivedAmount)})`
+        });
       }
 
-      // Default amount from sale fields
-      let amt = 0;
-      if (t === 'card') amt = Number(s.card || 0);
-      if (t === 'finance') amt = Number(s.finance || 0);
-      if (t === 'bank') amt = Number(s.bank || 0);
-      if (t === 'cash') amt = Number(s.cash || 0);
-      if (t === 'deposit') amt = Number(s.deposit || 0);
-      if (t === 'px') amt = Number(s.pxAllowance || 0);
+      // If received more than expected -> keep note
+      if (diff < -0.009) {
+        r.note = (r.note ? r.note + ' | ' : '') + `Overpaid by ${fmtMoney(Math.abs(diff))}`;
+      }
 
-      if (!amt || amt <= 0) return alert(`${typeLabel(t)} amount is 0 on this sale.`);
-
-      // Ask amount (editable)
-      const amtIn = prompt(`Amount for ${typeLabel(t)} (£):`, String(amt.toFixed(2)));
-      if (amtIn === null) return;
-      amt = Number(amtIn);
-      if (!amt || amt <= 0) return alert('Amount must be > 0');
-
-      // Default expected date:
-      // - Card default: today+3 days
-      // - Others default: today
-      const d = new Date();
-      if (t === 'card') d.setDate(d.getDate() + 3);
-      const defDMY = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
-
-      const expISO = String(s.date || new Date().toISOString().slice(0,10)).slice(0,10);
-      if (!expISO) return alert('Invalid date. Use DD/MM/YYYY');
-
-      const noteDefault =
-        (t === 'card') ? 'Auto: card settlement' :
-        (t === 'finance') ? (s.financeCompany ? `Auto: ${s.financeCompany}` : 'Auto: finance payout') :
-        `Auto: ${typeLabel(t)}`;
-
-      const note = prompt('Note (optional):', noteDefault);
-      if (note === null) return;
-
-      s.receipts.push({
-        type: (t === 'px' ? 'deposit' : t), // store px allowance as "deposit" or keep as "px" if you prefer
-        amount: Math.round(amt * 100) / 100,
-        expectedDate: expISO,
-        status: 'pending',
-        receivedDate: '',
-        note: note || noteDefault
-      });
-
-      addAudit('update', 'sale', s.id, `Receipt added: ${typeLabel(t)} £${amt.toFixed(2)} exp ${expDMY}`);
+      addAudit('update', 'sale', s.id, `Receipt received: ${typeLabel(r.type)} ${fmtMoney(r.receivedAmount)} on ${r.receivedDate}`);
       saveDB();
-      rows(); // refresh sales table
+      rows();
     }
 
     else if(b.dataset.act==='edit'){ 
@@ -5084,22 +5068,48 @@ function viewSales(){
     warrantyPolicy: (wrap.querySelector('#sale_warrantyPolicy')?.value || '').trim()
   };
 
-  // ✅ Auto-create expected receipt lines from payment fields
-  // If user already has receipt lines (manual split finance etc), keep them.
-  if (!Array.isArray(s.receipts) || s.receipts.length === 0) {
-    s.receipts = buildAutoReceiptsFromSale(s);
-  } else {
-    // If editing: optionally auto-add missing lines for newly-entered payments
-    const auto = buildAutoReceiptsFromSale(s);
-    const key = r => `${r.type}|${Number(r.amount||0).toFixed(2)}`;
+  // --- AUTO: expected funds lines from payment boxes (FIXED - single source of truth) ---
+  if (!Array.isArray(s.receipts)) s.receipts = [];
 
+  // If new sale and no receipt lines -> create auto lines
+  if (s.receipts.length === 0) {
+    s.receipts = buildAutoReceiptsFromSale(s).map(r => ({
+      ...r,
+      expectedAmount: Number(r.amount || 0),
+      receivedAmount: null,
+      status: r.status || 'pending',
+      expectedDate: r.expectedDate || s.date || new Date().toISOString().slice(0,10),
+      receivedDate: r.receivedDate || ''
+    }));
+  } else {
+
+    // Ensure existing lines have expectedAmount always saved
+    s.receipts.forEach(r=>{
+      if(!r) return;
+      if (r.expectedAmount == null) r.expectedAmount = Number(r.amount || 0);
+      if (r.receivedAmount == null && r.status === 'received') {
+        r.receivedAmount = Number(r.amount || r.expectedAmount || 0);
+      }
+    });
+
+    // If editing: auto add missing receipt lines only (do NOT overwrite existing)
+    const auto = buildAutoReceiptsFromSale(s).map(r => ({
+      ...r,
+      expectedAmount: Number(r.amount || 0),
+      receivedAmount: null
+    }));
+
+    const key = r => `${String(r.type||'')}|${Number(r.expectedAmount||0).toFixed(2)}`;
     const existingKeys = new Set(s.receipts.map(key));
+
     auto.forEach(r=>{
       if(!existingKeys.has(key(r))) s.receipts.push(r);
     });
   }
 
+  // Load into form UI
   receiptsToForm(s.receipts);
+
 
   // ✅ FREEZE VEHICLE COST AT TIME OF SALE
   try {
@@ -7368,6 +7378,14 @@ function viewReports(){
     return t || 'Other';
   }
 
+  function receiptExpectedAmount(r){
+    return Number((r && r.expectedAmount != null) ? r.expectedAmount : (r ? r.amount : 0)) || 0;
+  }
+  
+  function receiptReceivedAmount(r){
+    return Number((r && r.receivedAmount != null) ? r.receivedAmount : (r ? r.amount : 0)) || 0;
+  }
+
   function ymKey(isoDate){
     return String(isoDate||'').slice(0,7);
   }
@@ -7386,7 +7404,10 @@ function viewReports(){
 
       receipts.forEach(r=>{
         if(!r) return;
-        const amt = Number(r.amount||0);
+        
+        const amt = (r.status === 'received')
+          ? receiptReceivedAmount(r)
+          : receiptExpectedAmount(r);
 
         // Received lines
         if(r.status === 'received' && r.receivedDate && ymKey(r.receivedDate) === monthKey){
