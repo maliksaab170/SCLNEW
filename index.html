@@ -3659,6 +3659,7 @@ function viewSales(){
   .filter(v => !soldVehicleIds.has(v.id))
   .map(v => `<option value="${(v.reg || '').toUpperCase()}">`)
   .join('');
+  const finCos = (db.company.financeCompanies||[]).filter(Boolean);
 
   wrap.innerHTML=`<h2>Sales</h2>
   <!-- Search and Filter Section -->
@@ -3706,6 +3707,7 @@ function viewSales(){
   </div>
   <div class="row">
     <label>Sale Price £<input id="sale_price" type="number" placeholder="0"></label>
+    <label>Advertised Price £<input id="sale_advertised" type="number" placeholder="0"></label>
     <label>Deposit £<input id="sale_dep" type="number" placeholder="0"></label>
     <label>Cash £<input id="sale_cash" type="number" placeholder="0"></label>
     <label>Card £<input id="sale_card" type="number" placeholder="0"></label>
@@ -3731,7 +3733,14 @@ function viewSales(){
 
   <div id="sale_fin_section" class="row" style="display:none; margin-top:6px; padding:10px; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
     <div class="small" style="width:100%; color:#9fb4ff; margin-bottom:6px; font-weight:600;">Finance Details</div>
-    <label>Finance Company<input id="sale_finCo" placeholder="Finance company"></label>
+    <div id="sale_finCompanyWrap">
+      <label>Finance Company
+        <select id="sale_finCoList" style="min-width:160px">
+          <option value="">-- Select --</option>
+          ${finCos.map(s=>`<option value="${s}">${s}</option>`).join('')}
+        </select>
+      </label>
+    </div>
     <label>Agreement #<input id="sale_agree" placeholder="Agreement #"></label>
     <label>Finance £<input id="sale_fin" type="number" placeholder="0"></label>
     <label>Finance Admin Fee £<input id="sale_finFee" type="number" placeholder="0"></label>
@@ -3882,6 +3891,8 @@ function viewSales(){
     </table>
   </div>
   `;
+
+  const finSel = wrap.querySelector('#sale_finCoList');
   
   let editId=null; 
   const body=wrap.querySelector('#sale_body');
@@ -3995,7 +4006,7 @@ function viewSales(){
     function clearFinance(){
       // NOTE: do NOT clear #sale_fin if you still want to keep finance amount typed in the payments row.
       // If you want it cleared too, add '#sale_fin' below.
-      const ids = ['#sale_finCo','#sale_agree','#sale_finFee','#sale_finPayout','#sale_finPayoutDate','#sale_finPayoutAmount'];
+      const ids = ['#sale_finCoList','#sale_agree','#sale_finFee','#sale_finPayout','#sale_finPayoutDate','#sale_finPayoutAmount'];
       ids.forEach(sel=>{
         const el = wrap.querySelector(sel);
         if(el) el.value = '';
@@ -4402,10 +4413,10 @@ function viewSales(){
   function clearSaleForm() {
     const fields = [
       '#sale_reg', '#sale_date', '#sale_buyer', '#sale_addr', '#sale_phone',
-      '#sale_email', '#sale_mileage', '#sale_firstReg', '#sale_price',
+      '#sale_email', '#sale_mileage', '#sale_firstReg', '#sale_price', '#sale_advertised',
       '#sale_dep', '#sale_cash', '#sale_card', '#sale_bank', '#sale_fin',
       '#sale_pxAllowance', '#sale_partex', '#sale_pxReg', '#sale_pxMake',
-      '#sale_pxModel', '#sale_finCo', '#sale_agree', '#sale_deliver',
+      '#sale_pxModel', '#sale_finCoList', '#sale_agree', '#sale_deliver',
       '#sale_keys', '#sale_mot', '#sale_sh', '#sale_invNo', '#sale_warrantyType',
       '#sale_warrantyProvider', '#sale_warrantyMonths', '#sale_warrantyPolicy',
       '#sale_finFee', '#sale_finPayoutAmount', '#sale_finPayoutDate', '#sale_finPayout'
@@ -4916,11 +4927,12 @@ function viewSales(){
       rows();
     }
 
-    else if(b.dataset.act==='edit'){ 
+    else if(b.dataset.act==='edit'){
       if(!canAction('edit')) return alert('No permission'); 
       editId = s.id; 
 
       const v = db.vehicles.find(x => x.id === s.vehicleId) || {};
+      const coList = wrap.querySelector('#sale_finCoList');
 
       wrap.querySelector('#sale_reg').value = (v.reg || '').toUpperCase(); 
       wrap.querySelector('#sale_date').value = s.date || ''; 
@@ -4930,7 +4942,8 @@ function viewSales(){
       wrap.querySelector('#sale_email').value = s.email || ''; 
       wrap.querySelector('#sale_mileage').value = s.mileage || 0; 
       wrap.querySelector('#sale_firstReg').value = s.firstReg || '';
-      wrap.querySelector('#sale_price').value = s.salePrice || 0; 
+      wrap.querySelector('#sale_price').value = s.salePrice || 0;
+      wrap.querySelector('#sale_advertised').value = s.advertisedPrice || 0;
       wrap.querySelector('#sale_dep').value = s.deposit || 0; 
       wrap.querySelector('#sale_cash').value = s.cash || 0; 
       wrap.querySelector('#sale_card').value = s.card || 0; 
@@ -4942,13 +4955,28 @@ function viewSales(){
       wrap.querySelector('#sale_pxMake').value = s.pxMake || ''; 
       wrap.querySelector('#sale_pxModel').value = s.pxModel || ''; 
       wrap.querySelector('#sale_pxAllowance').value = s.pxAllowance || 0;
-      wrap.querySelector('#sale_finCo').value = s.financeCompany || ''; 
+      wrap.querySelector('#sale_finCoList').value = s.financeCompany || ''; 
       wrap.querySelector('#sale_agree').value = s.agreement || ''; 
       wrap.querySelector('#sale_deliver').value = s.deliverTo || ''; 
       wrap.querySelector('#sale_keys').value = s.keys || ''; 
       wrap.querySelector('#sale_mot').value = s.mot || ''; 
       wrap.querySelector('#sale_sh').value = s.serviceHistory || ''; 
       wrap.querySelector('#sale_invNo').value = s.invNo || '';
+
+      const finCoSel = wrap.querySelector('#sale_finCoList');
+      if (finCoSel && s.financeCompany) {
+        // Check if the option exists; add if missing
+        let exists = Array.from(finCoSel.options).some(
+          o => o.value.trim().toLowerCase() === s.financeCompany.trim().toLowerCase()
+        );
+        if (!exists) {
+          let opt = document.createElement("option");
+          opt.value = s.financeCompany;
+          opt.textContent = s.financeCompany;
+          finCoSel.appendChild(opt);
+        }
+        finCoSel.value = s.financeCompany; // Set now that we're sure it's present
+      }
 
       // Auto-open collapsible sections on edit
       const hasPX = !!(String(s.pxReg||'').trim() || String(s.pxMake||'').trim() || String(s.pxModel||'').trim() || Number(s.pxAllowance||0) > 0);
@@ -5071,6 +5099,7 @@ function viewSales(){
     email: wrap.querySelector('#sale_email').value.trim(),
     mileage: Number(wrap.querySelector('#sale_mileage').value || 0),
     salePrice: price,
+    advertisedPrice: Number(wrap.querySelector('#sale_advertised').value || 0),
     deposit: Number(wrap.querySelector('#sale_dep').value || 0),
     cash: Number(wrap.querySelector('#sale_cash').value || 0),
     card: Number(wrap.querySelector('#sale_card').value || 0),
@@ -5086,7 +5115,7 @@ function viewSales(){
     pxMake: wrap.querySelector('#sale_pxMake').value.trim(),
     pxModel: wrap.querySelector('#sale_pxModel').value.trim(),
     pxAllowance: Number(wrap.querySelector('#sale_pxAllowance').value || 0),
-    financeCompany: wrap.querySelector('#sale_finCo').value.trim(),
+    financeCompany: wrap.querySelector('#sale_finCoList').value.trim(),
     agreement: wrap.querySelector('#sale_agree').value.trim(),
     deliverTo: wrap.querySelector('#sale_deliver').value.trim(),
     keys: wrap.querySelector('#sale_keys').value.trim(),
@@ -7878,10 +7907,10 @@ function viewReports(){
     return (db.sales || []).filter(s => {
       if (!isRealSale(s)) return false;             // your existing helper
       if (monthKey(s.date) !== k) return false;
-      const finCo = norm(s.financeCompany);
+      const finCoList = norm(s.financeCompany);
       const finAmt = Number(s.finance || 0);
       // consider it a "finance sale" if financeCompany filled OR finance amount > 0
-      return finCo !== '' || finAmt > 0;
+      return finCoList !== '' || finAmt > 0;
     });
   }
 
@@ -10090,6 +10119,11 @@ function viewSettings(){
   <div class="card" ${!isAdmin ? 'style="display:none"' : ''}><h3>Company</h3>
     <div class="row"><input id="c_name" placeholder="Company name" value="${db.company.name||''}"></div>
     <div class="row"><input id="c_addr" placeholder="Address" value="${db.company.address||''}" style="min-width:420px"></div>
+    <div class="row">
+      <label class="small">Finance Companies
+        <textarea id="c_finCos" style="min-height:60px">${(db.company.financeCompanies||[]).join('\n')}</textarea>
+      </label>
+    </div>
     <div class="row"><input id="c_phone" placeholder="Phone" value="${db.company.phone||''}"><input id="c_email" placeholder="Email" value="${db.company.email||''}"></div>
     <div class="row"><input id="c_vat" placeholder="VAT Number" value="${db.company.vatNumber||''}"><input id="c_co" placeholder="Company Number" value="${db.company.companyNumber||''}"><input id="c_fca" placeholder="FCA Number" value="${db.company.fcaNumber||''}"></div>
     <div class="row"><input id="c_logo" placeholder="Logo URL (optional)" value="${db.company.logo||''}"></div>
@@ -10142,6 +10176,9 @@ function viewSettings(){
   // Only show save button for company settings if user is admin
   if (isAdmin) {
     wrap.querySelector('#c_save').onclick=()=>{
+        db.company.financeCompanies =
+            document.getElementById('c_finCos').value
+              .split('\n').map(s=>s.trim()).filter(Boolean);
         db.company.name=document.getElementById('c_name').value;
         db.company.address=document.getElementById('c_addr').value;
         db.company.phone=document.getElementById('c_phone').value;
