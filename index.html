@@ -615,6 +615,7 @@ function exportSalesCSV() {
 
   const headers = [
     'Date',
+    'Collected Date',
     'Invoice #',
     'Reg',
     'Make',
@@ -623,6 +624,7 @@ function exportSalesCSV() {
     'Phone',
     'Email',
     'Sale Price',
+    'Advertised Price',
     'Lead Source',
     'Finance Company',
     'Warranty Type',
@@ -640,6 +642,7 @@ function exportSalesCSV() {
 
     const row = [
       ddmmyyyy(s.date),
+      ddmmyyyy(s.collectedDate || ''),
       s.invNo || '',
       v.reg || '',
       v.make || '',
@@ -648,6 +651,7 @@ function exportSalesCSV() {
       s.phone || '',
       s.email || '',
       Number(s.salePrice || 0).toFixed(2),
+      Number(s.advertisedPrice || 0).toFixed(2),
       s.leadSource || '',
       s.financeCompany || '',
       s.warrantyType || '',
@@ -3698,6 +3702,7 @@ function viewSales(){
     </div>
     <div id="sale_costProfitInfo" class="small" style="color:#9fb4ff; margin-left:6px; margin-top:4px;"></div>
     <label>Sale Date<input id="sale_date" type="date"></label>
+    <label>Collected Date<input id="sale_collectedDate" type="date"></label>
     <label>Customer Name<input id="sale_buyer" placeholder="Customer name"></label>
     <label>Customer Address<input id="sale_addr" placeholder="Address"></label>
     <label>Phone<input id="sale_phone" placeholder="Phone"></label>
@@ -4412,7 +4417,7 @@ function viewSales(){
   // Add function to clear the form
   function clearSaleForm() {
     const fields = [
-      '#sale_reg', '#sale_date', '#sale_buyer', '#sale_addr', '#sale_phone',
+      '#sale_reg', '#sale_collectedDate', '#sale_buyer', '#sale_addr', '#sale_phone',
       '#sale_email', '#sale_mileage', '#sale_firstReg', '#sale_price', '#sale_advertised',
       '#sale_dep', '#sale_cash', '#sale_card', '#sale_bank', '#sale_fin',
       '#sale_pxAllowance', '#sale_partex', '#sale_pxReg', '#sale_pxMake',
@@ -4935,7 +4940,8 @@ function viewSales(){
       const coList = wrap.querySelector('#sale_finCoList');
 
       wrap.querySelector('#sale_reg').value = (v.reg || '').toUpperCase(); 
-      wrap.querySelector('#sale_date').value = s.date || ''; 
+      wrap.querySelector('#sale_date').value = s.date || '';
+      wrap.querySelector('#sale_collectedDate').value = s.collectedDate || '';
       wrap.querySelector('#sale_buyer').value = s.buyer || ''; 
       wrap.querySelector('#sale_addr').value = s.address || '';
       wrap.querySelector('#sale_phone').value = s.phone || ''; 
@@ -5092,6 +5098,7 @@ function viewSales(){
     id: editId || uid(), 
     vehicleId: vid, 
     date: wrap.querySelector('#sale_date').value,
+    collectedDate: wrap.querySelector('#sale_collectedDate').value || '',
     firstReg: wrap.querySelector('#sale_firstReg').value,
     buyer: wrap.querySelector('#sale_buyer').value.trim(),
     address: wrap.querySelector('#sale_addr').value.trim(),
@@ -5366,7 +5373,7 @@ function viewSold(){
     </div>
   </div>
   <table class="table" style="margin-top:10px"><thead><tr>
-    <th>Date</th><th>Reg</th><th>Make</th><th>Model</th><th>Customer</th><th>Address</th><th>Postcode</th><th>Phone</th><th>Email</th><th class="right">Price</th>
+    <th>Date</th><th>Collected Date</th><th>Reg</th><th>Make</th><th>Model</th><th>Customer</th><th>Address</th><th>Postcode</th><th>Phone</th><th>Email</th><th class="right">Price</th>
   </tr></thead><tbody id="sold_body"></tbody></table>
   <div id="sold_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>`;
   
@@ -5432,15 +5439,16 @@ function viewSold(){
         const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
         const tr=document.createElement('tr'); 
         tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td>
-                     <td>${v.reg||''}</td>
-                     <td>${v.make||''}</td>
-                     <td>${v.model||''}</td>
-                     <td>${s.buyer||''}</td>
-                     <td>${s.address || ''}</td>
-                     <td>${postcodeFrom(s.address)}</td>
-                     <td>${s.phone||''}</td>
-                     <td>${s.email||''}</td>
-                     <td class="right">${fmtMoney(s.salePrice||0)}</td>`; 
+                      <td>${ddmmyyyy(s.collectedDate || '')}</td>
+                      <td>${v.reg||''}</td>
+                      <td>${v.make||''}</td>
+                      <td>${v.model||''}</td>
+                      <td>${s.buyer||''}</td>
+                      <td>${s.address || ''}</td>
+                      <td>${postcodeFrom(s.address)}</td>
+                      <td>${s.phone||''}</td>
+                      <td>${s.email||''}</td>
+                      <td class="right">${fmtMoney(s.salePrice||0)}</td>`; 
         body.appendChild(tr);
       });
     }
@@ -5492,11 +5500,12 @@ function viewSold(){
   
   // Export CSV functionality (unchanged)
   wrap.querySelector('#sold_export').onclick=()=>{ 
-    const rowsCSV=[["Date","Reg","Make","Model","Customer","Postcode","Phone","Email","Price"]]; 
+    const rowsCSV=[["Date","collectedDate","Reg","Make","Model","Customer","Postcode","Phone","Email","Price"]]; 
     getFilteredSales().forEach(s=>{ 
       const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; 
       rowsCSV.push([
         ddmmyyyy(s.date),
+        ddmmyyyy(s.collectedDate),
         v.reg||'',
         v.make||'',
         v.model||'',
