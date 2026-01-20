@@ -5373,7 +5373,7 @@ function viewSold(){
     </div>
   </div>
   <table class="table" style="margin-top:10px"><thead><tr>
-    <th>Date</th><th>Collected Date</th><th>Reg</th><th>Make</th><th>Model</th><th>Customer</th><th>Address</th><th>Postcode</th><th>Phone</th><th>Email</th><th class="right">Price</th>
+    <th>Date</th><th>Collected Date</th><th>Reg</th><th>Make</th><th>Model</th><th>Customer</th><th>Address</th><th>Postcode</th><th>Deliver To</th><th>Phone</th><th>Email</th><th class="right">Price</th>
   </tr></thead><tbody id="sold_body"></tbody></table>
   <div id="sold_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>`;
   
@@ -5446,6 +5446,7 @@ function viewSold(){
                       <td>${s.buyer||''}</td>
                       <td>${s.address || ''}</td>
                       <td>${postcodeFrom(s.address)}</td>
+                      <td>${escapeHtml(s.deliverTo || '')}</td>
                       <td>${s.phone||''}</td>
                       <td>${s.email||''}</td>
                       <td class="right">${fmtMoney(s.salePrice||0)}</td>`; 
@@ -5500,7 +5501,7 @@ function viewSold(){
   
   // Export CSV functionality (unchanged)
   wrap.querySelector('#sold_export').onclick=()=>{ 
-    const rowsCSV=[["Date","collectedDate","Reg","Make","Model","Customer","Postcode","Phone","Email","Price"]]; 
+    const rowsCSV=[["Date","collectedDate","Reg","Make","Model","Customer","Postcode","Deliver To","Phone","Email","Price"]]; 
     getFilteredSales().forEach(s=>{ 
       const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; 
       rowsCSV.push([
@@ -5511,6 +5512,7 @@ function viewSold(){
         v.model||'',
         s.buyer||'',
         (s.address||'').split(',').slice(-1)[0]||'',
+        s.deliverTo || '',
         s.phone||'',
         s.email||'',
         Number(s.salePrice||0)
@@ -6737,7 +6739,7 @@ function printInvoice(saleId){
       <th>Keys / MOT / History</th>
       <td>
         Keys: ${s.keys||'N/A'} &nbsp;&nbsp;
-        MOT Exp: ${s.mot||'N/A'} &nbsp;&nbsp;
+        MOT Exp: ${ddmmyyyy(s.mot) || 'N/A'} &nbsp;&nbsp;
         Service History: ${s.serviceHistory||'N/A'}
       </td>
     </tr>
