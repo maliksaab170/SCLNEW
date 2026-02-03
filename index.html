@@ -3508,12 +3508,50 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
       </datalist>
       <input id="e_vehicle" list="e_reg_list" placeholder="Type REG…" style="min-width:220px">
     </label>
+    <div id="e_vehicleInfo" class="small" style="color:#9fb4ff; margin-left:6px;">
+      Select a reg to see vehicle details
+    </div>
     <input id="e_date" type="date"><input id="e_type" placeholder="Type (MOT/Repairs/Delivery/Advertising/Fuel…)"><select id="e_method"><option>bank</option><option>cash</option></select>
     <input id="e_amt" type="number" placeholder="Amount"><input id="e_note" placeholder="Note"><button id="e_add" class="primary">Add</button></div>
   <div class="row"><input id="e_search" placeholder="Search by reg to total (live calc)"></div>
   <div class="small" id="e_totHint"></div>
   <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Date</th><th>Type</th><th>Method</th><th class="right">Amount</th><th>Note</th><th>Actions</th></tr></thead><tbody id="e_body"></tbody></table>`;
   const ebody=wrap.querySelector('#e_body'); let editId=null;
+
+  function renderExpenseVehicleInfo(){
+    const reg = (wrap.querySelector('#e_vehicle').value || '').trim().toUpperCase();
+    const info = wrap.querySelector('#e_vehicleInfo');
+    if(!info) return;
+
+    if(!reg){
+      info.textContent = 'Select a reg to see vehicle details';
+      return;
+    }
+
+    const v = findVehicleByReg(reg); // helper already exists in your file
+    if(!v){
+      info.textContent = 'Reg not found in Vehicles';
+      return;
+    }
+
+    // Build a nice summary line
+    const bits = [
+      v.make ? v.make : '',
+      v.model ? v.model : '',
+      v.colour ? ('| ' + v.colour) : '',
+      v.fuel ? ('| ' + v.fuel) : '',
+      (v.mileage!=null && v.mileage!=='') ? ('| ' + Number(v.mileage).toLocaleString() + ' miles') : '',
+    ].filter(Boolean).join(' ');
+
+    info.textContent = (v.reg||reg) + ' — ' + bits;
+  }
+
+  // Update live while typing / selecting
+  wrap.querySelector('#e_vehicle').addEventListener('input', renderExpenseVehicleInfo);
+
+  // Call once on load (in case field already has a value)
+  renderExpenseVehicleInfo();
+
   function rows(list=db.vehicleExpenses){ ebody.innerHTML=''; list.forEach(e=>{ const v=db.vehicles.find(x=>x.id===e.vehicleId)||{}; const tr=document.createElement('tr');
     tr.innerHTML=`<td>${v.reg||''}</td><td>${ddmmyyyy(e.date)}</td><td>${e.type||''}</td><td>${e.method||'bank'}</td><td class="right">${fmtMoney(e.amount)}</td><td>${e.note||''}</td>
     <td>${canAction('edit')?`<button data-act="edit" data-id="${e.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${e.id}">Delete</button>`:''}</td>`; ebody.appendChild(tr); }); }
@@ -6714,7 +6752,7 @@ function printInvoice(saleId){
   <table class="tight">
     <tr>
       <th style="width:30%">Invoice To:</th>
-      <td>${s.buyer||''}<br>${s.address||''}<br>${s.phone||''} ${s.email||''}</td>
+      <td>${s.buyer||''}<br>${s.address||''}</td>
     </tr>
     ${s.deliverTo && s.deliverTo.trim() ? `
     <tr>
@@ -6916,7 +6954,7 @@ function printFinanceProforma(saleId){
   <table class="tight">
     <tr>
       <th style="width:30%">Invoice To:</th>
-      <td>${s.buyer||''}<br>${s.address||''}<br>${s.phone||''} ${s.email||''}</td></td>
+      <td>${s.buyer||''}<br>${s.address||''}</td>
     </tr>
     ${s.deliverTo && s.deliverTo.trim() ? `
     <tr>
@@ -8796,6 +8834,7 @@ function viewReports(){
     return {
       items,totalGross,totalFlat,totalPct,totalInvestor,
       remainder,directorEach,directorCount,
+      directorHalf: directorEach,
       postExp,postExpTotal,showroomMonthTotal,remainderBeforeShowroom
     }
   };
@@ -8816,8 +8855,8 @@ function viewReports(){
     }
     function alreadyPosted(k){
     // Heuristic: if both directors have a 'profit' tx on k month with same note marker, block.
-    const marker='MonthClose '+k;
-    const both=(db.partners||[]).filter(p=>(p.tx||[]).some(t=>t.type==='profit' && (t.note||'').includes(marker))).length>=2;
+    const marker = 'MonthClose ' + k;
+    const both = (db.partners||[]).some(p => (p.tx||[]).some(t => (t.note||'').includes(marker)));
     return both;
   }
   function previewClose(){
@@ -8891,7 +8930,7 @@ function viewReports(){
       .filter((p,i,arr)=> arr.findIndex(x => norm(x.name) === norm(p.name)) === i);
 
     directorsUnique.forEach(p=>{
-      const amt = c.directorEach;
+      const amt = Number(c.directorEach ?? c.directorHalf ?? 0);
       p.tx = p.tx || [];
       p.tx.unshift({
         id: mcId(k, 'director_profit', p.id, '', ''),
