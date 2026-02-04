@@ -609,9 +609,46 @@ function exportVehiclesCSV() {
     }
 }
 
-// Export Sales as CSV
+// Export Sales as CSV (RESPECTS Sales filters: month + search + pending toggle)
 function exportSalesCSV() {
-  const sales = db.sales || [];
+  const allSales = db.sales || [];
+  const vehicles = db.vehicles || [];
+
+  const q = (document.getElementById('sales_search')?.value || '').toUpperCase().trim();
+  const month = (document.getElementById('sales_month')?.value || '').trim(); // "YYYY-MM"
+  const showPending = !!document.getElementById('sales_show_pending')?.checked;
+
+  // Filter like the Sales screen
+  const filtered = allSales.filter(s => {
+    // If pending toggle is OFF, export only completed sales
+    if (!showPending) {
+      const st = String(s.saleStatus || s.status || 'completed').toLowerCase();
+      if (st !== 'completed' && st !== 'complete' && st !== 'sold') return false;
+    }
+
+    // Month filter (uses sale date)
+    if (month) {
+      const d = String(s.date || '');
+      if (!d.startsWith(month)) return false;
+    }
+
+    // Search filter (REG / Customer / Invoice / Phone)
+    if (q) {
+      const v = vehicles.find(v => v.id === s.vehicleId) || {};
+      const hay = (
+        (v.reg || '') + ' ' +
+        (v.make || '') + ' ' +
+        (v.model || '') + ' ' +
+        (s.buyer || '') + ' ' +
+        (s.phone || '') + ' ' +
+        (s.invNo || '')
+      ).toUpperCase();
+
+      if (!hay.includes(q)) return false;
+    }
+
+    return true;
+  });
 
   const headers = [
     'Date',
@@ -634,11 +671,19 @@ function exportSalesCSV() {
     'Finance Payout Amount'
   ];
 
+  const esc = (cell) => {
+    const str = String(cell == null ? '' : cell);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+  };
+
   const lines = [];
   lines.push(headers.join(','));
 
-  sales.forEach(s => {
-    const v = (db.vehicles || []).find(v => v.id === s.vehicleId) || {};
+  filtered.forEach(s => {
+    const v = vehicles.find(v => v.id === s.vehicleId) || {};
 
     const row = [
       ddmmyyyy(s.date),
@@ -659,13 +704,7 @@ function exportSalesCSV() {
       (s.financePayoutPaid ? 'yes' : 'no'),
       s.financePayoutDate || '',
       Number(s.financePayoutAmount || 0).toFixed(2)
-    ].map(cell => {
-      const str = String(cell == null ? '' : cell);
-      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-        return '"' + str.replace(/"/g, '""') + '"';
-      }
-      return str;
-    });
+    ].map(esc);
 
     lines.push(row.join(','));
   });
@@ -673,10 +712,13 @@ function exportSalesCSV() {
   const csv = lines.join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
 
+  const a = document.createElement('a');
   a.href = url;
-  a.download = 'sales_export_' + new Date().toISOString().slice(0,10) + '.csv';
+
+  const stamp = month ? month : new Date().toISOString().slice(0, 10);
+  a.download = 'sales_export_' + stamp + '.csv';
+
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -684,7 +726,7 @@ function exportSalesCSV() {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 
   if (typeof addAudit === 'function') {
-    addAudit('export', 'sales', '', `Exported ${sales.length} sales to CSV`);
+    addAudit('export', 'sales', '', `Exported ${filtered.length} sales to CSV`);
   }
 }
 
