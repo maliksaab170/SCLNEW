@@ -472,6 +472,35 @@ function openPrintable(html){
   iframe.srcdoc=html; return false;
 }
 
+// ===== AUTO CAPITAL LETTERS FOR KEY FIELDS =====
+document.addEventListener('input', function(e){
+
+  const el = e.target;
+  if(!el || !el.id) return;
+
+  const forceCapsIds = [
+    // SALES
+    'sale_reg',
+    'sale_customer',
+    'sale_deliver_to',
+
+    // VEHICLES
+    'vehicle_reg',
+
+    // EXPENSES
+    'e_vehicle',   // REG in expenses
+    'e_type'       // Repairs / MOT / etc
+  ];
+
+  if(forceCapsIds.includes(el.id)){
+    const start = el.selectionStart;
+    const end   = el.selectionEnd;
+    el.value = el.value.toUpperCase();
+    el.setSelectionRange(start, end); // keep cursor position
+  }
+
+});
+
 // Export Vehicles as CSV (respects MOT filter)
 function exportVehiclesCSV() {
     const vehicles = db.vehicles || [];
@@ -910,7 +939,21 @@ function normalizePerms(perms){
 
 db.users=db.users||[
   {id:'u1',username:'admin',password:'admin',role:'admin',perms:defaultPerms()},
-  {id:'u2',username:'staff',password:'1234',role:'user',perms:(()=>{const p=defaultPerms();p.profit=false;p.settings=false;p.tabs['Directors']=false;p.tabs['Investors']=false;p.tabs['Users']=false;p.tabs['Settings']=false;return p;})()}
+  {id:'u2',username:'staff',password:'1234',role:'user',perms:(()=>{
+  const p=defaultPerms();
+  p.profit=false;          // IMPORTANT: hide all money figures
+  p.settings=true;         // allow Settings page
+
+  // hide sensitive tabs
+  p.tabs['Directors']=false;
+  p.tabs['Investors']=false;
+  p.tabs['Users']=false;
+
+  // keep Settings visible
+  p.tabs['Settings']=true;
+
+  return p;
+})()}
 ];
 db.users=(db.users||[]).map(u=>{u.perms=normalizePerms(u.perms);return u;});
 db.company=db.company||{
@@ -2510,26 +2553,36 @@ function viewDashboard(){
   const stockValue = stockPurchase + stockVehExpTotal;
 
   card.innerHTML=`<h2>Dashboard</h2>
-  <div class="grid4">
-    <div class="card"><div class="small">Directors Invested (balance)</div><div class="stat">${fmtMoney(dirTotal)}</div></div>
-    <div class="card"><div class="small">Investors Funds (balance)</div><div class="stat">${fmtMoney(invTotal)}</div></div>
-    <div class="card"><div class="small">Vehicles In Stock</div><div class="stat">${inStock}</div></div>
-    <div class="card"><div class="small">Estimated Bank / Cash</div><div class="stat">${fmtMoney(bal.bank)} &nbsp;|&nbsp; ${fmtMoney(bal.cash)}</div></div>
-  </div>
-  <div class="grid3">
-    <div class="card">
-    <div class="small">Current Stock Purchase (in-stock vehicles)</div>
-    <div class="stat">${fmtMoney(stockPurchase)}</div>
-  </div>
-  <div class="card">
-    <div class="small">Current Stock Vehicle Expenses</div>
-    <div class="stat">${fmtMoney(stockVehExpTotal)}</div>
-  </div>
-  <div class="card">
-    <div class="small">Current Stock Value (purchase + expenses)</div>
-    <div class="stat">${fmtMoney(stockValue)}</div>
-  </div>
-  </div>
+    ${canProfit() ? `
+    <div class="grid4">
+      <div class="card"><div class="small">Directors Invested (balance)</div><div class="stat">${fmtMoney(dirTotal)}</div></div>
+      <div class="card"><div class="small">Investors Funds (balance)</div><div class="stat">${fmtMoney(invTotal)}</div></div>
+      <div class="card"><div class="small">Vehicles In Stock</div><div class="stat">${inStock}</div></div>
+      <div class="card"><div class="small">Estimated Bank / Cash</div><div class="stat">${fmtMoney(bal.bank)} &nbsp;|&nbsp; ${fmtMoney(bal.cash)}</div></div>
+    </div>
+
+    <div class="grid3">
+      <div class="card">
+        <div class="small">Current Stock Purchase (in-stock vehicles)</div>
+        <div class="stat">${fmtMoney(stockPurchase)}</div>
+      </div>
+      <div class="card">
+        <div class="small">Current Stock Vehicle Expenses</div>
+        <div class="stat">${fmtMoney(stockVehExpTotal)}</div>
+      </div>
+      <div class="card">
+        <div class="small">Current Stock Value (purchase + expenses)</div>
+        <div class="stat">${fmtMoney(stockValue)}</div>
+      </div>
+    </div>
+    ` : `
+    <div class="grid4">
+      <div class="card"><div class="small">Vehicles In Stock</div><div class="stat">${inStock}</div></div>
+      <div class="card"><div class="small">Money figures</div><div class="stat">HIDDEN</div></div>
+      <div class="card"><div class="small">Money figures</div><div class="stat">HIDDEN</div></div>
+      <div class="card"><div class="small">Money figures</div><div class="stat">HIDDEN</div></div>
+    </div>
+    `}
 
   <div class="row" style="margin-top:10px">
     <div class="card">
