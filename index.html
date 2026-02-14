@@ -472,31 +472,34 @@ function openPrintable(html){
   iframe.srcdoc=html; return false;
 }
 
-// ===== AUTO CAPITAL LETTERS FOR KEY FIELDS =====
+// ===== AUTO CAPITAL LETTERS =====
 document.addEventListener('input', function(e){
 
   const el = e.target;
-  if(!el || !el.id) return;
+  if(!el) return;
 
-  const forceCapsIds = [
-    // SALES
-    'sale_reg',
-    'sale_customer',
-    'sale_deliver_to',
+  // Apply to these cases:
+  const isSalesCustomer =
+    el.id === 's_buyer' ||
+    el.id === 's_deliverTo' ||
+    el.name === 'buyer' ||
+    el.name === 'deliverTo';
 
-    // VEHICLES
-    'vehicle_reg',
+  const isRegField =
+    el.id === 'sale_reg' ||
+    el.id === 'vehicle_reg' ||
+    el.id === 'e_vehicle';
 
-    // EXPENSES
-    'e_vehicle',   // REG in expenses
-    'e_type'       // Repairs / MOT / etc
-  ];
+  const isExpenseType =
+    el.id === 'e_type';
 
-  if(forceCapsIds.includes(el.id)){
+  if (isSalesCustomer || isRegField || isExpenseType) {
     const start = el.selectionStart;
     const end   = el.selectionEnd;
     el.value = el.value.toUpperCase();
-    el.setSelectionRange(start, end); // keep cursor position
+    if (typeof start === 'number' && typeof end === 'number') {
+      el.setSelectionRange(start, end);
+    }
   }
 
 });
@@ -3927,6 +3930,11 @@ function viewSales(){
     <label>Warranty Months<input id="sale_warrantyMonths" type="number" placeholder="e.g. 3"></label>
     <label>Warranty Policy #<input id="sale_warrantyPolicy" placeholder="Policy number"></label>
     
+    <label style="min-width:320px">
+      Invoice Special Notes (optional)
+      <textarea id="s_invoiceNote" placeholder="e.g. 12 MONTH EXTENDED WARRANTY INCLUDED"></textarea>
+    </label>
+
     <label>Lead Source
       <select id="sale_lead">
         <option value="">Not set</option>
@@ -5233,7 +5241,7 @@ function viewSales(){
     date: wrap.querySelector('#sale_date').value,
     collectedDate: wrap.querySelector('#sale_collectedDate').value || '',
     firstReg: wrap.querySelector('#sale_firstReg').value,
-    buyer: wrap.querySelector('#sale_buyer').value.trim(),
+    buyer: wrap.querySelector('#sale_buyer').value.toUpperCase().trim(),
     address: wrap.querySelector('#sale_addr').value.trim(),
     phone: wrap.querySelector('#sale_phone').value.trim(),
     email: wrap.querySelector('#sale_email').value.trim(),
@@ -5257,7 +5265,8 @@ function viewSales(){
     pxAllowance: Number(wrap.querySelector('#sale_pxAllowance').value || 0),
     financeCompany: wrap.querySelector('#sale_finCoList').value.trim(),
     agreement: wrap.querySelector('#sale_agree').value.trim(),
-    deliverTo: wrap.querySelector('#sale_deliver').value.trim(),
+    deliverTo: wrap.querySelector('#sale_deliver').value.toUpperCase().trim(),
+    invoiceNote: (wrap.querySelector('#s_invoiceNote').value || '').trim(),
     keys: wrap.querySelector('#sale_keys').value.trim(),
     mot: wrap.querySelector('#sale_mot').value.trim(),
     serviceHistory: wrap.querySelector('#sale_sh').value.trim(),
@@ -6877,6 +6886,12 @@ function printInvoice(saleId){
       </td>
     </tr>
   </table>
+
+  ${s.invoiceNote && s.invoiceNote.trim() ? `
+    <div style="margin:10px 0;padding:8px;border:1px solid #000;font-weight:700">
+      ${escapeHtml(s.invoiceNote)}
+    </div>
+  ` : ``}
 
   <!-- Terms -->
   <div style="margin-top:10px">
