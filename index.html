@@ -504,6 +504,38 @@ document.addEventListener('input', function(e){
 
 });
 
+function removeMonthCloseMgmtForSale(sale){
+  try{
+    if(!sale || !sale.vehicleId || !sale.date) return;
+
+    const k = (sale.date || '').slice(0,7); // month of sale (e.g. 2025-12)
+    const v = (db.vehicles||[]).find(x=>x.id===sale.vehicleId) || {};
+    const reg = (v.reg || '').trim();
+    if(!k || !reg) return;
+
+    // If you have mcId() in your file (you do, used by Month Close), remove those exact entries:
+    const idFlat = (typeof mcId === 'function') ? mcId(k, 'showroom_flat175', reg, '', '') : null;
+    const idPct  = (typeof mcId === 'function') ? mcId(k, 'showroom_20pct',   reg, '', '') : null;
+
+    db.showroomExpenses = (db.showroomExpenses||[]).filter(e=>{
+      const ym = (e.date||'').slice(0,7);
+      if(ym !== k) return true;
+
+      const t = String(e.type||'');
+      const n = String(e.note||'');
+
+      // Remove by ID if available, otherwise fall back to matching "type + note(reg)"
+      if(idFlat && e.id === idFlat) return false;
+      if(idPct  && e.id === idPct)  return false;
+
+      if((t.includes('Mgmt flat £175') || t.includes('Mgmt 20%')) && n.trim() === reg) return false;
+
+      return true;
+    });
+
+  } catch(e){}
+}
+
 // Export Vehicles as CSV (respects MOT filter)
 function exportVehiclesCSV() {
     const vehicles = db.vehicles || [];
@@ -5348,12 +5380,10 @@ function viewSales(){
     const fee = Number(s.financeAdminFee || 0);
     if (!s.vehicleId) return;
 
-    // If fee is 0, remove previously linked expense (if any)
-    if (fee <= 0) {
+    // If fee is exactly 0, remove previously linked expense (if any)
+    if (fee === 0) {
       if (s.financeAdminFeeExpenseId) {
-        // track deletion if you’re using multi-PC delete sync
         if (typeof markDeleted === 'function') markDeleted('vehicleExpenses', s.financeAdminFeeExpenseId);
-
         db.vehicleExpenses = (db.vehicleExpenses || []).filter(e => e.id !== s.financeAdminFeeExpenseId);
         s.financeAdminFeeExpenseId = '';
       }
@@ -5401,6 +5431,12 @@ function viewSales(){
   // Mark refunded flag for unwound deals
   if (saleStatus === 'unwound') {
     s.refunded = true;
+
+    // ✅ remove Month Close mgmt charges from the original sale month
+    removeMonthCloseMgmtForSale(s);
+
+    // ✅ mark that month as needing repost (because Month Close was already posted)
+    markMonthCloseDirty(s.date);
   }
   
   const sumBreak = s.deposit + s.cash + s.card + s.bank + s.finance + s.pxAllowance;
@@ -7206,7 +7242,7 @@ function viewReports(){
   <div class="card"><h3>Monthly Summary</h3><div class="row"><input id="rm_month" type="month" value="${new Date().toISOString().slice(0,7)}"><label class="small"><input type="checkbox" id="rm_cover"> Pretend showroom expenses covered by monthly profit</label><button id="rm_go">Calculate</button><button id="rm_export_xlsx">Export Excel (Month + Sold cars)</button></div><div id="rm_box"></div></div>
 
   <div class="card"><h3>Month Close (Directors & Investors)</h3>
-    <div class="row"><input id="mc_month" type="month" value="${new Date().toISOString().slice(0,7)}"> <button id="mc_prev">Preview</button><button id="mc_post" class="primary">Post</button><button id="mc_export">Export PDF</button><span id="mc_warn" class="small" style="margin-left:8px;color:#ffb3b3"></span></div><div id="mc_box" class="small"></div>
+    <div class="row"><input id="mc_month" type="month" value="${new Date().toISOString().slice(0,7)}"> <button id="mc_prev">Preview</button><button id="mc_post" class="primary">Post</button><button id="mc_repost" class="btn">Repost month (fix returned deals)</button><button id="mc_export">Export PDF</button><span id="mc_warn" class="small" style="margin-left:8px;color:#ffb3b3"></span></div><div id="mc_box" class="small"></div>
   </div>
   
   <button id="rep_fin_unpaid">Finance Unpaid</button>
@@ -7516,6 +7552,27 @@ function viewReports(){
       };
     }
   }, 10);
+
+  function refreshMcDirtyUI(){
+    const k = (wrap.querySelector('#mc_month').value||'').slice(0,7);
+    const tag = wrap.querySelector('#mc_dirty_tag');
+    if(!tag) return;
+    tag.textContent = isMonthCloseDirty(k) ? '⚠️ This month needs repost (returned deal changed figures).' : '';
+  }
+
+  wrap.querySelector('#mc_month')?.addEventListener('change', refreshMcDirtyUI);
+
+  wrap.querySelector('#mc_repost').onclick = () => {
+    const k = (wrap.querySelector('#mc_month').value||'').slice(0,7);
+    if(!k) return alert('Pick a month');
+
+    if(!confirm(`Repost Month Close for ${k}? This will remove the old Month Close lines and post fresh ones.`)) return;
+
+    purgeMonthClose(k);   // removes old month close entries
+    postClose();          // posts again using latest sales status (sold/unwound)
+    clearMonthCloseDirty(k);
+    refreshMcDirtyUI();
+  };
   
   /* Audit Log */
   const body=wrap.querySelector('#r_body'); const out=wrap.querySelector('#r_out');
@@ -8612,7 +8669,9 @@ function viewReports(){
       .map(s=>{
         const v = (db.vehicles||[]).find(x=>x.id===s.vehicleId) || {};
         const fee = Number(s.financeAdminFee||0);
-        const net = Number(s.financeNet||0) || Math.max(0, Number(s.finance||0)-fee);
+        const net = (s.financeNet != null && s.financeNet !== '')
+          ? Number(s.financeNet||0)
+          : (Number(s.finance||0) - Number(fee||0));
         return `
           <tr>
             <td>${s.date||''}</td>
@@ -9055,6 +9114,27 @@ function viewReports(){
     
     saveDB(); try{renderAlertBell();}catch(e){}; addAudit('monthClose','reports','monthClose',marker); alert('Month close posted.');
     previewClose();
+  }
+
+  // ===== Month Close dirty marker (when old sales are unwound later) =====
+  function markMonthCloseDirty(monthKey){
+    const k = (monthKey || '').slice(0,7);
+    if(!k) return;
+    db._monthCloseDirty = db._monthCloseDirty || {};
+    db._monthCloseDirty[k] = { dirty:true, at:new Date().toISOString() };
+    saveDB();
+  }
+
+  function clearMonthCloseDirty(monthKey){
+    const k = (monthKey || '').slice(0,7);
+    if(!k) return;
+    if(db._monthCloseDirty) delete db._monthCloseDirty[k];
+    saveDB();
+  }
+
+  function isMonthCloseDirty(monthKey){
+    const k = (monthKey || '').slice(0,7);
+    return !!(db._monthCloseDirty && db._monthCloseDirty[k] && db._monthCloseDirty[k].dirty);
   }
 
   wrap.querySelector('#mc_prev').onclick=previewClose;
