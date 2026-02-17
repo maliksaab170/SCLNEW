@@ -3963,8 +3963,15 @@ function viewSales(){
     <label>Warranty Policy #<input id="sale_warrantyPolicy" placeholder="Policy number"></label>
     
     <label style="min-width:320px">
-      Invoice Special Notes (optional)
-      <textarea id="s_invoiceNote" placeholder="e.g. 12 MONTH EXTENDED WARRANTY INCLUDED"></textarea>
+      Invoice Special Notes (max 2 lines)
+      <textarea id="s_invoiceNote" rows="2" style="min-height:42px;max-height:42px;resize:none;overflow:hidden"
+        placeholder="MAX 2 lines. e.g. 3 MONTH WARRANTY INCLUDED"></textarea>
+      <div class="small" style="opacity:.8">Tip: keep this max 2 lines. Long stuff goes in Terms.</div>
+    </label>
+
+    <label style="min-width:320px;flex:1">
+      Invoice Terms (auto from Settings — edit if needed)
+      <textarea id="sale_terms" style="min-height:120px" placeholder="Terms for this sale"></textarea>
     </label>
 
     <label>Lead Source
@@ -4147,6 +4154,62 @@ function viewSales(){
 
   function receiptReceivedAmount(r){
     return Number((r && r.receivedAmount != null) ? r.receivedAmount : (r ? r.amount : 0)) || 0;
+  }
+
+  function applyWarrantyDefaults(){
+    const co = db.company || {};
+    const defMonths = Number(co.defaultWarrantyMonths || 3);
+
+    const monthsEl = wrap.querySelector('#sale_warrantyMonths');
+    const typeEl   = wrap.querySelector('#sale_warrantyType');
+    const provEl   = wrap.querySelector('#sale_warrantyProvider');
+    const noteEl   = wrap.querySelector('#s_invoiceNote');
+
+    if(!monthsEl || !noteEl) return;
+
+    const months = Number(monthsEl.value || 0);
+    const provider = (provEl?.value || '').trim();
+    const wType = (typeEl?.value || '').trim();
+
+    // If blank, auto set months to default (3)
+    if(!monthsEl.value) monthsEl.value = String(defMonths);
+
+    // Decide if “extended”
+    const isExtended = (Number(monthsEl.value||0) > defMonths) || (!!provider && wType === 'Third-Party');
+
+    const stdNote = (co.warrantyStdNote || '3 MONTH WARRANTY INCLUDED').trim();
+    const extNote = (co.warrantyExtNote || 'EXTENDED WARRANTY INCLUDED (SEE POLICY)').trim();
+
+    // Only auto-fill if note is empty (so staff can override manually)
+    if(!(noteEl.value || '').trim()){
+      noteEl.value = isExtended ? extNote : stdNote;
+    }
+
+    // keep note within 2 lines
+    clamp2Lines(noteEl);
+  }
+
+  ['change','blur'].forEach(ev=>{
+    wrap.querySelector('#sale_warrantyMonths')?.addEventListener(ev, applyWarrantyDefaults);
+    wrap.querySelector('#sale_warrantyType')?.addEventListener(ev, applyWarrantyDefaults);
+    wrap.querySelector('#sale_warrantyProvider')?.addEventListener(ev, applyWarrantyDefaults);
+  });
+
+  function clamp2Lines(el){
+    if(!el) return;
+    let v = (el.value || '').replace(/\r/g,'');
+    // max 2 lines
+    const lines = v.split('\n').slice(0,2);
+    v = lines.join('\n');
+    // optional: max 140 chars total (stops huge notes)
+    if (v.length > 140) v = v.slice(0,140);
+    if (el.value !== v) el.value = v;
+  }
+
+  const noteEl = wrap.querySelector('#s_invoiceNote');
+  if(noteEl){
+    noteEl.addEventListener('input', ()=>clamp2Lines(noteEl));
+    noteEl.addEventListener('blur',  ()=>clamp2Lines(noteEl));
   }
 
   function typeLabel(t){
@@ -5262,6 +5325,11 @@ function viewSales(){
     invNoValue = candidate;
   }
 
+  const termsEl = wrap.querySelector('#sale_terms');
+  if(termsEl && !(termsEl.value||'').trim()){
+    termsEl.value = (db.company.saleTerms || db.company.terms || '');
+  }
+
   const price = Number(wrap.querySelector('#sale_price').value || 0);
 
   // 🔧 Build sale object (keeping refunded flag etc. if editing)
@@ -5299,6 +5367,7 @@ function viewSales(){
     agreement: wrap.querySelector('#sale_agree').value.trim(),
     deliverTo: wrap.querySelector('#sale_deliver').value.toUpperCase().trim(),
     invoiceNote: (wrap.querySelector('#s_invoiceNote').value || '').trim(),
+    terms: (wrap.querySelector('#sale_terms')?.value || '').trim(),
     keys: wrap.querySelector('#sale_keys').value.trim(),
     mot: wrap.querySelector('#sale_mot').value.trim(),
     serviceHistory: wrap.querySelector('#sale_sh').value.trim(),
@@ -6850,6 +6919,14 @@ function printInvoice(saleId){
     .tight td,.tight th{padding:6px 8px}
     .no-border{border:none !important}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35;white-space:normal}
+    .note{
+      font-size:${Math.max(8,termsPx)}px;
+      line-height:1.35;
+      font-weight:600;
+      border:1px solid #000;
+      padding:6px 8px;
+      margin:6px 0 8px;
+    }
     .terms{ page-break-inside: avoid; break-inside: avoid; }
     .no-print{margin:8px 0}
     @media print{.no-print{display:none !important}}
@@ -6923,16 +7000,15 @@ function printInvoice(saleId){
     </tr>
   </table>
 
-  ${s.invoiceNote && s.invoiceNote.trim() ? `
-    <div style="margin:10px 0;padding:8px;border:1px solid #000;font-weight:700">
-      ${escapeHtml(s.invoiceNote)}
-    </div>
-  ` : ``}
-
   <!-- Terms -->
   <div style="margin-top:10px">
     <div style="font-weight:700;margin-bottom:4px">Terms:</div>
-    <div class="terms">${String(co.terms||'').replace(/\n/g,'<br>')}</div>
+    
+    ${s.invoiceNote && s.invoiceNote.trim() ? `
+      <div class="note">${escapeHtml(s.invoiceNote)}</div>
+    ` : ``}
+
+    <div class="terms">${String((s.terms || co.saleTerms || co.terms) || '').replace(/\n/g,'<br>')}</div>
   </div>
 
   <!-- Signatures -->
@@ -10370,6 +10446,34 @@ function viewSettings(){
     <div class="row"><label>Upload Logo<input id="c_logoUpload" type="file" accept="image/*"></label><span class="small">Stored locally as data-URL</span></div>
     <div class="row"><label class="small">Opening Bank £ <input id="c_bank" type="number" value="${db.company.openingBank||0}"></label><label class="small">Opening Cash £ <input id="c_cash" type="number" value="${db.company.openingCash||0}"></label></div>
     <div class="row"><textarea id="c_terms" placeholder="Terms & Conditions">${db.company.terms||''}</textarea></div>
+    <div class="row">
+      <label class="small" style="width:100%">
+        Default Warranty Months
+        <input id="c_defWarMonths" type="number" min="0" value="${db.company.defaultWarrantyMonths||3}">
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="small" style="width:100%">
+        Default Standard Warranty Note (auto in Sales)
+        <textarea id="c_warStdNote" style="min-height:60px">${db.company.warrantyStdNote||'3 MONTH WARRANTY INCLUDED'}</textarea>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="small" style="width:100%">
+        Default Extended Warranty Note (auto in Sales)
+        <textarea id="c_warExtNote" style="min-height:60px">${db.company.warrantyExtNote||'EXTENDED WARRANTY INCLUDED (SEE POLICY)'}</textarea>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="small" style="width:100%">
+        Default Sales Invoice Terms (auto in Sales, can edit per sale)
+        <textarea id="c_saleTerms" style="min-height:120px">${db.company.saleTerms||db.company.terms||''}</textarea>
+      </label>
+    </div>
+
     <div class="row"><textarea id="c_finTerms" placeholder="Finance-specific Terms (optional) — used on the Finance Proforma only if filled.">${db.company.financeTerms||''}</textarea></div>
     <div class="row">
       <label class="small">Invoice Font Size px <input id="c_invFont" type="number" min="9" max="18" value="${db.company.invoiceFontPx||12}"></label>
@@ -10439,7 +10543,11 @@ function viewSettings(){
         db.company.dvsaProxy=document.getElementById('c_dvsaProxy').value||'';
         db.company.dvlaKey=document.getElementById('c_dvlaKey').value||'';
         db.company.dvsaKey=document.getElementById('c_dvsaKey').value||'';
-        
+        db.company.defaultWarrantyMonths = Number(document.getElementById('c_defWarMonths').value || 3);
+        db.company.warrantyStdNote = document.getElementById('c_warStdNote').value || '';
+        db.company.warrantyExtNote = document.getElementById('c_warExtNote').value || '';
+        db.company.saleTerms = document.getElementById('c_saleTerms').value || '';
+
         saveDB();
         try{renderAlertBell();}catch(e){}
         addAudit('update','company','company','Updated company profile');
