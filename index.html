@@ -31,8 +31,19 @@ nav{
   display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);
   background:rgba(10,16,30,.55);backdrop-filter:blur(6px);position:sticky;top:64px;z-index:4
 }
-nav button{background:#17233a;border:1px solid var(--line);color:var(--ink);padding:8px 10px;border-radius:10px;cursor:pointer}
-nav button.active{background:var(--pri);border-color:transparent;color:#001029;font-weight:700}
+nav button{
+  border-radius: 999px;
+  padding: 8px 12px;
+  box-shadow: none;
+  background: rgba(255,255,255,.05);
+  border-color: rgba(255,255,255,.10);
+}
+nav button:hover{ filter: brightness(1.10); }
+nav button.active{
+  background: linear-gradient(135deg, rgba(83,168,255,.95), rgba(122,92,255,.92));
+  color: #061225;
+  font-weight: 900;
+}
 main{padding:16px;max-width:1200px;margin:auto}
 .card{background:rgba(19,26,43,.92);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -46,6 +57,113 @@ small,.small{color:var(--mut);font-size:12px}
 button{background:#182845;border:1px solid var(--line);color:var(--ink);padding:8px 10px;border-radius:10px;cursor:pointer}
 button.primary{background:var(--pri);border-color:#2b7be0;color:#031226}
 button.danger{background:#321722;border-color:#5a2a3d;color:#ffc9c9}
+
+/* =========================
+   PRO BUTTON SYSTEM (v1)
+   Works with existing: <button>, .primary, .danger
+   Add optional: .soft, .outline, .ghost, .small, .lg, .block
+========================= */
+
+/* Base */
+button{
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  user-select: none;
+  border-radius: 12px;
+  padding: 9px 12px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.06);
+  color: var(--ink);
+  font-weight: 750;
+  letter-spacing: .1px;
+  cursor: pointer;
+  transition: transform .08s ease, filter .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
+  box-shadow: 0 6px 18px rgba(0,0,0,.20);
+}
+button:hover{
+  filter: brightness(1.08);
+}
+button:active{
+  transform: translateY(1px);
+  filter: brightness(1.02);
+}
+button:focus-visible{
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(83,168,255,.25), 0 10px 30px rgba(0,0,0,.22);
+}
+
+/* Sizes */
+button.small{ padding: 6px 10px; border-radius: 10px; font-weight: 800; font-size: 12px; }
+button.lg{ padding: 11px 14px; border-radius: 14px; font-size: 14px; }
+button.block{ width: 100%; }
+
+/* Variants */
+button.primary{
+  background: linear-gradient(135deg, rgba(83,168,255,.95), rgba(122,92,255,.92));
+  border-color: rgba(83,168,255,.55);
+  color: #061225;
+  box-shadow: 0 10px 26px rgba(83,168,255,.20), 0 10px 30px rgba(0,0,0,.20);
+}
+button.primary:hover{ filter: brightness(1.06); }
+button.primary:active{ transform: translateY(1px); }
+
+button.danger{
+  background: linear-gradient(135deg, rgba(255,107,107,.20), rgba(255,107,107,.12));
+  border-color: rgba(255,107,107,.35);
+  color: #ffd5d5;
+  box-shadow: 0 10px 26px rgba(255,107,107,.10), 0 10px 30px rgba(0,0,0,.20);
+}
+
+button.success{
+  background: linear-gradient(135deg, rgba(46,204,113,.22), rgba(46,204,113,.12));
+  border-color: rgba(46,204,113,.38);
+  color: #d8ffe8;
+}
+
+button.warn{
+  background: linear-gradient(135deg, rgba(255,196,87,.22), rgba(255,196,87,.12));
+  border-color: rgba(255,196,87,.40);
+  color: #ffe9b8;
+}
+
+/* Outline / Ghost */
+button.outline{
+  background: transparent;
+  border-color: rgba(255,255,255,.18);
+  box-shadow: none;
+}
+button.ghost{
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+button.ghost:hover{
+  background: rgba(255,255,255,.06);
+  border-color: rgba(255,255,255,.10);
+}
+
+/* Icon button helper */
+button.icon{
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 12px;
+  display: inline-grid;
+  place-items: center;
+}
+
+/* Disabled (keep yours but nicer) */
+button:disabled{
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none !important;
+  filter: none !important;
+  background: rgba(255,255,255,.03) !important;
+  border-color: rgba(255,255,255,.08) !important;
+  color: rgba(163,178,204,.8) !important;
+  box-shadow: none !important;
+}
+
 .table{width:100%;border-collapse:collapse}
 .table th,.table td{border:1px solid var(--line);padding:6px 8px}
 .table th{background:#0c1526;text-align:left}
@@ -73,6 +191,325 @@ button.primary:disabled {
   color: #6b7a99 !important;
 }
 
+/* ===== Pro Top Nav ===== */
+.topnav{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+  background:rgba(10,16,30,55);backdrop-filter:blur(8px);
+  position:sticky;top:64px;z-index:4
+}
+.topnav-left{
+  display:flex;gap:8px;align-items:center;
+  overflow:auto;white-space:nowrap;
+  scrollbar-width:thin;
+  padding-bottom:2px;
+}
+.topnav-left::-webkit-scrollbar{height:8px}
+.topnav-left::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:999px}
+.topnav-left button{
+  background:#17233a;border:1px solid var(--line);color:var(--ink);
+  padding:8px 12px;border-radius:999px;cursor:pointer;
+  flex:0 0 auto;
+}
+.topnav-left button.active{
+  background:var(--pri);border-color:transparent;color:#001029;font-weight:800
+}
+.appsBtn{border-radius:12px;padding:8px 12px;font-weight:800}
+
+/* ===== App Launcher ===== */
+.appsOverlay{
+  position:fixed;inset:0;z-index:20;
+  background:rgba(2,6,12,.75);backdrop-filter:blur(6px);
+  display:grid;place-items:start center;padding:90px 12px 20px;
+}
+.appsPanel{
+  width:min(980px, 95vw);
+  background:rgba(19,26,43,96);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:14px;
+  box-shadow:0 20px 60px rgba(0,0,0,.45);
+}
+.appsHead{display:flex;align-items:center;justify-content:space-between}
+#appsGrid{
+  display:grid;
+  grid-template-columns:repeat(4, minmax(0,1fr));
+  gap:10px;
+}
+.appsGroupTitle{
+  grid-column:1/-1;
+  margin-top:10px;
+  font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--mut);
+}
+.appsTile{
+  display:flex;align-items:center;gap:10px;
+  padding:12px;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background:#0f1628;
+  cursor:pointer;
+}
+.appsTile:hover{filter:brightness(1.08)}
+.appsIco{
+  width:34px;height:34px;border-radius:12px;
+  background:rgba(255,255,255,.06);
+  display:grid;place-items:center;font-weight:900;
+}
+@media(max-width:900px){ #appsGrid{grid-template-columns:repeat(2,minmax(0,1fr));} }
+
+/* =========================
+   PRO TABLES (v1)
+   Works with your existing class="table"
+========================= */
+
+.table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  background:rgba(255,255,255,.03);
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:14px;
+  overflow:hidden;
+  box-shadow:0 12px 30px rgba(0,0,0,.22);
+}
+
+.table thead th{
+  position:sticky;
+  top:0;                        /* ✅ sticky header */
+  z-index:2;
+  background:rgba(15,22,40,.95);
+  backdrop-filter:blur(8px);
+  color:rgba(230,240,255,.95);
+  font-weight:900;
+  font-size:12px;
+  letter-spacing:.03em;
+  text-transform:none;
+  border-bottom:1px solid rgba(255,255,255,.10);
+}
+
+.table th, .table td{
+  padding:10px 10px;
+  border-bottom:1px solid rgba(255,255,255,.07);
+  vertical-align:top;
+}
+
+.table tbody tr{
+  transition:filter .12s ease, background .12s ease;
+}
+.table tbody tr:nth-child(odd){
+  background:rgba(255,255,255,.015);    /* ✅ zebra */
+}
+.table tbody tr:hover{
+  background:rgba(83,168,255,.08);      /* ✅ hover */
+  filter:brightness(1.04);
+}
+
+.table td.right, .table th.right{ text-align:right; }
+
+/* nicer action buttons inside tables */
+.table td button{ box-shadow:none; }
+.table td button.small{ padding:6px 10px; }
+
+/* compact mode option */
+.table.compact th, .table.compact td{ padding:8px 8px; }
+
+/* make tables scrollable on small screens */
+.tableWrap{
+  width:100%;
+  overflow:auto;
+  border-radius:14px;
+}
+.tableWrap::-webkit-scrollbar{ height:10px; }
+.tableWrap::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.12); border-radius:999px; }
+
+/* highlight search matches (optional class) */
+tr.hl{
+  outline:2px solid rgba(83,168,255,.35);
+  outline-offset:-2px;
+  background:rgba(83,168,255,.10) !important;
+}
+
+/* =========================
+   PRO FORMS (v1)
+   Upgrades: input/select/textarea/label + rows + help text
+========================= */
+
+/* Form rows spacing */
+.row{
+  gap:10px;                 /* a bit more breathing room */
+  align-items:flex-end;     /* labels + inputs align nicely */
+}
+
+/* Labels */
+label{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  font-size:12px;
+  color:var(--mut);
+  font-weight:700;
+}
+label .req::after{ content:" *"; color:var(--bad); font-weight:900; }
+
+/* Inputs */
+input, select, textarea{
+  width:auto;
+  min-height:40px;
+  padding:9px 10px;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.05);
+  color:var(--ink);
+  outline:none;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+  transition: border-color .15s ease, box-shadow .15s ease, filter .15s ease, background .15s ease;
+}
+
+/* Full-width in labels + when you set flex:1 */
+label input, label select, label textarea{ width:100%; }
+
+/* Focus ring */
+input:focus, select:focus, textarea:focus{
+  border-color: rgba(83,168,255,.50);
+  box-shadow: 0 0 0 3px rgba(83,168,255,.22), inset 0 0 0 1px rgba(0,0,0,.12);
+  filter: brightness(1.03);
+}
+
+/* Placeholder */
+input::placeholder, textarea::placeholder{
+  color: rgba(163,178,204,.75);
+}
+
+/* Select dropdown arrow styling (simple + safe) */
+select{
+  appearance:none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(233,238,247,.85) 50%),
+    linear-gradient(135deg, rgba(233,238,247,.85) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 12px) 50%;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat:no-repeat;
+  padding-right:32px;
+}
+
+/* Textarea */
+textarea{
+  min-height:92px;
+  resize: vertical; /* change to 'none' if you want no resizing */
+}
+
+/* Small helper text */
+.help, .hint, .smallHelp{
+  font-size:12px;
+  color:var(--mut);
+  opacity:.9;
+  margin-top:4px;
+}
+
+/* Inline field group for compact layouts */
+.field{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  min-width:180px;
+}
+
+/* Error look (you can apply class="invalid") */
+.invalid{
+  border-color: rgba(255,107,107,.55) !important;
+  box-shadow: 0 0 0 3px rgba(255,107,107,.18) !important;
+}
+
+/* Readonly/disabled nicer */
+input:disabled, select:disabled, textarea:disabled{
+  opacity:.60;
+  cursor:not-allowed;
+  background:rgba(255,255,255,.03);
+}
+
+/* Make dense rows wrap cleaner */
+.row > input, .row > select, .row > textarea{ flex:0 0 auto; }
+.row > input[style*="flex:1"], .row > textarea[style*="flex:1"]{ flex:1 1 320px; }
+
+/* =========================
+   PRO CARD SYSTEM (v1)
+   Upgrades existing .card everywhere
+========================= */
+
+.card{
+  position:relative;
+  background:
+    radial-gradient(1200px 600px at -10% -20%, rgba(83,168,255,.10), transparent 40%),
+    linear-gradient(180deg, rgba(18,26,46,.96), rgba(14,20,36,.98));
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:16px;
+  padding:14px 14px 16px;
+  box-shadow:
+    0 18px 46px rgba(0,0,0,.32),
+    inset 0 1px 0 rgba(255,255,255,.04);
+  backdrop-filter: blur(10px);
+}
+
+/* Card hover (very subtle, professional) */
+.card:hover{
+  border-color: rgba(83,168,255,.28);
+  box-shadow:
+    0 22px 60px rgba(0,0,0,.38),
+    inset 0 1px 0 rgba(255,255,255,.05);
+}
+
+/* Card header line */
+.card .card-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
+}
+
+/* Card title */
+.card h3{
+  margin:0;
+  font-size:15px;
+  font-weight:900;
+  letter-spacing:.2px;
+}
+
+/* Small subtitle */
+.card .card-sub{
+  font-size:12px;
+  color:var(--mut);
+  margin-top:2px;
+}
+
+/* Divider inside cards */
+.card .card-divider{
+  height:1px;
+  background:rgba(255,255,255,.08);
+  margin:10px 0;
+}
+
+/* Section titles inside cards */
+.card .section-title{
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:var(--mut);
+  margin:12px 0 6px;
+}
+
+/* Dense cards (optional class) */
+.card.dense{ padding:10px 10px 12px; }
+
+/* Flat cards (optional) */
+.card.flat{
+  background:rgba(18,26,46,.92);
+  box-shadow:none;
+}
 </style>
 
 </head><script>
@@ -278,7 +715,25 @@ window.restoreJSONMerge = function () {
     <button onclick="exportAllCSV()">Export CSVs</button>
   </div>
 </header>
-<nav id="nav"></nav>
+<nav id="nav" class="topnav">
+  <div class="topnav-left" id="navTabs"></div>
+  <div class="topnav-right">
+    <button id="appsBtn" class="appsBtn" type="button" title="All tabs">▦ All</button>
+  </div>
+</nav>
+
+<!-- App Launcher -->
+<div id="appsOverlay" class="appsOverlay" style="display:none">
+  <div class="appsPanel">
+    <div class="appsHead">
+      <div style="font-weight:900">All Tabs</div>
+      <button id="appsClose" type="button">✕</button>
+    </div>
+    <input id="appsSearch" placeholder="Search tabs…" style="width:100%;margin:10px 0 12px">
+    <div id="appsGrid"></div>
+  </div>
+</div>
+
 <main id="app"></main>
 <footer>© Star Cars London Ltd</footer>
 
@@ -343,6 +798,26 @@ function saveDB(){
 function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
 function fmtMoney(n){ n=Number(n||0); const s=n<0?'-':''; n=Math.abs(n); return s+'£'+n.toFixed(2); }
 
+function showApps(){
+  const o=document.getElementById('appsOverlay');
+  const s=document.getElementById('appsSearch');
+  if(o){ o.style.display='grid'; }
+  if(s){ s.value=''; s.focus(); s.dispatchEvent(new Event('input')); }
+}
+function hideApps(){
+  const o=document.getElementById('appsOverlay');
+  if(o){ o.style.display='none'; }
+}
+
+document.addEventListener('click', (e)=>{
+  if(e.target && e.target.id==='appsBtn') showApps();
+  if(e.target && e.target.id==='appsClose') hideApps();
+  if(e.target && e.target.id==='appsOverlay') hideApps(); // click outside panel
+});
+document.addEventListener('keydown', (e)=>{
+  if(e.key==='Escape') hideApps();
+});
+
 function ddmmyyyy(d){
   if(!d) return '';
   let t = String(d).trim();
@@ -358,6 +833,15 @@ function ddmmyyyy(d){
   if(a.length === 3 && a[0].length === 4) return `${a[2]}/${a[1]}/${a[0]}`;
 
   return t;
+}
+
+function highlightMatches(tbody, query){
+  if(!tbody) return;
+  const q = (query||'').toLowerCase().trim();
+  [...tbody.querySelectorAll('tr')].forEach(tr=>{
+    if(!q){ tr.classList.remove('hl'); return; }
+    tr.classList.toggle('hl', tr.textContent.toLowerCase().includes(q));
+  });
 }
 
 function isoFromDMY(dmy){
@@ -2215,7 +2699,100 @@ function goToComplaintSearch(comp){
   },50);
 }
 
-function renderNav(){ const nav=document.getElementById('nav'); nav.innerHTML=''; TABS.forEach(t=>{ if(!canTab(t)) return; if(t==='Settings'&&!canSettings()) return; const b=document.createElement('button'); b.textContent=t; if(t===currentTab) b.classList.add('active'); b.onclick=()=>setTab(t); nav.appendChild(b); }); }
+function renderNav(){
+  const tabsWrap = document.getElementById('navTabs');
+  const appsGrid = document.getElementById('appsGrid');
+  if(!tabsWrap || !appsGrid) return;
+
+  // permission filtered
+  const allowed = TABS.filter(t=>{
+    if(!canTab(t)) return false;
+    if(t==='Settings' && !canSettings()) return false;
+    return true;
+  });
+
+  // What shows on top bar (keep it clean + pro)
+  const CORE = ['Dashboard','Vehicles','Sales','Expenses','Showroom','Reports']
+    .filter(t=>allowed.includes(t));
+
+  // Everything else goes in launcher
+  const EXTRA = allowed.filter(t=>!CORE.includes(t));
+
+  // ===== Top bar =====
+  tabsWrap.innerHTML = '';
+  CORE.forEach(t=>{
+    const b=document.createElement('button');
+    b.textContent=t;
+    if(t===currentTab) b.classList.add('active');
+    b.onclick=()=>setTab(t);
+    tabsWrap.appendChild(b);
+  });
+
+  // ===== App launcher grid (grouped) =====
+  const ICON = {
+    'Dashboard':'D','Vehicles':'V','Sales':'S','Expenses':'£','Showroom':'🏢','Reports':'R',
+    'Sold':'✓','Credit':'C','Purchase Invoice':'PI','Customer Complaints':'CC',
+    'Directors':'DIR','Investors':'INV','Users':'U','Alerts':'!','To-Do':'TD','Settings':'⚙'
+  };
+
+  const GROUPS = [
+    {title:'Sales & Documents', tabs:['Sold','Credit','Purchase Invoice','Customer Complaints']},
+    {title:'Management', tabs:['Directors','Investors','Users']},
+    {title:'Tools', tabs:['Alerts','To-Do','Settings']},
+  ];
+
+  appsGrid.innerHTML = '';
+  const used = new Set();
+
+  function addGroup(title, list){
+    if(!list.length) return;
+    const h=document.createElement('div');
+    h.className='appsGroupTitle';
+    h.textContent=title;
+    appsGrid.appendChild(h);
+
+    list.forEach(t=>{
+      used.add(t);
+      const tile=document.createElement('div');
+      tile.className='appsTile';
+      tile.innerHTML = `<div class="appsIco">${ICON[t]||'•'}</div><div><div style="font-weight:800">${t}</div><div class="small" style="opacity:.8">Open</div></div>`;
+      tile.onclick=()=>{ hideApps(); setTab(t); };
+      appsGrid.appendChild(tile);
+    });
+  }
+
+  GROUPS.forEach(g=>{
+    const list = g.tabs.filter(t=>EXTRA.includes(t));
+    addGroup(g.title, list);
+  });
+
+  // Any leftover tabs not in groups
+  const leftovers = EXTRA.filter(t=>!used.has(t));
+  addGroup('Other', leftovers);
+
+  // ===== Search inside launcher =====
+  const s = document.getElementById('appsSearch');
+  if(s && !s.dataset.bound){
+    s.dataset.bound='1';
+    s.addEventListener('input', ()=>{
+      const q = (s.value||'').toLowerCase().trim();
+      appsGrid.querySelectorAll('.appsTile').forEach(tile=>{
+        const text = tile.textContent.toLowerCase();
+        tile.style.display = (!q || text.includes(q)) ? '' : 'none';
+      });
+      // keep group titles visible only if any tiles under them are visible
+      appsGrid.querySelectorAll('.appsGroupTitle').forEach(gt=>{
+        // check next siblings until next group title
+        let n = gt.nextElementSibling, any=false;
+        while(n && !n.classList.contains('appsGroupTitle')){
+          if(n.classList.contains('appsTile') && n.style.display !== 'none') any=true;
+          n = n.nextElementSibling;
+        }
+        gt.style.display = any ? '' : 'none';
+      });
+    });
+  }
+}
 
 function ensureIdsEverywhere(){
   const sections = [
@@ -2819,15 +3396,16 @@ function viewDashboard(){
     
     out.innerHTML=`<div class="row"><span class="badge">${v.status||'for sale'}</span>&nbsp;<b>${v.reg}</b>&nbsp;${v.make||''} ${v.model||''}</div>
       ${mediaHtml}
-      <table class="table"><tbody>
+      <div class="tableWrap">
+      <table class="table">
       <tr><th style="width:220px">Purchase</th><td class="right">${fmtMoney(v.purchase||0)}</td></tr>
       <tr><th>Total Expenses</th><td class="right">${fmtMoney(totalExp)}</td></tr>
       <tr><th>Total Cost (incl. expenses)</th><td class="right">${fmtMoney(totalCost)}</td></tr>
       ${v.supplier === 'PART-EX' ? `<tr><th>Supplier Type</th><td>PART-EX</td></tr>` : ''}
       ${v.supplierNote ? `<tr><th>Supplier Note</th><td>${v.supplierNote}</td></tr>` : ''}
       ${saleInfo}
-      </tbody></table>
-      <h4>Expenses</h4><table class="table"><thead><tr><th>Date</th><th>Type</th><th class="right">Amount</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table>`;
+      </tbody></table></div>
+      <h4>Expenses</h4><div class="tableWrap"><table class="table"><thead><tr><th>Date</th><th>Type</th><th class="right">Amount</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
   
   card.querySelector('#dash_show').onclick=()=>showResultByReg(card.querySelector('#dash_reg').value);
@@ -3871,7 +4449,7 @@ function viewSales(){
     <div id="sale_costProfitInfo" class="small" style="color:#9fb4ff; margin-left:6px; margin-top:4px;"></div>
     <label>Sale Date<input id="sale_date" type="date"></label>
     <label>Collected Date<input id="sale_collectedDate" type="date"></label>
-    <label>Customer Name<input id="sale_buyer" placeholder="Customer name"></label>
+    <label><span class="req">Customer Name</span><input id="sale_buyer" placeholder="Customer name"></label>
     <label>Customer Address<input id="sale_addr" placeholder="Address"></label>
     <label>Phone<input id="sale_phone" placeholder="Phone"></label>
     <label>Email<input id="sale_email" placeholder="Email"></label>
@@ -3972,6 +4550,7 @@ function viewSales(){
     <label style="min-width:320px;flex:1">
       Invoice Terms (auto from Settings — edit if needed)
       <textarea id="sale_terms" style="min-height:120px" placeholder="Terms for this sale"></textarea>
+      <div id="sale_termsHint" class="small" style="opacity:.8">Using default sale terms from Settings.</div>
     </label>
 
     <label>Lead Source
@@ -5326,8 +5905,9 @@ function viewSales(){
   }
 
   const termsEl = wrap.querySelector('#sale_terms');
-  if(termsEl && !(termsEl.value||'').trim()){
-    termsEl.value = (db.company.saleTerms || db.company.terms || '');
+  if (termsEl && !(termsEl.value || '').trim()) {
+    // Only auto-load the DEFAULT sale invoice terms (not the ALWAYS terms)
+    termsEl.value = (db.company.saleTerms || '');
   }
 
   const price = Number(wrap.querySelector('#sale_price').value || 0);
@@ -5892,6 +6472,19 @@ function viewCredit(){
     wrap.querySelector('#cr_invoiceNo').value = '';
     // Customer stays if user typed it, but we will overwrite if we find a sale.
 
+    const t = document.getElementById('sale_terms');
+    const h = document.getElementById('sale_termsHint');
+    function refreshTermsHint(){
+      if(!t || !h) return;
+      h.textContent = (t.value || '').trim()
+        ? 'Override active: default sale terms from Settings will NOT print.'
+        : 'Using default sale terms from Settings.';
+    }
+    if(t){
+      t.addEventListener('input', refreshTermsHint);
+      refreshTermsHint();
+    }
+
     if(!reg){
       setSaleHint();
       return;
@@ -6331,6 +6924,7 @@ function viewPurchaseInvoice(){
   wrap.querySelector('#pi_search').addEventListener('input', function () {
     const searchTerm = this.value.toLowerCase().trim();
     renderPurchases(searchTerm);
+    highlightMatches(body, searchTerm);
   });
 
   wrap.querySelector('#pi_clear_search').onclick = function () {
@@ -6905,6 +7499,16 @@ function printInvoice(saleId){
   const fontPx  = Number(co.invoiceFontPx || 12);
   const termsPx = Number(co.termsFontPx || 10);
 
+  // ✅ Terms building: Always Terms + (Override OR Default Sale Terms)
+  const alwaysTerms = String(co.terms || '').trim();          // Always print
+  const defaultSaleTerms = String(co.saleTerms || '').trim(); // Settings default for sales
+  const overrideTerms = String(s.terms || '').trim();         // Typed in Sales for this invoice
+
+  const finalTerms = [
+    alwaysTerms,
+    (overrideTerms ? overrideTerms : defaultSaleTerms)
+  ].filter(Boolean).join('\n\n');
+
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Invoice</title>
   <style>
     @page{size:A4;margin:10mm 10mm}
@@ -6920,12 +7524,14 @@ function printInvoice(saleId){
     .no-border{border:none !important}
     .terms{font-size:${Math.max(8,termsPx)}px;line-height:1.35;white-space:normal}
     .note{
-      font-size:${Math.max(8,termsPx)}px;
-      line-height:1.35;
-      font-weight:600;
-      border:1px solid #000;
-      padding:6px 8px;
-      margin:6px 0 8px;
+      font-size: 10px;
+      line-height: 1.2;
+      font-weight: 700;
+      border: 1px solid #000;
+      padding: 4px 6px;
+      margin: 4px 0 6px;
+      white-space: pre-line;
+      page-break-inside: avoid;
     }
     .terms{ page-break-inside: avoid; break-inside: avoid; }
     .no-print{margin:8px 0}
@@ -7003,12 +7609,12 @@ function printInvoice(saleId){
   <!-- Terms -->
   <div style="margin-top:10px">
     <div style="font-weight:700;margin-bottom:4px">Terms:</div>
-    
+
     ${s.invoiceNote && s.invoiceNote.trim() ? `
       <div class="note">${escapeHtml(s.invoiceNote)}</div>
     ` : ``}
 
-    <div class="terms">${String((s.terms || co.saleTerms || co.terms) || '').replace(/\n/g,'<br>')}</div>
+    <div class="terms">${escapeHtml(finalTerms).replace(/\n/g,'<br>')}</div>
   </div>
 
   <!-- Signatures -->
@@ -7557,6 +8163,7 @@ function viewReports(){
         ` • Purchase + vehicle expenses: <b>£${totalWithVehExp.toFixed(2)}</b>`;
 
       tblEl.innerHTML = `
+        <div class="tableWrap">
         <table class="table">
           <thead>
             <tr>
@@ -7585,6 +8192,7 @@ function viewReports(){
             `).join('')}
           </tbody>
         </table>
+        </div>
       `;
       // Store for export!
       rowsCache = filtered.map(v => ({
@@ -7750,6 +8358,7 @@ function viewReports(){
       const out = wrap.querySelector('#rf_out');
       if(out){
         out.innerHTML = `
+          <div class="tableWrap">
           <table class="table">
             <thead>
               <tr>
@@ -7772,6 +8381,7 @@ function viewReports(){
               `).join('')}
             </tbody>
           </table>
+          </div>
         `;
       }
 
@@ -7779,6 +8389,7 @@ function viewReports(){
       const outU = wrap.querySelector('#rf_by_user');
       if(outU){
         outU.innerHTML = `
+          <div class="tableWrap">
           <table class="table">
             <thead>
               <tr>
@@ -7801,6 +8412,7 @@ function viewReports(){
               `).join('')}
             </tbody>
           </table>
+          </div>
         `;
       }
 
@@ -7847,7 +8459,7 @@ function viewReports(){
     const netMonthClose = Number(c.remainder || 0);
     
     const box=wrap.querySelector('#rm_box'); 
-    box.innerHTML='<table class="table"><tbody>'
+    box.innerHTML='<div class="tableWrap"><tbody>'
       +'<tr><th>Sold (count)</th><td class="right">'+sellCount+'</td></tr>'
       +'<tr><th>Purchased (count)</th><td class="right">'+buyCount+'</td></tr>'
       +'<tr><th>Total Sales</th><td class="right">'+fmtMoney(sales)+'</td></tr>'
@@ -7855,7 +8467,7 @@ function viewReports(){
       +'<tr><th>Vehicle Expenses (this month)</th><td class="right">'+fmtMoney(vehExp)+'</td></tr>'
       +'<tr><th>Showroom Expenses '+(cover?'(covered by profit, shown as £0)':'')+'</th><td class="right">'+fmtMoney(showExpShown)+'</td></tr>'
       +'<tr><th>Net Profit/Loss (Month Close method)</th><td class="right"><b>'+fmtMoney(netMonthClose)+'</b></td></tr>'
-      +'</tbody></table>';
+      +'</tbody></table></div>';
   };
 
   // ===== Receipts Report (Money Received / Pending) =====
@@ -7965,6 +8577,7 @@ function viewReports(){
         <tr><td>${m}</td><td class="right">${fmtMoney(byMethod[m])}</td></tr>
       `).join('');
       bdEl.innerHTML = `
+        <div class="tableWrap">
         <table class="table">
           <thead><tr><th>Method (Received)</th><th class="right">Amount</th></tr></thead>
           <tbody>
@@ -7972,6 +8585,7 @@ function viewReports(){
             <tr><th>Total</th><th class="right">${fmtMoney(totalReceived)}</th></tr>
           </tbody>
         </table>
+        </div>
       `;
     }
 
@@ -7982,6 +8596,7 @@ function viewReports(){
         linesEl.innerHTML = `<div class="small">No received payments recorded in this month.</div>`;
       } else {
         linesEl.innerHTML = `
+          <div class="tableWrap">
           <table class="table">
             <thead>
               <tr>
@@ -8012,6 +8627,7 @@ function viewReports(){
               `).join('')}
             </tbody>
           </table>
+          </div>
         `;
       }
     }
@@ -8023,6 +8639,7 @@ function viewReports(){
         pendEl.innerHTML = `<div class="small">No pending/expected settlements in this month.</div>`;
       } else {
         pendEl.innerHTML = `
+          <div class="tableWrap">
           <table class="table">
             <thead>
               <tr>
@@ -8053,6 +8670,7 @@ function viewReports(){
               `).join('')}
             </tbody>
           </table>
+          </div>
         `;
       }
     }
@@ -8160,6 +8778,7 @@ function viewReports(){
     }
 
     out.innerHTML = `
+      <div class="tableWrap">
       <table class="table">
         <thead>
           <tr>
@@ -8186,6 +8805,7 @@ function viewReports(){
           `).join('')}
         </tbody>
       </table>
+      </div>
     `;
   }
 
@@ -8276,12 +8896,14 @@ function viewReports(){
             <b>${co}</b> — Deals: ${g.count} • Finance: ${fmtMoney(g.finance)} • Payout: ${fmtMoney(g.payout)} • Admin: ${fmtMoney(g.admin)}
           </summary>
           <div style="margin-top:10px">
+            <div class="tableWrap">
             <table class="table">
               <thead>
                 <tr><th>Who</th><th class="right">Deals</th><th class="right">Finance</th><th class="right">Payout</th><th class="right">Admin Fees</th></tr>
               </thead>
               <tbody>${userRows}</tbody>
             </table>
+            </div>
           </div>
         </details>
       `;
@@ -8350,7 +8972,7 @@ function viewReports(){
           <td>${r.next}</td>
         </tr>`).join('')
         : `<tr><td colspan="6">No not-ready vehicles found ✅</td></tr>`;
-      return `<table class="table">${head}<tbody>${body}</tbody></table>`;
+      return `<div class="tableWrap"><table class="table">${head}<tbody>${body}</tbody></table></div>`;
     }
 
     function run(){
@@ -8474,6 +9096,7 @@ function viewReports(){
 
   function renderSimpleTable(headers, rows){
     return `
+      <div class="tableWrap">
       <table class="table">
         <thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
         <tbody>
@@ -8481,6 +9104,7 @@ function viewReports(){
             `<tr><td colspan="${headers.length}">No data</td></tr>`}
         </tbody>
       </table>
+      </div>
     `;
   }
 
@@ -9118,7 +9742,7 @@ function viewReports(){
       + '<b>Remainder for directors:</b> ' + fmtMoney(c.remainder) + ' ⇒ ' + fmtMoney(c.directorEach) + ' each (Directors: ' + c.directorCount + ')<br><br>'
       + '<div class="card small" style="margin:8px 0;padding:8px">'
       + '<b>Breakdown</b><br>'
-      + '<table class="table"><tbody>'
+      + '<div class="tableWrap"><table class="table"><tbody>'
       + '<tr><td>Gross profit on sold vehicles</td><td class="right">'+fmtMoney(c.totalGross)+'</td></tr>'
       + '<tr><td>Mgmt flat (£175) — investor cars</td><td class="right">'+fmtMoney(c.totalFlat)+'</td></tr>'
       + '<tr><td>Mgmt 20% — investor cars</td><td class="right">'+fmtMoney(c.totalPct)+'</td></tr>'
@@ -9128,11 +9752,11 @@ function viewReports(){
       + '<tr><td>Showroom expenses this month (net)</td><td class="right">'+fmtMoney(c.showroomMonthTotal)+'</td></tr>'
       + '<tr><td><b>Remainder after showroom</b></td><td class="right"><b>'+fmtMoney(c.remainder)+'</b></td></tr>'
       + '<tr><td><b>Directors share (each)</b></td><td class="right"><b>'+fmtMoney(c.directorHalf)+'</b></td></tr>'
-      + '</tbody></table>'
+      + '</tbody></table></div>'
       + '</div>'
-      + '<table class="table"><thead><tr><th>Date</th><th>Reg</th><th>Investor</th><th>Gross</th><th>£175</th><th>20%</th><th>Investor 30%</th><th>Remainder</th></tr></thead><tbody>'
+      + '<div class="tableWrap"><table class="table"><thead><tr><th>Date</th><th>Reg</th><th>Investor</th><th>Gross</th><th>£175</th><th>20%</th><th>Investor 30%</th><th>Remainder</th></tr></thead><tbody>'
       + c.items.map(x=>`<tr><td>${ddmmyyyy(x.s.date)}</td><td>${x.v.reg||''}</td><td>${x.investorName}</td><td class="right">${fmtMoney(x.gross)}</td><td class="right">${fmtMoney(x.mgmtFlat)}</td><td class="right">${fmtMoney(x.mgmtPct)}</td><td class="right">${fmtMoney(x.investorShare)}</td><td class="right">${fmtMoney(x.afterInvestor)}</td></tr>`).join('')
-      + '</tbody></table>'
+      + '</tbody></table></div>'
       + (c.postExp.length ? ('<br><div class="small"><b>Post-sale expenses this month:</b><ul>'
           + c.postExp.map(pe=>`<li>${ddmmyyyy(pe.e.date)} — ${pe.v.reg||''} — ${pe.e.type||''}: ${fmtMoney(pe.amount)}</li>`).join('')
           + '</ul></div>') : '');
@@ -9301,7 +9925,7 @@ function viewAlerts(){
   if(!urgent.length){
     html += `<div class="small">No urgent complaints 🎉</div>`;
   } else {
-    html += `<table class="table"><thead>
+    html += `<div class="tableWrap"><table class="table"><thead>
       <tr><th>Date</th><th>Customer</th><th>Vehicle</th><th>Type</th><th>Severity</th><th>Status</th><th>Follow-up</th><th>Handler</th></tr>
     </thead><tbody>`;
     urgent.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0)).forEach(c=>{
@@ -9316,7 +9940,7 @@ function viewAlerts(){
         <td>${c.handler || c.assigned || ''}</td>
       </tr>`;
     });
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
   
@@ -9326,7 +9950,7 @@ function viewAlerts(){
   if(!overdueFollow.length){
     html += `<div class="small">No overdue complaint follow-ups.</div>`;
   } else {
-    html += `<table class="table"><thead>
+    html += `<div class="tableWrap"><table class="table"><thead>
       <tr><th>Follow-up Date</th><th>Customer</th><th>Vehicle</th><th>Type</th><th>Status</th><th>Handler</th></tr>
     </thead><tbody>`;
     overdueFollow.sort((a,b)=>new Date(a.followup||0)-new Date(b.followup||0)).forEach(c=>{
@@ -9339,7 +9963,7 @@ function viewAlerts(){
         <td>${c.handler || c.assigned || ''}</td>
       </tr>`;
     });
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
   
@@ -9349,7 +9973,7 @@ function viewAlerts(){
   if(!motAlerts.length){
     html += `<div class="small">No MOT alerts.</div>`;
   } else {
-    html += `<table class="table"><thead>
+    html += `<div class="tableWrap"><table class="table"><thead>
       <tr><th>REG</th><th>Vehicle</th><th>MOT Expiry</th><th>Alert</th><th>Days</th><th>Status</th></tr>
     </thead><tbody>`;
     motAlerts.forEach(row=>{
@@ -9363,7 +9987,7 @@ function viewAlerts(){
         <td>${v.status||''}</td>
       </tr>`;
     });
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
   
@@ -9373,7 +9997,7 @@ function viewAlerts(){
   if(!todos.length){
     html += `<div class="small">No open tasks.</div>`;
   } else {
-    html += `<table class="table"><thead>
+    html += `<div class="tableWrap"><table class="table"><thead>
       <tr><th>Date</th><th>Text</th><th>Assigned</th></tr>
     </thead><tbody>`;
     todos.forEach(t=>{
@@ -9383,7 +10007,7 @@ function viewAlerts(){
         <td>${t.assignedTo||''}</td>
       </tr>`;
     });
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
   
