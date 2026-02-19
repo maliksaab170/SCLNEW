@@ -510,6 +510,74 @@ input:disabled, select:disabled, textarea:disabled{
   background:rgba(18,26,46,.92);
   box-shadow:none;
 }
+
+/* =========================
+   PRO MODAL SYSTEM
+========================= */
+.modalOverlay{
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  background:rgba(2,6,12,.65);
+  backdrop-filter:blur(6px);
+  display:grid;
+  place-items:center;
+  padding:20px;
+}
+
+.modalBox{
+  width:min(520px, 96vw);
+  background: linear-gradient(180deg, rgba(18,26,46,.98), rgba(12,18,34,.98));
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:16px;
+  box-shadow:0 30px 80px rgba(0,0,0,.55);
+  padding:14px;
+  animation:modalIn .18s ease-out;
+}
+
+@keyframes modalIn{
+  from{ transform:translateY(8px) scale(.98); opacity:.6; }
+  to{ transform:none; opacity:1; }
+}
+
+.modalHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:8px;
+  font-weight:900;
+}
+
+.modalBody{
+  font-size:14px;
+  line-height:1.5;
+  margin:10px 0 14px;
+  color:var(--ink);
+}
+
+.modalActions{
+  display:flex;
+  justify-content:flex-end;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+/* ===== Fix white dropdown menus (options) ===== */
+select, option, optgroup{
+  background-color:#0f1628;
+  color:var(--ink);
+}
+
+optgroup{
+  color:rgba(230,240,255,.85);
+}
+
+/* Windows high-contrast / forced-colors safety */
+@media (forced-colors: active){
+  select, option, optgroup{
+    forced-color-adjust:auto;
+  }
+}
 </style>
 
 </head><script>
@@ -808,6 +876,75 @@ function hideApps(){
   const o=document.getElementById('appsOverlay');
   if(o){ o.style.display='none'; }
 }
+
+/* =========================
+   PRO MODAL HELPERS
+========================= */
+
+function scHideModal(){
+  const o = document.getElementById('modalOverlay');
+  if(o) o.style.display = 'none';
+}
+
+function scShowModal({title='Notice', body='', actions=[]}){
+  const o = document.getElementById('modalOverlay');
+  const t = document.getElementById('modalTitle');
+  const b = document.getElementById('modalBody');
+  const a = document.getElementById('modalActions');
+  if(!o || !t || !b || !a) return;
+
+  t.textContent = title;
+  b.innerHTML = body;
+  a.innerHTML = '';
+
+  actions.forEach(btn=>{
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.textContent = btn.label || 'OK';
+    el.className = btn.className || '';
+    el.onclick = ()=>{
+      scHideModal();
+      if(btn.onClick) btn.onClick();
+    };
+    a.appendChild(el);
+  });
+
+  o.style.display = 'grid';
+}
+
+/* Alert replacement */
+function scAlert(message, title='Notice'){
+  return new Promise(resolve=>{
+    scShowModal({
+      title,
+      body: String(message || ''),
+      actions: [{label:'OK', className:'primary', onClick: resolve}]
+    });
+  });
+}
+
+/* Confirm replacement */
+function scConfirm(message, title='Please confirm'){
+  return new Promise(resolve=>{
+    scShowModal({
+      title,
+      body: String(message || ''),
+      actions: [
+        {label:'Cancel', className:'ghost', onClick: ()=>resolve(false)},
+        {label:'Yes', className:'danger', onClick: ()=>resolve(true)}
+      ]
+    });
+  });
+}
+
+/* Close handlers */
+document.addEventListener('click', (e)=>{
+  if(e.target && e.target.id === 'modalClose') scHideModal();
+  if(e.target && e.target.id === 'modalOverlay') scHideModal();
+});
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape') scHideModal();
+});
 
 document.addEventListener('click', (e)=>{
   if(e.target && e.target.id==='appsBtn') showApps();
@@ -2712,7 +2849,7 @@ function renderNav(){
   });
 
   // What shows on top bar (keep it clean + pro)
-  const CORE = ['Dashboard','Vehicles','Sales','Expenses','Showroom','Reports']
+  const CORE = ['Dashboard','Vehicles','Sales','Sold','Expenses','Showroom','Reports','To-Do','Settings']
     .filter(t=>allowed.includes(t));
 
   // Everything else goes in launcher
@@ -11382,5 +11519,18 @@ setInterval(applyAutoTodayAndMandatoryDate, 500);
 startAutoSyncFromSettings();
 render();
 </script>
+
+<!-- ===== PRO MODAL SYSTEM ===== -->
+<div id="modalOverlay" class="modalOverlay" style="display:none">
+  <div class="modalBox">
+    <div class="modalHead">
+      <div id="modalTitle">Notice</div>
+      <button id="modalClose" class="ghost small" type="button">✕</button>
+    </div>
+    <div id="modalBody" class="modalBody"></div>
+    <div id="modalActions" class="modalActions"></div>
+  </div>
+</div>
+
 </body>
 </html>
