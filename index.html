@@ -14,8 +14,8 @@
 html,body{height:100%}
 body{
   margin:0;font:14px/1.45 system-ui,Segoe UI,Roboto,Arial;color:var(--ink);
-  background:radial-gradient(1200px 800px at 10% -10%,#1a2e5f 0%,rgba(26,46,95,0) 60%),
-             radial-gradient(900px 700px at 120% 0%,#0a5ea1 0%,rgba(10,94,161,0) 60%),
+  background:radial-gradient(1200px 800px at 10% -10%,#1a2e5f 0%,rgba(26,46,95,0.0) 60%),
+             radial-gradient(900px 700px at 120% 0%,#0a5ea1 0%,rgba(10,94,161,0.0) 60%),
              linear-gradient(160deg,var(--bg1),var(--bg2))
 }
 a{color:var(--pri)}
@@ -152,18 +152,6 @@ button.icon{
   place-items: center;
 }
 
-/* Disabled (keep yours but nicer) */
-button:disabled{
-  opacity: .55;
-  cursor: not-allowed;
-  transform: none !important;
-  filter: none !important;
-  background: rgba(255,255,255,.03) !important;
-  border-color: rgba(255,255,255,.08) !important;
-  color: rgba(163,178,204,.8) !important;
-  box-shadow: none !important;
-}
-
 .table{width:100%;border-collapse:collapse}
 .table th,.table td{border:1px solid var(--line);padding:6px 8px}
 .table th{background:#0c1526;text-align:left}
@@ -195,7 +183,7 @@ button.primary:disabled {
 .topnav{
   display:flex;align-items:center;justify-content:space-between;
   gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
-  background:rgba(10,16,30,55);backdrop-filter:blur(8px);
+  background:rgba(10,16,30,0.55);backdrop-filter:blur(8px);
   position:sticky;top:64px;z-index:4
 }
 .topnav-left{
@@ -224,7 +212,7 @@ button.primary:disabled {
 }
 .appsPanel{
   width:min(980px, 95vw);
-  background:rgba(19,26,43,96);
+  background:rgba(19,26,43,0.96);
   border:1px solid var(--line);
   border-radius:16px;
   padding:14px;
@@ -577,6 +565,223 @@ optgroup{
   select, option, optgroup{
     forced-color-adjust:auto;
   }
+}
+
+/* =========================================
+   PREMIUM HYBRID SKIN (A + B) — v1
+   Luxury dark + modern clean cards/tables
+   Paste at END of your <style>
+========================================= */
+
+/* slightly richer palette */
+:root{
+  --bg1:#070b16;
+  --bg2:#0b1633;
+  --card:#0f182c;
+  --ink:#eef4ff;
+  --mut:#9fb1d1;
+  --line:rgba(255,255,255,.10);
+  --pri:#5ab0ff;
+}
+
+/* background = “luxury” */
+body{
+  background:
+    radial-gradient(1200px 800px at 10% -10%, rgba(90,176,255,.22) 0%, rgba(90,176,255,0.0) 60%),
+    radial-gradient(900px 700px at 120% 0%, rgba(122,92,255,.18) 0%, rgba(122,92,255,0.0) 60%),
+    radial-gradient(900px 700px at 40% 120%, rgba(46,204,113,.10) 0%, rgba(46,204,113,0.0) 55%),
+    linear-gradient(160deg,var(--bg1),var(--bg2));
+}
+
+/* page width + spacing */
+main{ max-width:1320px; padding:20px 18px 28px; }
+
+/* header = premium glass + subtle border */
+header{
+  background:rgba(6,10,22,.72) !important;
+  border-bottom:1px solid rgba(255,255,255,.10) !important;
+  backdrop-filter: blur(12px) saturate(1.15);
+}
+
+/* tabs bar = cleaner */
+.topnav{
+  background:rgba(6,10,22,.55) !important;
+  border-bottom:1px solid rgba(255,255,255,.10) !important;
+}
+
+/* cards = luxury glass + soft glow */
+.card{
+  border:1px solid rgba(255,255,255,.10) !important;
+  box-shadow:
+    0 18px 50px rgba(0,0,0,.42),
+    inset 0 1px 0 rgba(255,255,255,.05) !important;
+}
+.card::after{
+  content:"";
+  position:absolute; inset:0;
+  pointer-events:none;
+  border-radius:16px;
+  background: radial-gradient(900px 300px at 10% 0%, rgba(90,176,255,.10), transparent 55%);
+  opacity:.9;
+}
+
+/* modern inputs (Autotrader-ish) */
+input,select,textarea{
+  background:rgba(255,255,255,.045) !important;
+  border:1px solid rgba(255,255,255,.12) !important;
+}
+input:hover,select:hover,textarea:hover{
+  border-color: rgba(90,176,255,.35) !important;
+  background: rgba(255,255,255,.06) !important;
+}
+
+/* KPI stat look (use .stat already in your file) */
+.stat{
+  font-size:32px;
+  letter-spacing:.2px;
+  text-shadow: 0 10px 30px rgba(0,0,0,.35);
+}
+
+/* tables = cleaner lines, less “boxy” */
+.table{
+  border:1px solid rgba(255,255,255,.10) !important;
+}
+.table th,.table td{
+  border-bottom:1px solid rgba(255,255,255,.07) !important;
+}
+.table tbody tr:hover{
+  background: rgba(90,176,255,.085) !important;
+}
+
+/* buttons = premium gradient primary */
+button.primary{
+  background: linear-gradient(135deg, rgba(90,176,255,.98), rgba(122,92,255,.90)) !important;
+  border-color: rgba(90,176,255,.55) !important;
+}
+
+/* nicer scrollbar (desktop) */
+@media (hover:hover){
+  *::-webkit-scrollbar{ width:12px; height:12px; }
+  *::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.12); border-radius:999px; border:3px solid rgba(0,0,0,0.0); background-clip: padding-box; }
+  *::-webkit-scrollbar-thumb:hover{ background:rgba(255,255,255,.18); border:3px solid rgba(0,0,0,0.0); background-clip: padding-box; }
+}
+
+.pageTitle{ font-size:22px; font-weight:950; margin:4px 0 10px; }
+.pageSub{ font-size:12px; color:var(--mut); margin:-6px 0 14px; }
+
+.kpiGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:14px}
+.kpiCard{background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.03));
+  border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:14px;box-shadow:0 18px 45px rgba(0,0,0,.35)}
+.kpiLabel{font-size:12px;color:var(--mut);font-weight:800}
+.kpiValue{font-size:30px;font-weight:950;margin-top:6px}
+
+/* ===== Reports Professional Pack (v1) ===== */
+.reportsWrap{ display:flex; flex-direction:column; gap:12px; }
+.reportsWrap .reportCard{ margin:0; }
+.reportsWrap .card{ margin:0; } /* stop random spacing differences */
+
+.repSum{
+  cursor:pointer;
+  font-weight:950;
+  font-size:14px;
+  list-style:none;
+}
+.repSum::-webkit-details-marker{ display:none; }
+
+.repTopRow{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+.repToolsRow{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+
+.reportsWrap details{
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:14px;
+  padding:10px 12px;
+  background:rgba(255,255,255,.02);
+}
+
+.reportsWrap details + details{ margin-top:10px; }
+
+.reportCard h3{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
+.reportCard .miniActions{
+  display:flex; gap:8px; flex-wrap:wrap;
+}
+
+.reportCard{
+  position:relative;
+  background:
+    radial-gradient(1200px 600px at -10% -20%, rgba(90,176,255,.08), transparent 40%),
+    linear-gradient(180deg, rgba(18,26,46,.96), rgba(14,20,36,.98));
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:16px;
+  padding:14px 14px 16px;
+  box-shadow:0 18px 46px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.04);
+}
+.reportCard:hover{ border-color: rgba(90,176,255,.24); }
+
+.reportsWrap details[open]{
+  border-color: rgba(90,176,255,.22);
+  box-shadow: 0 12px 30px rgba(0,0,0,.18);
+}
+
+/* ===== Reports Home Tiles ===== */
+.reportTiles{
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(190px, 1fr));
+  gap:12px;
+  margin:12px 0 14px;
+}
+.reportTile{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding:12px 12px 13px;
+  border-radius:16px;
+  border:1px solid rgba(255,255,255,.10);
+  background:
+    radial-gradient(900px 240px at 10% 0%, rgba(90,176,255,.14), transparent 55%),
+    rgba(255,255,255,.03);
+  box-shadow:0 14px 40px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.04);
+  cursor:pointer;
+  user-select:none;
+  transition:transform .08s ease, border-color .08s ease, background .08s ease;
+}
+.reportTile:hover{
+  transform: translateY(-1px);
+  border-color: rgba(90,176,255,.28);
+  background:
+    radial-gradient(900px 240px at 10% 0%, rgba(90,176,255,.18), transparent 55%),
+    rgba(255,255,255,.035);
+}
+.reportTile .tTitle{ font-weight:950; font-size:13px; }
+.reportTile .tSub{ color:var(--mut); font-size:12px; line-height:1.2; }
+.reportTile .tMeta{ margin-top:2px; color:rgba(255,255,255,.78); font-size:11px; }
+
+/* ===== Small Checkboxes ==== */
+input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  accent-color: var(--pri); /* optional: matches your brand blue */
+  vertical-align: middle;
+  margin-right: 2px;
 }
 </style>
 
@@ -954,6 +1159,15 @@ document.addEventListener('click', (e)=>{
 document.addEventListener('keydown', (e)=>{
   if(e.key==='Escape') hideApps();
 });
+
+function uniqueByVehicleId(list){
+  const seen = new Set();
+  return list.filter(v=>{
+    if(seen.has(v.id)) return false;
+    seen.add(v.id);
+    return true;
+  });
+}
 
 function ddmmyyyy(d){
   if(!d) return '';
@@ -3288,8 +3502,21 @@ function viewDashboard(){
   const vExp=(db.vehicleExpenses||[]).reduce((t,e)=>t+Number(e.amount||0),0);
   const sExp=(db.showroomExpenses||[]).reduce((t,e)=>t+Number(e.amount||0),0);
   const bal=calcBalances();
-  const inStockVehicles = (db.vehicles || []).filter(v => v.status !== 'sold');
-  const inStock = inStockVehicles.length;
+  
+  const soldVehicleIds = new Set(
+    (db.sales || [])
+      .filter(s => {
+        if (!s) return false;
+        const st = String(s.status || 'completed').toLowerCase();
+        return !s.refunded && st === 'completed';
+      })
+      .map(s => s.vehicleId)
+  );
+
+  const inStockVehicles = (db.vehicles || [])
+    .filter(v => !soldVehicleIds.has(v.id));
+
+  const inStock = uniqueByVehicleId(inStockVehicles).length;
   const inStockIds = new Set(inStockVehicles.map(v => v.id));
 
   const stockPurchase = inStockVehicles
@@ -8045,32 +8272,132 @@ function ensureVehicleFields(v){
 function isRealSale(s) {
   if (!s) return false;
   if (s.refunded) return false;
-  const st = s.status || 'completed'; // old sales have no status → completed
-  return st === 'completed';
+  const st = String(s.saleStatus || s.status || 'completed').toLowerCase();
+  return (st === 'completed' || st === 'complete' || st === 'sold');
 }
 
 /* ========= Reports (inc. Month Close) ========= */
 function viewReports(){
   if(!canTab('Reports')) return document.createElement('div'); const wrap=document.createElement('div'); wrap.className='card';
-  wrap.innerHTML=`<h2>Reports</h2>
-  <div class="card"><h3>Audit Log</h3><div class="row"><input id="r_from" type="date"><input id="r_to" type="date"><select id="r_user"><option value="">All users</option>${(db.users||[]).map(u=>'<option>'+u.username+'</option>').join('')}</select>
-  <select id="r_entity"><option value="">All entities</option><option>vehicle</option><option>sale</option><option>vehicleExpense</option><option>showroomExpense</option><option>directorTx</option><option>investorTx</option><option>todo</option></select>
-  <button id="r_run">Run</button><button id="r_export">Export CSV</button></div><div id="r_out" class="small"></div>
-  <details id="r_fold"><summary>Show audit entries (<span id="r_count">0</span>)</summary><div id="r_tblwrap"><table class="table" style="margin-top:8px"><thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody id="r_body"></tbody></table></div></details></div>
-
-  <div class="card"><h3>Monthly Summary</h3><div class="row"><input id="rm_month" type="month" value="${new Date().toISOString().slice(0,7)}"><label class="small"><input type="checkbox" id="rm_cover"> Pretend showroom expenses covered by monthly profit</label><button id="rm_go">Calculate</button><button id="rm_export_xlsx">Export Excel (Month + Sold cars)</button></div><div id="rm_box"></div></div>
-
-  <div class="card"><h3>Month Close (Directors & Investors)</h3>
-    <div class="row"><input id="mc_month" type="month" value="${new Date().toISOString().slice(0,7)}"> <button id="mc_prev">Preview</button><button id="mc_post" class="primary">Post</button><button id="mc_repost" class="btn">Repost month (fix returned deals)</button><button id="mc_export">Export PDF</button><span id="mc_warn" class="small" style="margin-left:8px;color:#ffb3b3"></span></div><div id="mc_box" class="small"></div>
+  wrap.innerHTML=`
+  <div class="reportsWrap">
+  <div class="reportHeader">
+    <div>
+      <div class="title">Reports</div>
+      <div class="sub">Monthly summary, finance sales, stock reports and audit log</div>
+    </div>
+    <div class="reportTools">
+      <span class="chip">Star Cars London</span>
+      <span class="chip">${new Date().toLocaleDateString()}</span>
+    </div>
   </div>
-  
-  <button id="rep_fin_unpaid">Finance Unpaid</button>
-  <div id="rep_fin_unpaid_out"></div>
+  </div>
 
-  <div class="card" style="margin-top:12px">
-    <details id="stockDays_fold">
-      <summary style="cursor:pointer; font-weight:bold; font-size:1.17em;">Stock In Days (In Stock Vehicles)</summary>
-      <div class="row" style="align-items: flex-end; gap: 8px;">
+  <div class="reportTiles">
+    <div class="reportTile" data-jump="#rep_monthly">
+      <div class="tTitle">Monthly Summary</div>
+      <div class="tSub">Sales, purchases, expenses, profit</div>
+      <div class="tMeta">Quick month overview</div>
+    </div>
+    <div class="reportTile" data-jump="#rep_monthclose">
+      <div class="tTitle">Month Close</div>
+      <div class="tSub">Directors & investors posting</div>
+      <div class="tMeta">Preview • Post • Export</div>
+    </div>
+    <div class="reportTile" data-jump="#rep_finance">
+      <div class="tTitle">Finance</div>
+      <div class="tSub">Finance Sales + Accounts reports</div>
+      <div class="tMeta">Companies • Payout • Admin</div>
+    </div>
+    <div class="reportTile" data-jump="#rep_stock">
+      <div class="tTitle">Stock & Prep</div>
+      <div class="tSub">Stock days, not ready, month-end list</div>
+      <div class="tMeta">In-stock insights</div>
+    </div>
+    <div class="reportTile" data-jump="#rep_audit">
+      <div class="tTitle">Audit Log</div>
+      <div class="tSub">Who changed what & when</div>
+      <div class="tMeta">Export CSV</div>
+    </div>
+  </div>
+
+
+  <div class="reportCard" id="rep_audit">
+    <h3>Audit Log</h3>
+    <div class="row">
+      <input id="r_from" type="date">
+      <input id="r_to" type="date">
+      <select id="r_user">
+        <option value="">All users</option>
+        ${(db.users||[]).map(u=>'<option>'+u.username+'</option>').join('')}
+      </select>
+      <select id="r_entity">
+        <option value="">All entities</option>
+        <option>vehicle</option><option>sale</option><option>vehicleExpense</option><option>showroomExpense</option>
+        <option>directorTx</option><option>investorTx</option><option>todo</option>
+      </select>
+      <button id="r_run" class="primary">Run</button>
+      <button id="r_export">Export CSV</button>
+    </div>
+
+    <div id="r_out" class="small" style="margin-top:8px"></div>
+
+    <details id="r_fold" style="margin-top:10px">
+      <summary>Audit entries (<span id="r_count">0</span>)</summary>
+      <div id="r_tblwrap" style="margin-top:10px">
+        <div class="tableWrap">
+          <table class="table">
+            <thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead>
+            <tbody id="r_body"></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="reportCard" id="rep_monthly">
+    <h3>Monthly Summary</h3>
+    <div class="row">
+      <input id="rm_month" type="month" value="${new Date().toISOString().slice(0,7)}">
+      <label class="small"><input type="checkbox" id="rm_cover"> Cover showroom expenses using monthly profit</label>
+      <button id="rm_go" class="primary">Calculate</button>
+      <button id="rm_export_xlsx">Export Excel</button>
+    </div>
+    <div id="rm_box" style="margin-top:10px"></div>
+  </div>
+
+  <div class="reportCard" id="rep_monthclose">
+    <h3>
+      Month Close (Directors & Investors)
+      <span class="miniActions">
+        <button id="mc_prev">Preview</button>
+        <button id="mc_post" class="primary">Post</button>
+        <button id="mc_repost">Repost month (fix returned deals)</button>
+        <button id="mc_export">Export PDF</button>
+      </span>
+    </h3>
+
+    <div class="row">
+      <input id="mc_month" type="month" value="${new Date().toISOString().slice(0,7)}">
+      <span id="mc_warn" class="small" style="color:#ffb3b3"></span>
+    </div>
+    <div id="mc_box" class="small" style="margin-top:10px"></div>
+  </div>
+
+  <div class="reportCard">
+    <h3>
+      Finance Unpaid
+      <span class="miniActions">
+        <button id="rep_fin_unpaid" class="primary">Run</button>
+      </span>
+    </h3>
+    <div id="rep_fin_unpaid_out" style="margin-top:10px"></div>
+  </div>
+
+  <div class="reportCard">
+    <details id="stockDays_fold" data-anchor="rep_stock">
+      <summary class="repSum">Stock In Days (In Stock Vehicles)</summary>
+      <div class="row" style="align-items:flex-end;margin-top:10px">
         <label class="small">Days
           <input id="sid_minDays" type="number" min="1" style="width:90px;" placeholder="e.g. 30">
         </label>
@@ -8082,9 +8409,9 @@ function viewReports(){
     </details>
   </div>
 
-  <div class="card" style="margin-top:12px">
+  <div class="reportCard">
     <details>
-      <summary style="cursor:pointer; font-weight:bold; font-size:1.05em;">Funds To Receive (Pending settlements)</summary>
+      <summary class="repSum">Funds To Receive (Pending settlements)</summary>
       <div class="row" style="margin-top:10px; align-items:flex-end;">
         <label class="small">From<input id="rtf_from" type="date"></label>
         <label class="small">To<input id="rtf_to" type="date"></label>
@@ -8106,11 +8433,9 @@ function viewReports(){
     </details>
   </div>
 
-  <div class="card" style="margin-top:12px">
+  <div class="reportCard">
     <details>
-      <summary style="cursor:pointer;">
-        <h3 style="display:inline;">Money Received (by method) + Details</h3>
-      </summary>
+      <summary class="repSum">Money Received (by method) + Details</summary>
 
       <div class="row" style="margin-top:10px; align-items:flex-end;">
         <label class="small">Month
@@ -8146,9 +8471,9 @@ function viewReports(){
     </details>
   </div>
 
-  <div class="card">
+  <div class="reportCard">
     <details>
-      <summary><h3 style="display:inline; cursor:pointer;">Sales Insights (Accounts)</h3></summary>
+      <summary class="repSum">Sales Insights (Accounts)</summary>
       <div class="row" style="margin-top:10px">
         <input id="si_month" type="month" value="${new Date().toISOString().slice(0,7)}"> </label>
         <button id="si_run" class="primary">Run</button>
@@ -8189,31 +8514,37 @@ function viewReports(){
     </details>
   </div>
 
-  <div class="card">
+  <div class="reportCard" id="rep_finance">
     <details>
-      <summary><h3 style="display:inline; cursor:pointer;">Finance Sales (Accounts)</h3></summary>
+      <summary class="repSum">Finance Sales (Accounts)</summary>
+
       <div class="row" style="margin-top:10px">
-        <input id="rf_month" type="month" value="${new Date().toISOString().slice(0,7)}"> </label>
+        <label style="min-width:220px">
+          <span class="small">Month</span>
+          <input id="rf_month" type="month" value="${new Date().toISOString().slice(0,7)}">
+        </label>
         <button id="rf_run" class="primary">Run</button>
         <button id="rf_export">Export CSV</button>
-    </div>
+      </div>
 
-    <div id="rf_summary" class="small" style="margin-top:10px"></div>
+      <div id="rf_summary" class="small" style="margin-top:10px"></div>
 
-    <details open style="margin-top:10px">
-      <summary>Show finance company breakdown</summary>
-      <div id="rf_out" style="margin-top:10px"></div>
-    </details>
+      <details open style="margin-top:10px">
+        <summary>Finance company breakdown</summary>
+        <div id="rf_out" style="margin-top:10px"></div>
+      </details>
 
-    <details style="margin-top:10px">
-      <summary>Show salesperson breakdown (from Audit Log)</summary>
-      <div id="rf_by_user" style="margin-top:10px"></div>
+      <details style="margin-top:10px">
+        <summary>Salesperson breakdown (from Audit Log)</summary>
+        <div id="rf_by_user" style="margin-top:10px"></div>
+      </details>
+
     </details>
   </div>
 
-  <div class="card" style="margin-top:12px">
-    <details id="fr_fold">
-      <summary style="cursor:pointer; font-weight:bold; font-size:1.17em;">Finance Sales Breakdown</summary>
+  <div class="reportCard">
+    <details>
+      <summary class="repSum">Finance Sales Breakdown</summary>
       <div style="margin-top:12px">
         <div class="row" style="justify-content:space-between">
           <div class="row">
@@ -8228,9 +8559,9 @@ function viewReports(){
     </details>
   </div>
 
-  <div class="card" style="margin-top:12px">
+  <div class="reportCard">
     <details id="nr_fold">
-      <summary style="cursor:pointer; font-weight:bold; font-size:1.17em;">Cars Not Ready (In Stock)</summary>
+      <summary class="repSum">Cars Not Ready (In Stock)</summary>
       <div class="row" style="justify-content:space-between;align-items:flex-end">
         <div>
           <div class="small">Shows vehicles still in stock that are NOT ready for sale, with reason + stage</div>
@@ -8249,7 +8580,157 @@ function viewReports(){
       <div id="nr_tbl" style="margin-top:10px"></div>
     </details>
   </div>
+  </div>
   `;
+
+  
+  // ===== Finance Sales (Accounts) — dedicated wiring (fix) =====
+  (function(){
+    // prevent double wiring if viewReports re-opened
+    if(wrap.__rf_wired) return;
+    wrap.__rf_wired = true;
+
+    function getSaleCreatedUser(saleId){
+      const a = (db.audit || []).find(x => x.entity === 'sale' && x.entityId === saleId && x.action === 'add');
+      return (a && a.user) ? a.user : '';
+    }
+
+    function buildFinanceAccounts(monthKey){
+      const sales = (db.sales || []).filter(s =>
+        isRealSale(s) &&
+        (s.date || '').slice(0,7) === monthKey &&
+        (
+          Number(s.finance || 0) > 0 ||
+          String(s.financeCompany || '').trim() !== '' ||
+          Number(s.financeAdminFee || 0) > 0 ||
+          Number(s.financePayoutAmount || 0) > 0
+        )
+      );
+
+      const byCo = {};
+      sales.forEach(s => {
+        const co = (String(s.financeCompany || '').trim() || 'UNKNOWN').toUpperCase();
+        if(!byCo[co]) byCo[co] = { company: co, deals: 0, financeAmt: 0, payoutPaid: 0, adminFee: 0 };
+        byCo[co].deals += 1;
+        byCo[co].financeAmt += Number(s.finance || 0);
+        byCo[co].adminFee += Number(s.financeAdminFee || 0);
+        if (s.financePayoutPaid) byCo[co].payoutPaid += Number(s.financePayoutAmount || 0);
+      });
+
+      const byUser = {};
+      sales.forEach(s => {
+        const u = (getSaleCreatedUser(s.id) || 'UNKNOWN');
+        if(!byUser[u]) byUser[u] = { user: u, deals: 0, financeAmt: 0, payoutPaid: 0, adminFee: 0 };
+        byUser[u].deals += 1;
+        byUser[u].financeAmt += Number(s.finance || 0);
+        byUser[u].adminFee += Number(s.financeAdminFee || 0);
+        if (s.financePayoutPaid) byUser[u].payoutPaid += Number(s.financePayoutAmount || 0);
+      });
+
+      const companies = Object.values(byCo).sort((a,b)=> b.deals - a.deals);
+      const users = Object.values(byUser).sort((a,b)=> b.deals - a.deals);
+
+      const totals = companies.reduce((acc,r)=>{
+        acc.deals += r.deals; acc.financeAmt += r.financeAmt; acc.payoutPaid += r.payoutPaid; acc.adminFee += r.adminFee;
+        return acc;
+      }, {deals:0, financeAmt:0, payoutPaid:0, adminFee:0});
+
+      const summaryEl = wrap.querySelector('#rf_summary');
+      if(summaryEl){
+        summaryEl.innerHTML =
+          `<b>${monthKey}</b> • Deals: <b>${totals.deals}</b> • Finance: <b>${fmtMoney(totals.financeAmt)}</b> • Payout received: <b>${fmtMoney(totals.payoutPaid)}</b> • Admin fees: <b>${fmtMoney(totals.adminFee)}</b>`;
+      }
+
+      const out = wrap.querySelector('#rf_out');
+      if(out){
+        out.innerHTML = companies.length ? `
+          <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr><th>Finance Company</th><th class="right">Deals</th><th class="right">Finance</th><th class="right">Payout Received</th><th class="right">Admin Fees</th></tr>
+            </thead>
+            <tbody>
+              ${companies.map(r=>`
+                <tr>
+                  <td>${r.company}</td>
+                  <td class="right">${r.deals}</td>
+                  <td class="right">${fmtMoney(r.financeAmt)}</td>
+                  <td class="right">${fmtMoney(r.payoutPaid)}</td>
+                  <td class="right">${fmtMoney(r.adminFee)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          </div>
+        ` : `<div class="small">No finance deals found for this month.</div>`;
+      }
+
+      const outU = wrap.querySelector('#rf_by_user');
+      if(outU){
+        outU.innerHTML = users.length ? `
+          <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr><th>Salesperson (Audit)</th><th class="right">Deals</th><th class="right">Finance</th><th class="right">Payout Received</th><th class="right">Admin Fees</th></tr>
+            </thead>
+            <tbody>
+              ${users.map(r=>`
+                <tr>
+                  <td>${r.user}</td>
+                  <td class="right">${r.deals}</td>
+                  <td class="right">${fmtMoney(r.financeAmt)}</td>
+                  <td class="right">${fmtMoney(r.payoutPaid)}</td>
+                  <td class="right">${fmtMoney(r.adminFee)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          </div>
+        ` : `<div class="small">No finance deals found for this month.</div>`;
+      }
+
+      return {monthKey, companies, users, totals};
+    }
+
+    const run = ()=>{
+      const m = (wrap.querySelector('#rf_month')?.value || '').slice(0,7);
+      if(!m) return alert('Please select a month');
+      buildFinanceAccounts(m);
+    };
+
+    const rfRunBtn = wrap.querySelector('#rf_run');
+    if(rfRunBtn) rfRunBtn.onclick = run;
+
+    const rfExportBtn = wrap.querySelector('#rf_export');
+    if(rfExportBtn){
+      rfExportBtn.onclick = ()=>{
+        const m = (wrap.querySelector('#rf_month')?.value || '').slice(0,7);
+        if(!m) return alert('Please select a month');
+        const res = buildFinanceAccounts(m);
+        const rows = [
+          ["Month","Finance Company","Deals","Finance Amount","Payout Received (Paid)","Admin Fees"]
+        ].concat(res.companies.map(r=>[res.monthKey, r.company, r.deals, r.financeAmt, r.payoutPaid, r.adminFee]));
+        const csv = rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+        a.download = `finance_accounts_${res.monthKey}.csv`;
+        a.click();
+      };
+    }
+  })();
+// Reports tiles quick-jump (fix: make the top tiles clickable)
+  (wrap.querySelectorAll('.reportTile')||[]).forEach(tile=>{
+    tile.onclick = () => {
+      const sel = tile.getAttribute('data-jump') || '';
+      const target = sel ? wrap.querySelector(sel) : null;
+      if(target){
+        target.scrollIntoView({behavior:'smooth', block:'start'});
+        // quick highlight
+        const prev = target.style.boxShadow;
+        target.style.boxShadow = '0 0 0 2px rgba(90,176,255,.45), 0 18px 46px rgba(0,0,0,.32)';
+        setTimeout(()=>{ target.style.boxShadow = prev || ''; }, 900);
+      }
+    };
+  });
+
 
   setTimeout(() => {
     const runBtn = document.getElementById('sid_run');
@@ -8562,7 +9043,7 @@ function viewReports(){
 
     if(rfRunBtn){
       rfRunBtn.onclick = () => {
-        const m = (wrap.querySelector('#rf_month').value || '').slice(0,7);
+        const m = (wrap.querySelector('#rf_month')?.value || '').slice(0,7);
         if(!m) return alert('Please select a month');
         buildFinanceAccounts(m);
       };
@@ -8570,7 +9051,7 @@ function viewReports(){
 
     if(rfExportBtn){
       rfExportBtn.onclick = () => {
-        const m = (wrap.querySelector('#rf_month').value || '').slice(0,7);
+        const m = (wrap.querySelector('#rf_month')?.value || '').slice(0,7);
         if(!m) return alert('Please select a month');
         const res = buildFinanceAccounts(m);
 
@@ -9127,6 +9608,7 @@ function viewReports(){
           return hay.includes(q);
         })
         .map(v=>({
+          vehicleId: v.id,
           reg: v.reg||'',
           make: v.make||'',
           model: v.model||'',
@@ -9149,7 +9631,7 @@ function viewReports(){
 
       rows.forEach(r=>{
         // r came from v, so we need the vehicle to read purchase/expenses correctly
-        const v = (db.vehicles || []).find(x => (x.reg||'') === r.reg) || null;
+        const v = (db.vehicles || []).find(x => x.id === r.vehicleId) || null;
         if(!v) return;
         totalPurchase += Number(v.purchase || 0);
         totalWithVehExp += Number(v.purchase || 0) + Number(expByVeh[v.id] || 0);
