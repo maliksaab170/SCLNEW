@@ -29,7 +29,7 @@ header{
 .hdr-actions button{margin-left:6px}
 nav{
   display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);
-  background:rgba(10,16,30,.55);backdrop-filter:blur(6px);position:sticky;top:64px;z-index:4
+  background:rgba(10,16,30,0.55);backdrop-filter:blur(6px);position:sticky;top:64px;z-index:4
 }
 nav button{
   border-radius: 999px;
@@ -193,7 +193,7 @@ button.primary:disabled {
   padding-bottom:2px;
 }
 .topnav-left::-webkit-scrollbar{height:8px}
-.topnav-left::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:999px}
+.topnav-left::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.10);border-radius:999px}
 .topnav-left button{
   background:#17233a;border:1px solid var(--line);color:var(--ink);
   padding:8px 12px;border-radius:999px;cursor:pointer;
@@ -207,7 +207,7 @@ button.primary:disabled {
 /* ===== App Launcher ===== */
 .appsOverlay{
   position:fixed;inset:0;z-index:20;
-  background:rgba(2,6,12,.75);backdrop-filter:blur(6px);
+  background:rgba(2,6,12,0.75);backdrop-filter:blur(6px);
   display:grid;place-items:start center;padding:90px 12px 20px;
 }
 .appsPanel{
@@ -216,7 +216,7 @@ button.primary:disabled {
   border:1px solid var(--line);
   border-radius:16px;
   padding:14px;
-  box-shadow:0 20px 60px rgba(0,0,0,.45);
+  box-shadow:0 20px 60px rgba(0,0,0,0.45);
 }
 .appsHead{display:flex;align-items:center;justify-content:space-between}
 #appsGrid{
@@ -241,7 +241,7 @@ button.primary:disabled {
 .appsTile:hover{filter:brightness(1.08)}
 .appsIco{
   width:34px;height:34px;border-radius:12px;
-  background:rgba(255,255,255,.06);
+  background:rgba(255,255,255,0.06);
   display:grid;place-items:center;font-weight:900;
 }
 @media(max-width:900px){ #appsGrid{grid-template-columns:repeat(2,minmax(0,1fr));} }
@@ -783,6 +783,73 @@ input[type="checkbox"] {
   vertical-align: middle;
   margin-right: 2px;
 }
+
+/* ===== Force visible scrollbars (global) ===== */
+html{ overflow-y: auto; }
+body{ overflow-y: auto; }
+
+@media (hover:hover){
+  *::-webkit-scrollbar{ width:12px; height:12px; }
+  *::-webkit-scrollbar-track{ background: transparent; }
+  *::-webkit-scrollbar-thumb{
+    background: rgba(255,255,255,.18);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,.26); }
+}
+
+/* Firefox */
+*{
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.22) transparent;
+}
+
+html,body{overflow:auto;overflow-x:auto;}
+body{scrollbar-gutter:stable both-edges;}
+
+/* ===== SOLD (single-page cards) ===== */
+.soldGrid{
+  display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap:12px;
+}
+.soldItem{
+  background: rgba(255,255,255,.03);
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:16px;
+  padding:12px;
+  box-shadow:0 14px 38px rgba(0,0,0,.22);
+}
+.soldTop{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
+  padding-bottom:8px;
+  border-bottom:1px solid rgba(255,255,255,.08);
+}
+.soldReg{ font-weight:950; font-size:16px; letter-spacing:.2px; }
+.soldMeta{ color: var(--mut); font-size:12px; }
+.soldFields{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:10px 12px;
+}
+.soldLbl{ color: var(--mut); font-size:11px; font-weight:900; letter-spacing:.02em; }
+.soldVal{ font-size:13px; color: var(--ink); }
+@media(max-width:520px){
+  .soldGrid{ grid-template-columns: 1fr; }
+  .soldFields{ grid-template-columns: 1fr; }
+}
+
+
+/* ===== Fit tables to 1 page (Vehicles/Sold) ===== */
+.fitTable{table-layout:fixed;}
+.fitTable th,.fitTable td{white-space:normal;word-break:break-word;}
+.fitTable td{line-height:1.25;}
+
 </style>
 
 </head><script>
@@ -1009,6 +1076,19 @@ window.restoreJSONMerge = function () {
 
 <main id="app"></main>
 <footer>© Star Cars London Ltd</footer>
+
+<!-- ✅ Modal Overlay (needed for scAlert/scConfirm) -->
+<div id="modalOverlay" class="modalOverlay" style="display:none">
+  <div class="modalBox">
+    <div class="modalHead">
+      <span id="modalTitle">Notice</span>
+      <button id="modalClose" type="button">✕</button>
+    </div>
+
+    <div id="modalBody" class="modalBody"></div>
+    <div id="modalActions" class="modalActions"></div>
+  </div>
+</div>
 
 <div id="loginOverlay">
   <div class="card loginCard">
@@ -1861,10 +1941,29 @@ function checkPullStatusOnLogin(){
   }
 }
 
-function doLogin(){
-  const u=document.getElementById('li_user').value.trim(); const p=document.getElementById('li_pass').value;
-  const user=(db.users||[]).find(x=>x.username===u&&x.password===p);
-  if(!user){alert('Wrong login');return;}
+async function doLogin(){
+  const u = document.getElementById('li_user').value.trim();
+  const p = document.getElementById('li_pass').value;
+
+  const user = (db.users||[]).find(x => x.username === u);
+  if(!user){ alert('Wrong login'); return; }
+
+  const ok = await verifyUserPassword(user, p);
+  if(!ok){ alert('Wrong login'); return; }
+
+  // ✅ auto-upgrade old plain passwords to hashed (one-time)
+  if(user.password && !user.passHash){
+    try{
+      await setUserPasswordHashed(user, p);
+      saveDB();
+      try{renderAlertBell();}catch(e){}
+      addAudit('update','userPass',user.id,'Auto-upgraded password hash for '+user.username);
+    }catch(e){
+      console.warn('Password upgrade failed:', e);
+      // don't block login
+    }
+  }
+
   if ((db.company && db.company.requireGist === true) && !db.company.gistBootstrapped) {
     alert('Please go to Settings → Integrations and Pull Users from your Gist first.');
     return;
@@ -1873,11 +1972,104 @@ function doLogin(){
     alert('Admin login is disabled on this build.');
     return;
   }
-  session={username:user.username,role:user.role}; sessionStorage.setItem('starcars_sess',JSON.stringify(session));
-  showLogin(false); initHeader(); render(); checkPullStatusOnLogin();
-  
+
+  session = {username:user.username, role:user.role};
+  sessionStorage.setItem('starcars_sess', JSON.stringify(session));
+
+  showLogin(false);
+  initHeader();
+  render();
+  checkPullStatusOnLogin();
+
   // Disable push button on login
   disablePushButton();
+}
+
+/* ========= Strong Passwords (PBKDF2) =========
+   - Stores only: passHash + passSalt + passIter
+   - Backward compatible with existing u.password (plain)
+*/
+const PASS_ITER_DEFAULT = 150000; // strong enough for local apps
+
+function _b64FromBytes(bytes){
+  let bin = '';
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin);
+}
+function _bytesFromB64(b64){
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function _randSaltB64(len=16){
+  const u8 = new Uint8Array(len);
+  crypto.getRandomValues(u8);
+  return _b64FromBytes(u8);
+}
+
+async function hashPasswordPBKDF2(password, saltB64, iterations){
+  const salt = _bytesFromB64(saltB64);
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(String(password)),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits']
+  );
+
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt,
+      iterations: Number(iterations || PASS_ITER_DEFAULT)
+    },
+    keyMaterial,
+    256
+  );
+
+  return _b64FromBytes(new Uint8Array(bits));
+}
+
+function isStrongPassword(p){
+  p = String(p || '');
+  if(p.length < 10) return false;
+  const hasUpper = /[A-Z]/.test(p);
+  const hasLower = /[a-z]/.test(p);
+  const hasNum   = /[0-9]/.test(p);
+  const hasSym   = /[^A-Za-z0-9]/.test(p);
+  return hasUpper && hasLower && hasNum && hasSym;
+}
+
+async function setUserPasswordHashed(user, plainPassword){
+  const salt = _randSaltB64(16);
+  const iter = PASS_ITER_DEFAULT;
+  const hash = await hashPasswordPBKDF2(plainPassword, salt, iter);
+
+  user.passSalt = salt;
+  user.passIter = iter;
+  user.passHash = hash;
+
+  // remove old plain password field (if any)
+  delete user.password;
+}
+
+async function verifyUserPassword(user, plainPassword){
+  // new method
+  if(user && user.passHash && user.passSalt){
+    const iter = user.passIter || PASS_ITER_DEFAULT;
+    const hash = await hashPasswordPBKDF2(plainPassword, user.passSalt, iter);
+    return hash === user.passHash;
+  }
+
+  // old fallback (plain)
+  if(user && typeof user.password === 'string'){
+    return user.password === plainPassword;
+  }
+
+  return false;
 }
 
 function logout(){sessionStorage.removeItem('starcars_sess'); sessionStorage.removeItem('starcars_pull_used'); session=null; showLogin(true); initHeader();}
@@ -1978,16 +2170,29 @@ function applyPullLockUI(){
 function refreshLogoBox(){ const lb=document.getElementById('logoBox'); const logo=(db.company.logo||'').trim(); if(logo){ lb.innerHTML='<img alt="logo" src="'+logo+'">'; } else { lb.textContent='SC'; } }
 initHeader();
 
-function changeMyPass(){
+async function changeMyPass(){
   if(!session){ return alert('Not logged in'); }
   const u = (db.users||[]).find(x=>x.username===session.username);
   if(!u){ return alert('User not found'); }
+
   const p1 = prompt('Enter new password for '+u.username+':'); if(p1===null) return;
   if(!p1.trim()){ return alert('Password cannot be empty'); }
+
+  // ✅ strength rule
+  if(!isStrongPassword(p1)){
+    return alert('Password too weak.\nUse at least 10 chars with: Upper + lower + number + symbol.');
+  }
+
   const p2 = prompt('Confirm new password:'); if(p2===null) return;
   if(p1!==p2){ return alert('Passwords do not match'); }
-  u.password = p1; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','userPass',u.id,'Self-change for '+u.username); alert('Password updated.');
+
+  await setUserPasswordHashed(u, p1);
+  saveDB();
+  try{renderAlertBell();}catch(e){}
+  addAudit('update','userPass',u.id,'Self-change for '+u.username);
+  alert('Password updated.');
 }
+
 function currentUser(){ return (db.users||[]).find(x=>session&&x.username===session.username); }
 function canTab(tab){ const u=currentUser(); return !!(u&&u.perms&&u.perms.tabs&&u.perms.tabs[tab]); }
 function canProfit(){ const u=currentUser(); return !!(u&&u.perms&&u.perms.profit); }
@@ -2214,8 +2419,8 @@ function restoreJSONMerge() {
           addAudit('import', 'backup', '', 'Merged JSON backup (id-merge)');
         }
         alert('Merged from backup');
-        markPullUsed();
-        applyPullLockUI && applyPullLockUI();
+        if (typeof markPullUsed === 'function') markPullUsed();
+        if (typeof applyPullLockUI === 'function') applyPullLockUI();
         if (typeof render === 'function') render();
       } catch (e) {
         alert('Bad JSON: ' + (e.message || e));
@@ -2940,6 +3145,33 @@ function countChanges(changes) {
 /* ========= Navigation & render ========= */
 const TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','Alerts','To-Do','Users','Settings']; let currentTab=TABS[0];
 function setTab(t){ currentTab=t; render(); }
+
+/* ========= Quick jump helpers ========= */
+window.openSoldForReg = function(reg){
+  reg = String(reg||'').trim().toUpperCase();
+  if(!reg) return;
+  setTab('Sold');
+  setTimeout(()=>{
+    const el = document.getElementById('sold_search');
+    if(el){
+      el.value = reg;
+      el.dispatchEvent(new Event('input'));
+    }
+  }, 80);
+};
+
+window.openVehicleByReg = function(reg){
+  reg = String(reg||'').trim().toUpperCase();
+  if(!reg) return;
+  setTab('Vehicles');
+  setTimeout(()=>{
+    const el = document.getElementById('veh_search');
+    if(el){
+      el.value = reg;
+      el.dispatchEvent(new Event('input'));
+    }
+  }, 80);
+};
 
 // 🔍 Global search: reg / VIN / buyer / invoice / phone / complaint
 function globalSearch(){
@@ -3882,7 +4114,7 @@ function viewVehicles(){
 
   <div id="veh_totals" class="small" style="margin-top:10px"></div>
 
-  <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Colour</th><th>Mileage</th><th>Fuel</th><th>Engine Size</th><th>First Reg</th><th>Purchase Date</th><th>Days in Stock</th><th>Type</th><th>Investor</th><th>Purchase</th><th>VIN</th><th>MOT Expiry</th><th>Supplier #</th><th>Actions</th></tr></thead><tbody id="vehBody"></tbody></table>
+  <div class="tableWrap" style="margin-top:10px"><table class="table compact fitTable"><thead><tr><th style="width:92px">Reg</th><th>Vehicle</th><th style="width:150px">Stock</th><th style="width:150px">Dates / MOT</th><th style="width:130px">Owner</th><th style="width:160px">Costs</th><th style="width:170px">Supplier</th><th style="width:150px">Actions</th></tr></thead><tbody id="vehBody"></tbody></table></div>
   `;
   
   // Populate investor dropdown from db.investors
@@ -4000,23 +4232,36 @@ function viewVehicles(){
 
     if (daysFilter && daysInStock !== '' && daysInStock < Number(daysFilter)) return;
 
-    tr.innerHTML=`<td>${v.reg||''}</td>
-    <td>${v.make||''}</td>
-    <td>${v.model||''}</td>
-    <td>${v.colour||''}</td>
-    <td>${v.mileage||''}</td>
-    <td>${v.fuel||''}</td>
-    <td>${v.engineSize||''}</td>
-    <td>${ddmmyyyy(v.firstReg||'')}</td>
-    <td>${ddmmyyyy(v.purchaseDate||'')}</td>
-    <td>${daysInStock}</td>
-    <td>${v.ownerType||'owned'}</td>
-    <td>${v.investor||''}</td>
-    <td class="right">${fmtMoney(v.purchase||0)}</td>
-    <td style="text-align:center;" title="${v.vin || ''}">${v.vin ? '🆔' : ''}</td>
-    <td>${(() => {const motDate = v.motExpiry || v.lastMotExpiry || '';if (!motDate) return '';const expiry = new Date(motDate);const today = new Date();today.setHours(0, 0, 0, 0);expiry.setHours(0, 0, 0, 0);const diffMs = expiry - today;const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));let icon = '📅';let color = '#a3b2cc';if (diffDays < 0) {icon = '⚠️';color = '#ff6b6b';} else if (diffDays <= 30) {icon = '⏳';color = '#ffa726';} else if (diffDays <= 90) {icon = '✅';color = '#2ecc71';}return `<span title="${ddmmyyyy(motDate)}" style="cursor:help;color:${color}">${icon}${Math.abs(diffDays)}</span>`;})()}</td>
-    <td>${v.supplier||''}${v.supplierNote ? '<br><small style="color:#53a8ff;">' + v.supplierNote + '</small>' : ''}</td>
-    <td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''} ${v.originalSaleId?`<button data-act="viewSale" data-id="${v.originalSaleId}" title="View original sale" style="margin-left:4px;">📋</button>`:''}</td>`;
+    tr.innerHTML=`<td><b>${v.reg||''}</b></td>
+    <td>
+      <b>${(v.make||'') + (v.model?(' '+v.model):'')}</b>
+      <div class="small">${[v.colour,v.fuel,(v.engineSize? (v.engineSize+'cc'):'')].filter(Boolean).join(' • ')}</div>
+    </td>
+    <td>
+      <div><b>${v.status || (v.status==='sold'?'sold':'in stock') || 'in stock'}</b></div>
+      <div class="small">Mileage: ${v.mileage||''}</div>
+      <div class="small">Days: ${daysInStock}</div>
+    </td>
+    <td>
+      <div class="small">Buy: ${ddmmyyyy(v.purchaseDate||'')}</div>
+      <div class="small">First: ${ddmmyyyy(v.firstReg||'')}</div>
+      <div>${(() => {const motDate = v.motExpiry || v.lastMotExpiry || '';if (!motDate) return '<span class="small">MOT: -</span>';const expiry = new Date(motDate);const today = new Date();today.setHours(0, 0, 0, 0);expiry.setHours(0, 0, 0, 0);const diffMs = expiry - today;const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));let icon = '📅';let color = '#a3b2cc';if (diffDays < 0) {icon = '⚠️';color = '#ff6b6b';} else if (diffDays <= 30) {icon = '⏳';color = '#ffa726';} else if (diffDays <= 90) {icon = '✅';color = '#2ecc71';}return `<span title="${ddmmyyyy(motDate)}" style="cursor:help;color:${color}">${icon}${Math.abs(diffDays)}</span>`;})()}</div>
+    </td>
+    <td>
+      <div>${v.ownerType||'owned'}</div>
+      <div class="small">${v.investor||''}</div>
+    </td>
+    <td>
+      <div class="small">Purchase: <span class="right">${fmtMoney(v.purchase||0)}</span></div>
+      <div class="small">Expenses: <span class="right">${fmtMoney(expByVeh[v.id]||0)}</span></div>
+      <div><b>Total: ${fmtMoney((Number(v.purchase||0)+Number(expByVeh[v.id]||0)) )}</b></div>
+    </td>
+    <td>
+      <div>${v.supplier||''}</div>
+      ${v.supplierNote ? '<div class="small" style="color:#53a8ff;">' + v.supplierNote + '</div>' : ''}
+      <div class="small">${v.vin ? ('VIN: ' + v.vin) : ''}</div>
+    </td>
+    <td>${canAction('edit')?`<button data-act="edit" data-id="${v.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${v.id}">Delete</button>`:''}</td>`;
     body.appendChild(tr);
     });
 
@@ -4780,11 +5025,11 @@ function viewSales(){
   <div class="row" style="margin-bottom: 16px; padding: 10px; background: rgba(19, 26, 43, 0.5); border-radius: 10px;">
     <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; width: 100%;">
       <div style="flex: 1; min-width: 200px;">
-        <label class="small">Search by REG, Customer, or Invoice #</label>
+        <label class="small" for="sales_search">Search by REG, Customer, or Invoice #</label>
         <input id="sales_search" placeholder="Type to search..." style="width: 100%;">
       </div>
       <div style="flex: 1; min-width: 200px;">
-        <label class="small">Filter by Month</label>
+        <label class="small" for="sales_month">Filter by Month</label>
         <input id="sales_month" type="month" style="width: 100%;">
       </div>
       <div style="min-width: 220px;">
@@ -5275,22 +5520,54 @@ function viewSales(){
       return;
     }
 
+    const purchase = Number(v.purchase||0);
+
     const vexp = (db.vehicleExpenses||[])
       .filter(e => e.vehicleId === v.id)
       .reduce((t,e)=>t+Number(e.amount||0),0);
 
-    const totalCost = Number(v.purchase||0) + vexp;
-    const salePrice = Number(wrap.querySelector('#sale_price')?.value || 0);
+    const totalCost = purchase + vexp;
+
+    const advertised = Number(wrap.querySelector('#sale_advertised')?.value || 0);
+    const salePrice  = Number(wrap.querySelector('#sale_price')?.value || 0);
+
+    // finance admin fee (not always saved yet while typing) – show it live
+    const finFee = Number(wrap.querySelector('#sale_finFee')?.value || 0);
+
     const gross = salePrice - totalCost;
+    const net   = salePrice - (totalCost + finFee);
+
+    const diffVsAd = (advertised>0) ? (salePrice - advertised) : 0; // negative = discount
 
     out.innerHTML = `
-      <div style="margin-top:6px; padding:8px; border:1px dashed rgba(255,255,255,.12); border-radius:10px;">
-        <b>Cost/Profit (Admin only)</b><br>
-        Total Cost: <b>${fmtMoney(totalCost)}</b> &nbsp; | &nbsp;
-        Gross: <b>${fmtMoney(gross)}</b>
+      <div style="margin-top:6px; padding:10px; border:1px dashed rgba(255,255,255,.14); border-radius:12px; background:rgba(0,0,0,.12)">
+        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+          <div>
+            <b>Sale Snapshot (Admin)</b> <span class="badge" style="margin-left:6px">${escapeHtml(reg)}</span><br>
+            <span class="small">Purchase: <b>${fmtMoney(purchase)}</b> &nbsp;|&nbsp; Vehicle Exp: <b>${fmtMoney(vexp)}</b> &nbsp;|&nbsp; Total Cost: <b>${fmtMoney(totalCost)}</b></span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="outline small" onclick="openVehicleByReg('${reg}')">Open Vehicle</button>
+            <button type="button" class="outline small" onclick="openSoldForReg('${reg}')">Open Sold</button>
+          </div>
+        </div>
+        <div class="card-divider"></div>
+        <div class="row" style="gap:16px">
+          <div class="small">
+            Advertised: <b>${fmtMoney(advertised)}</b><br>
+            Sale Price: <b>${fmtMoney(salePrice)}</b><br>
+            Diff: <b>${fmtMoney(diffVsAd)}</b>
+          </div>
+          <div class="small">
+            Gross Profit: <b>${fmtMoney(gross)}</b><br>
+            Finance Admin Fee: <b>${fmtMoney(finFee)}</b><br>
+            Net Profit: <b>${fmtMoney(net)}</b>
+          </div>
+        </div>
       </div>
     `;
   }
+
 
   // Hook to REG + sale price inputs
   (function(){
@@ -6368,64 +6645,59 @@ function viewSales(){
   receiptsToForm(s.receipts);
 
 
-  // ✅ FREEZE VEHICLE COST AT TIME OF SALE
-  try {
-    const v = (db.vehicles || []).find(x => x.id === s.vehicleId) || {};
-
-    // total vehicle expenses up to that moment
-    const expTotal = (db.vehicleExpenses || [])
-      .filter(e => e.vehicleId === s.vehicleId)
-      .reduce((t, e) => t + Number(e.amount || 0), 0);
-
-    s.vehiclePurchaseAtSale = Number(v.purchase || 0);
-    s.vehicleExpensesAtSale = Number(expTotal || 0);
-    s.vehicleTotalCostAtSale = Number(s.vehiclePurchaseAtSale + s.vehicleExpensesAtSale);
-  } catch (e) {}
-
-  // store paid/due/status in the sale record
-  const _sum = calcSalePaymentSummary(wrap);
-  s.totalPaid  = Math.round(_sum.totalPaid * 100) / 100;
-  s.balanceDue = Math.round(_sum.balanceDue * 100) / 100;
-  s.payStatus  = _sum.status;
-
   // ✅ Finance admin fee -> store as a vehicle expense so profit is correct
-  (function applyFinanceAdminFeeExpense(){
-    const fee = Number(s.financeAdminFee || 0);
-    if (!s.vehicleId) return;
+(function applyFinanceAdminFeeExpense(){
+  const fee = Number(s.financeAdminFee || 0);
+  if (!s.vehicleId) return;
 
-    // If fee is exactly 0, remove previously linked expense (if any)
-    if (fee === 0) {
-      if (s.financeAdminFeeExpenseId) {
-        if (typeof markDeleted === 'function') markDeleted('vehicleExpenses', s.financeAdminFeeExpenseId);
-        db.vehicleExpenses = (db.vehicleExpenses || []).filter(e => e.id !== s.financeAdminFeeExpenseId);
-        s.financeAdminFeeExpenseId = '';
-      }
-      return;
+  // If fee is exactly 0, remove previously linked expense (if any)
+  if (fee === 0) {
+    if (s.financeAdminFeeExpenseId) {
+      if (typeof markDeleted === 'function') markDeleted('vehicleExpenses', s.financeAdminFeeExpenseId);
+      db.vehicleExpenses = (db.vehicleExpenses || []).filter(e => e.id !== s.financeAdminFeeExpenseId);
+      s.financeAdminFeeExpenseId = '';
     }
+    return;
+  }
 
-    // Create or update the linked expense
-    let exp = (db.vehicleExpenses || []).find(e => e.id === s.financeAdminFeeExpenseId);
-    if (!exp) {
-      exp = {
-        id: uid(),
-        vehicleId: s.vehicleId,
-        date: s.date || new Date().toISOString().slice(0,10),
-        type: 'Finance admin fee',
-        method: 'bank',
-        amount: fee,
-        note: `Finance company: ${s.financeCompany || ''} • Inv: ${s.invNo || ''}`
-      };
-      (db.vehicleExpenses = db.vehicleExpenses || []).unshift(exp);
-      s.financeAdminFeeExpenseId = exp.id;
-    } else {
-      exp.vehicleId = s.vehicleId;
-      exp.date = s.date || exp.date;
-      exp.type = 'Finance admin fee';
-      exp.method = exp.method || 'bank';
-      exp.amount = fee;
-      exp.note = `Finance company: ${s.financeCompany || ''} • Inv: ${s.invNo || ''}`;
-    }
-  })();
+  // Create or update the linked expense
+  let exp = (db.vehicleExpenses || []).find(e => e.id === s.financeAdminFeeExpenseId);
+  if (!exp) {
+    exp = {
+      id: uid(),
+      vehicleId: s.vehicleId,
+      date: s.date || new Date().toISOString().slice(0,10),
+      type: 'Finance admin fee',
+      method: 'bank',
+      amount: fee,
+      note: `Finance company: ${s.financeCompany || ''} • Inv: ${s.invNo || ''}`
+    };
+    (db.vehicleExpenses = db.vehicleExpenses || []).unshift(exp);
+    s.financeAdminFeeExpenseId = exp.id;
+  } else {
+    exp.vehicleId = s.vehicleId;
+    exp.date = s.date || exp.date;
+    exp.type = 'Finance admin fee';
+    exp.method = exp.method || 'bank';
+    exp.amount = fee;
+    exp.note = `Finance company: ${s.financeCompany || ''} • Inv: ${s.invNo || ''}`;
+  }
+})();
+
+// ✅ FREEZE VEHICLE COST AT TIME OF SALE (AFTER any sale-linked expenses are applied)
+try {
+  const v = (db.vehicles || []).find(x => x.id === s.vehicleId) || {};
+
+  // total vehicle expenses up to that moment (including admin fee expense above)
+  const expTotal = (db.vehicleExpenses || [])
+    .filter(e => e.vehicleId === s.vehicleId)
+    .reduce((t, e) => t + Number(e.amount || 0), 0);
+
+  s.vehiclePurchaseAtSale = Number(v.purchase || 0);
+  s.vehicleExpensesAtSale = Number(expTotal || 0);
+  s.vehicleTotalCostAtSale = Number(s.vehiclePurchaseAtSale + s.vehicleExpensesAtSale);
+} catch (e) {}
+
 
   // Auto-set warranty expiry based on sale date + months (for quick reference)
   (function(){
@@ -6541,190 +6813,269 @@ function viewSales(){
 
 /* ========= Sold (new) ========= */
 function viewSold(){
-  if(!canTab('Sold')) return document.createElement('div'); 
-  const wrap=document.createElement('div'); 
+  if(!canTab('Sold')) return document.createElement('div');
+  const wrap=document.createElement('div');
   wrap.className='card';
-  
+
+  const showProfitCols = (typeof canProfit === 'function') ? canProfit() : true;
+  const profitHead = showProfitCols ? `<th class="right">Advertised</th><th class="right">Sale</th><th class="right">Total Cost</th><th class="right">Profit</th>` : `<th class="right">Sale</th>`;
+  const profitEmptyColspan = showProfitCols ? 9 : 6;
+
   wrap.innerHTML=`<h2>Sold</h2>
   <div class="row" style="margin-bottom: 16px; padding: 10px; background: rgba(19, 26, 43, 0.5); border-radius: 10px;">
     <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; width: 100%;">
-      <div style="flex: 1; min-width: 200px;">
-        <label class="small">Search by REG, Customer, or Phone</label>
+      <div style="flex: 1; min-width: 220px;">
+        <label class="small" for="sold_search">Search (REG / Customer / Phone / Invoice)</label>
         <input id="sold_search" placeholder="Type to search..." style="width: 100%;">
       </div>
-      <div style="flex: 1; min-width: 200px;">
-        <label class="small">Filter by Month</label>
+      <div style="flex: 0 0 220px; min-width: 220px;">
+        <label class="small" for="sold_month">Filter by Month</label>
         <input id="sold_month" type="month" style="width: 100%;">
       </div>
-      <div style="display: flex; gap: 8px; align-items: flex-end;">
+      <div style="display: flex; gap: 8px; align-items: flex-end; flex-wrap:wrap;">
         <button id="sold_clear_search" style="margin-top: 20px;">Clear Search</button>
         <button id="sold_clear_month" style="margin-top: 20px;">Show All Time</button>
         <button id="sold_export" style="margin-top: 20px;">Export CSV</button>
       </div>
     </div>
   </div>
-  <table class="table" style="margin-top:10px"><thead><tr>
-    <th>Date</th><th>Collected Date</th><th>Reg</th><th>Make</th><th>Model</th><th>Customer</th><th>Address</th><th>Postcode</th><th>Deliver To</th><th>Phone</th><th>Email</th><th class="right">Price</th>
-  </tr></thead><tbody id="sold_body"></tbody></table>
+
+  <div class="tableWrap">
+    <table class="table compact soldTable" style="margin-top:10px; table-layout:fixed;">
+      <thead><tr>
+        <th style="width:92px">Date</th>
+        <th style="width:92px">Reg</th>
+        <th>Vehicle</th>
+        <th style="width:170px">Customer</th>
+        <th style="width:120px">Phone</th>
+        ${profitHead}
+        <th style="width:260px">Details</th>
+      </tr></thead>
+      <tbody id="sold_body"></tbody>
+    </table>
+  </div>
+
   <div id="sold_summary" class="small" style="margin-top: 10px; padding: 8px; background: var(--card); border-radius: 8px;"></div>`;
-  
+
   const body=wrap.querySelector('#sold_body');
   const summary=wrap.querySelector('#sold_summary');
-  
+
   // Filter state
-  let currentFilter = {
-    search: '',
-    month: '' // Empty by default instead of current month
-  };
-  
-  // Set default month to empty (show all time)
+  let currentFilter = { search:'', month:'' };
   wrap.querySelector('#sold_month').value = currentFilter.month;
-  
-  function postcodeFrom(addr){ 
-    const m=(addr||'').match(/([A-Z]{1,2}\d{1,2}[A-Z]?)\s*\d[A-Z]{2}/i); 
-    return m?m[0].toUpperCase():''; 
-  }
-  
+
   function getFilteredSales() {
     let sales = (db.sales || []).filter(isRealSale);
-    
-    // Apply month filter if specified
-    if (currentFilter.month) {
-      sales = sales.filter(s => ymStr(s.date) === currentFilter.month);
-    }
-    
-    // Apply search filter if specified
+
+    if (currentFilter.month) sales = sales.filter(s => ymStr(s.date) === currentFilter.month);
+
     if (currentFilter.search) {
-      const searchTerm = currentFilter.search.toLowerCase();
+      const q = currentFilter.search.toLowerCase();
       sales = sales.filter(s => {
-        const v = db.vehicles.find(x => x.id === s.vehicleId) || {};
-        return (
-          (v.reg || '').toLowerCase().includes(searchTerm) ||
-          (s.buyer || '').toLowerCase().includes(searchTerm) ||
-          (s.phone || '').toLowerCase().includes(searchTerm)
-        );
+        const v = (db.vehicles||[]).find(x => x.id === s.vehicleId) || {};
+        const hay = (
+          (v.reg||'') + ' ' +
+          (s.buyer||'') + ' ' +
+          (s.phone||'') + ' ' +
+          (s.invNo||'')
+        ).toLowerCase();
+        return hay.includes(q);
       });
     }
-    
-    // Sort by date (newest first)
-    sales.sort((a, b) => {
-      if (!a.date && !b.date) return 0;
-      if (!a.date) return 1;
-      if (!b.date) return -1;
+
+    sales.sort((a,b)=>{
+      if(!a.date && !b.date) return 0;
+      if(!a.date) return 1;
+      if(!b.date) return -1;
       return b.date.localeCompare(a.date);
     });
-    
     return sales;
   }
-  
-  function renderSoldRows(){
-    const filteredSales = getFilteredSales();
-    body.innerHTML=''; 
-    
-    if (filteredSales.length === 0) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td colspan="10" class="small" style="text-align: center; padding: 20px;">No sold vehicles found${currentFilter.search ? ' for "' + currentFilter.search + '"' : ''}${currentFilter.month ? ' in ' + currentFilter.month : ''}</td>`;
-      body.appendChild(tr);
-    } else {
-      filteredSales.forEach(s=>{
-        const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
-        const tr=document.createElement('tr'); 
-        tr.innerHTML=`<td>${ddmmyyyy(s.date)}</td>
-                      <td>${ddmmyyyy(s.collectedDate || '')}</td>
-                      <td>${v.reg||''}</td>
-                      <td>${v.make||''}</td>
-                      <td>${v.model||''}</td>
-                      <td>${s.buyer||''}</td>
-                      <td>${s.address || ''}</td>
-                      <td>${postcodeFrom(s.address)}</td>
-                      <td>${escapeHtml(s.deliverTo || '')}</td>
-                      <td>${s.phone||''}</td>
-                      <td>${s.email||''}</td>
-                      <td class="right">${fmtMoney(s.salePrice||0)}</td>`; 
-        body.appendChild(tr);
-      });
+
+  function totalCostForSale(s, v){
+    // Prefer frozen cost at time of sale (so later edits don’t change history)
+    const frozen = Number(s.vehicleTotalCostAtSale);
+    if (isFinite(frozen) && frozen > 0) return frozen;
+
+    // fallback: current purchase+expenses
+    if (typeof vehicleTotalCostByVehicleId === 'function') {
+      const r = vehicleTotalCostByVehicleId(s.vehicleId);
+      return Number(r && r.total || 0);
     }
-    
-    // Update summary
+    const purchase = Number(v && v.purchase || 0);
+    const exp = (db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,e)=>t+Number(e.amount||0),0);
+    return purchase + exp;
+  }
+
+  function renderSoldRows(){
+    const sales = getFilteredSales();
+    body.innerHTML='';
+
+    if(sales.length===0){
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td colspan="${profitEmptyColspan}" class="small" style="text-align:center; padding:20px;">No sold vehicles found${currentFilter.search ? ' for "'+escapeHtml(currentFilter.search)+'"' : ''}${currentFilter.month ? ' in '+escapeHtml(currentFilter.month) : ''}</td>`;
+      body.appendChild(tr);
+      updateSummary();
+      return;
+    }
+
+    sales.forEach(s=>{
+      const v=(db.vehicles||[]).find(x=>x.id===s.vehicleId)||{};
+      const reg = (v.reg||'').trim();
+      const vehicleTxt = `${escapeHtml(v.make||'')} ${escapeHtml(v.model||'')}`.trim();
+
+      const adv = Number(s.advertisedPrice || 0);
+      const sale = Number(s.salePrice || 0);
+      const cost = totalCostForSale(s, v);
+      const profit = sale - cost;
+
+      const addr = String(s.address||'').trim();
+      const deliver = String(s.deliverTo||'').trim();
+      const email = String(s.email||'').trim();
+      const inv = String(s.invNo||'').trim();
+      const collected = ddmmyyyy(s.collectedDate || '');
+
+      const detailsLines = [
+        inv ? `Inv: ${escapeHtml(inv)}` : '',
+        collected ? `Collected: ${escapeHtml(collected)}` : '',
+        addr ? escapeHtml(addr) : '',
+        deliver ? `Deliver: ${escapeHtml(deliver)}` : '',
+        email ? `Email: ${escapeHtml(email)}` : ''
+      ].filter(Boolean).join('<br>');
+
+      const tr=document.createElement('tr');
+
+      tr.innerHTML = `
+        <td>${ddmmyyyy(s.date)}</td>
+        <td style="font-weight:900">${escapeHtml(reg)}</td>
+        <td style="word-wrap:break-word; white-space:normal;">${vehicleTxt}</td>
+        <td style="word-wrap:break-word; white-space:normal;">${escapeHtml(s.buyer||'')}</td>
+        <td>${escapeHtml(s.phone||'')}</td>
+        ${
+          showProfitCols
+          ? `
+            <td class="right">${fmtMoney(adv)}</td>
+            <td class="right">${fmtMoney(sale)}</td>
+            <td class="right">${fmtMoney(cost)}</td>
+            <td class="right" style="font-weight:900">${fmtMoney(profit)}</td>
+          `
+          : `
+            <td class="right">${fmtMoney(sale)}</td>
+          `
+        }
+        <td style="word-wrap:break-word; white-space:normal;">${detailsLines || ''}</td>
+      `;
+      body.appendChild(tr);
+    });
+
     updateSummary();
   }
-  
-  function updateSummary() {
-    const filteredSales = getFilteredSales();
-    const totalSales = filteredSales.reduce((sum, s) => sum + Number(s.salePrice || 0), 0);
-    
-    let summaryText = `Showing ${filteredSales.length} sold vehicle${filteredSales.length !== 1 ? 's' : ''}`;
-    if (currentFilter.month) {
-      summaryText += ` for ${currentFilter.month}`;
-    } else {
-      summaryText += ` (all time)`;
+
+  function updateSummary(){
+    const sales = getFilteredSales();
+    const totalSales = sales.reduce((sum,s)=>sum+Number(s.salePrice||0),0);
+
+    let txt = `Showing ${sales.length} sold vehicle${sales.length!==1?'s':''}`;
+    if(currentFilter.month) txt += ` for ${currentFilter.month}`;
+    else txt += ` (all time)`;
+    if(currentFilter.search) txt += ` matching "${currentFilter.search}"`;
+    txt += ` | Total Sales: ${fmtMoney(totalSales)}`;
+
+    if(showProfitCols){
+      const totalProfit = sales.reduce((sum,s)=>{
+        const v=(db.vehicles||[]).find(x=>x.id===s.vehicleId)||{};
+        const cost = totalCostForSale(s,v);
+        return sum + (Number(s.salePrice||0)-Number(cost||0));
+      },0);
+      txt += ` | Total Profit: ${fmtMoney(totalProfit)}`;
     }
-    if (currentFilter.search) {
-      summaryText += ` matching "${currentFilter.search}"`;
-    }
-    summaryText += ` | Total Sales: ${fmtMoney(totalSales)}`;
-    
-    summary.textContent = summaryText;
+
+    summary.textContent = txt;
   }
-  
-  // Event listeners for search and filter
-  wrap.querySelector('#sold_search').addEventListener('input', function(e) {
-    currentFilter.search = e.target.value.trim();
+
+  // listeners
+  wrap.querySelector('#sold_search').addEventListener('input', (e)=>{
+    currentFilter.search = (e.target.value||'').trim();
     renderSoldRows();
   });
-  
-  wrap.querySelector('#sold_month').addEventListener('change', function(e) {
+  wrap.querySelector('#sold_month').addEventListener('change', (e)=>{
     currentFilter.month = e.target.value || '';
     renderSoldRows();
   });
-  
-  wrap.querySelector('#sold_clear_search').onclick = function() {
-    wrap.querySelector('#sold_search').value = '';
-    currentFilter.search = '';
+  wrap.querySelector('#sold_clear_search').onclick=()=>{
+    wrap.querySelector('#sold_search').value='';
+    currentFilter.search='';
     renderSoldRows();
   };
-  
-  wrap.querySelector('#sold_clear_month').onclick = function() {
-    wrap.querySelector('#sold_month').value = '';
-    currentFilter.month = '';
+  wrap.querySelector('#sold_clear_month').onclick=()=>{
+    wrap.querySelector('#sold_month').value='';
+    currentFilter.month='';
     renderSoldRows();
   };
-  
-  // Export CSV functionality (unchanged)
-  wrap.querySelector('#sold_export').onclick=()=>{ 
-    const rowsCSV=[["Date","collectedDate","Reg","Make","Model","Customer","Postcode","Deliver To","Phone","Email","Price"]]; 
-    getFilteredSales().forEach(s=>{ 
-      const v=db.vehicles.find(x=>x.id===s.vehicleId)||{}; 
-      rowsCSV.push([
+
+  // Export CSV (includes profit columns when allowed)
+  wrap.querySelector('#sold_export').onclick=()=>{
+    const headers = showProfitCols
+      ? ["Date","Collected Date","Invoice #","Reg","Make","Model","Customer","Phone","Email","Address","Deliver To","Advertised","Sale","Total Cost","Profit"]
+      : ["Date","Collected Date","Invoice #","Reg","Make","Model","Customer","Phone","Email","Address","Deliver To","Sale"];
+
+    const rows=[headers];
+    getFilteredSales().forEach(s=>{
+      const v=(db.vehicles||[]).find(x=>x.id===s.vehicleId)||{};
+      const cost = totalCostForSale(s,v);
+      const sale = Number(s.salePrice||0);
+      const profit = sale - cost;
+
+      const base = [
         ddmmyyyy(s.date),
-        ddmmyyyy(s.collectedDate),
+        ddmmyyyy(s.collectedDate||''),
+        s.invNo||'',
         v.reg||'',
         v.make||'',
         v.model||'',
         s.buyer||'',
-        (s.address||'').split(',').slice(-1)[0]||'',
-        s.deliverTo || '',
         s.phone||'',
         s.email||'',
-        Number(s.salePrice||0)
-      ]); 
-    }); 
-    
-    const csv=rowsCSV.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n'); 
-    const a=document.createElement('a'); 
-    a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); 
-    a.download='sold_export_' + new Date().toISOString().slice(0,10) + '.csv'; 
-    a.click(); 
-    
-    addAudit('export', 'sold', '', `Exported ${getFilteredSales().length} sold vehicles to CSV`);
+        s.address||'',
+        s.deliverTo||''
+      ];
+
+      if(showProfitCols){
+        rows.push([...base,
+          Number(s.advertisedPrice||0).toFixed(2),
+          sale.toFixed(2),
+          Number(cost||0).toFixed(2),
+          Number(profit||0).toFixed(2)
+        ]);
+      }else{
+        rows.push([...base, sale.toFixed(2)]);
+      }
+    });
+
+    // download csv
+    const esc = (v)=> {
+      const s = (v==null)?'':String(v);
+      return /[\",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+    };
+    const csv = rows.map(r=>r.map(esc).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    const stamp = currentFilter.month ? currentFilter.month : new Date().toISOString().slice(0,10);
+    a.download = 'sold_export_' + stamp + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 10000);
+    if(typeof addAudit==='function') addAudit('export','sold','',`Exported ${rows.length-1} sold rows`);
   };
-  
-  // Initial render
+
+  // First render
   renderSoldRows();
   return wrap;
 }
 
-/* ========= Credit ========= */
 function viewCredit(){
   if(!canTab('Credit')) return document.createElement('div'); 
   const wrap=document.createElement('div'); 
@@ -6734,6 +7085,7 @@ function viewCredit(){
   <div class="row">
     <input id="cr_date" type="date">
     <input id="cr_customer" placeholder="Customer Name">
+    <input id="cr_address" placeholder="Customer Address" style="min-width:320px;flex:1">
     <datalist id="cr_reg_list">
       ${(db.vehicles||[]).filter(v => String(v.status||'').toLowerCase() === 'sold').map(v => `<option value="${(v.reg||'').toUpperCase()}">`).join('')}
     </datalist>
@@ -6827,6 +7179,15 @@ function viewCredit(){
       `Linked SOLD: ${linkedVehicle.reg} | Inv ${linkedSale.invNo||''} | Sold ${money(linkedSale.salePrice)} | Sold mileage ${linkedSale.mileage||0} | Buyer: ${linkedSale.buyer||''}`;
   }
 
+  function autofillCustomerAddress(){
+    try{
+      if(!linkedSale) return;
+      const addr = linkedSale.address || '';
+      const el = wrap.querySelector('#cr_address');
+      if(el && !el.value.trim()) el.value = addr;
+    }catch(e){}
+  }
+
   function loadFromReg(){
     const reg = (wrap.querySelector('#cr_vehicle').value||'').trim().toUpperCase();
     linkedSale = null; 
@@ -6881,6 +7242,7 @@ function viewCredit(){
   wrap.querySelector('#cr_vehicle').addEventListener('input', () => {
     // Avoid re-running on every keystroke if you want: keep as-is for now
     loadFromReg();
+    autofillCustomerAddress();
   });
 
   function renderCredits(){
@@ -6949,6 +7311,7 @@ function viewCredit(){
 
     // Ensure we refresh linkage (in case user pasted reg)
     loadFromReg();
+    autofillCustomerAddress();
 
     const refundPaid = Number(wrap.querySelector('#cr_amount').value || 0);
 
@@ -6956,6 +7319,7 @@ function viewCredit(){
       id: editId || uid(),
       date: wrap.querySelector('#cr_date').value,
       customer: wrap.querySelector('#cr_customer').value.trim(),
+      address: (wrap.querySelector('#cr_address')?.value || '').trim(),
       vehicle: reg,
       type: type,
       method: wrap.querySelector('#cr_method').value,
@@ -7104,8 +7468,11 @@ function viewCredit(){
       wrap.querySelector('#cr_fuel').value    = cr.fuel || '';
       if (wrap.querySelector('#cr_terms')) wrap.querySelector('#cr_terms').value = cr.terms || '';
 
+      if (wrap.querySelector('#cr_address')) wrap.querySelector('#cr_address').value = cr.address || '';
+
       // Reload linkage hint
       loadFromReg();
+      autofillCustomerAddress();
 
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
     }
@@ -7115,6 +7482,8 @@ function viewCredit(){
   renderCredits();
   return wrap;
 }
+
+
 
 function hasPX(s){
   return !!(
@@ -7163,7 +7532,7 @@ function printCreditInvoice(creditId){
   <button class="no-print" onclick="window.print()" style="margin:8px 0">Print / Save as PDF</button>
   ${headerHTML}
   <table class="tight">
-    <tr><th>Customer</th><td>${cr.customer||''}</td></tr>
+    <tr><th>Customer</th><td>${cr.customer||''}<br>${cr.address||''}</td></tr>
     ${cr.vehicle
       ? `<tr><th>Vehicle</th><td>${cr.vehicle}</td></tr>`
       : ''
@@ -8591,8 +8960,42 @@ function viewReports(){
     wrap.__rf_wired = true;
 
     function getSaleCreatedUser(saleId){
-      const a = (db.audit || []).find(x => x.entity === 'sale' && x.entityId === saleId && x.action === 'add');
-      return (a && a.user) ? a.user : '';
+      const id = String(saleId ?? '');
+
+      const sale = (db.sales || []).find(s => String(s?.id ?? '') === id) || {};
+
+      const actionsAdd = new Set(['add','create','new','sale_add']);
+      const actionsUpd = new Set(['update','edit','sale_update']);
+
+      const audit = (db.audit || []);
+
+      // Try: sale add/create first
+      let a = audit.find(x =>
+        String(x?.entity ?? '').toLowerCase() === 'sale' &&
+        String(x?.entityId ?? x?.id ?? '') === id &&
+        actionsAdd.has(String(x?.action ?? '').toLowerCase()) &&
+        String(x?.user ?? '').trim()
+      );
+
+      // Fallback: any sale update that has user
+      if(!a){
+        a = audit.find(x =>
+          String(x?.entity ?? '').toLowerCase() === 'sale' &&
+          String(x?.entityId ?? x?.id ?? '') === id &&
+          actionsUpd.has(String(x?.action ?? '').toLowerCase()) &&
+          String(x?.user ?? '').trim()
+        );
+      }
+
+      const u =
+        (a && String(a.user || '').trim()) ||
+        String(sale.soldBy || '').trim() ||
+        String(sale.salesperson || '').trim() ||
+        String(sale.salesPerson || '').trim() ||
+        String(sale.createdBy || '').trim() ||
+        String(sale.user || '').trim();
+
+      return u;
     }
 
     function buildFinanceAccounts(monthKey){
@@ -8609,7 +9012,8 @@ function viewReports(){
 
       const byCo = {};
       sales.forEach(s => {
-        const co = (String(s.financeCompany || '').trim() || 'UNKNOWN').toUpperCase();
+        const rawCo = String(s.financeCompany || '').trim();
+        const co = rawCo ? rawCo.toUpperCase() : '(NOT SET)';
         if(!byCo[co]) byCo[co] = { company: co, deals: 0, financeAmt: 0, payoutPaid: 0, adminFee: 0 };
         byCo[co].deals += 1;
         byCo[co].financeAmt += Number(s.finance || 0);
@@ -11611,9 +12015,26 @@ function viewUsers(){ if(!canTab('Users')) return document.createElement('div');
       <td><button data-act="chpass" data-id="${u.id}">Change Password</button> <button data-act="reset" data-id="${u.id}">Reset pass to '1234'</button> <button class="danger" data-act="del" data-id="${u.id}">Delete</button></td>`; body.appendChild(tr); });
     wrap.addEventListener('change',(ev)=>{ const el=ev.target; if(!el.dataset||!el.dataset.user) return; const u=(db.users||[]).find(x=>x.id===el.dataset.user); if(!u) return; u.perms=normalizePerms(u.perms);
       if(el.dataset.k==='tab'){ u.perms.tabs[el.dataset.tab]=el.checked; } if(el.dataset.k==='act'){ u.perms.actions[el.dataset.act]=el.checked; } if(el.dataset.k==='profit'){ u.perms.profit=el.checked; } if(el.dataset.k==='settings'){ u.perms.settings=el.checked; } saveDB(); try{renderAlertBell();}catch(e){}; if(u.username===session.username) render(); });
-    wrap.addEventListener('click',(ev)=>{ const b=ev.target.closest('button'); if(!b) return; const u=(db.users||[]).find(x=>x.id===b.dataset.id);
-      if(b.dataset.act==='chpass'){ const p1=prompt("New password for '"+u.username+"':"); if(p1===null) return; if(!p1.trim()) return alert('Password cannot be empty'); const p2=prompt('Confirm new password:'); if(p2===null) return; if(p1!==p2) return alert('Passwords do not match'); u.password=p1; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','userPass',u.id,'Admin changed for '+u.username); alert('Password updated for '+u.username); return; }
-      if(b.dataset.act==='reset'){ u.password='1234'; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','user',u.id,u.username+' reset'); alert("Password reset to '1234'"); return; }
+    wrap.addEventListener('click', async (ev)=>{ const b=ev.target.closest('button'); if(!b) return; const u=(db.users||[]).find(x=>x.id===b.dataset.id);
+      if(b.dataset.act==='chpass'){
+        const p1=prompt("New password for '"+u.username+"':"); if(p1===null) return;
+        if(!p1.trim()) return alert('Password cannot be empty');
+
+        if(!isStrongPassword(p1)){
+          return alert('Password too weak.\nUse at least 10 chars with: Upper + lower + number + symbol.');
+        }
+
+        const p2=prompt('Confirm new password:'); if(p2===null) return;
+        if(p1!==p2) return alert('Passwords do not match');
+
+        await setUserPasswordHashed(u, p1);
+        saveDB();
+        try{renderAlertBell();}catch(e){}
+        addAudit('update','userPass',u.id,'Admin changed for '+u.username);
+        alert('Password updated for '+u.username);
+        return;
+      }
+      if(b.dataset.act==='reset'){ await setUserPasswordHashed(u, '1234'); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','user',u.id,u.username+' reset'); alert("Password reset to '1234'"); return; }
       
       if(b.dataset.act==='del'){ 
         if(u.username==='admin') return alert('Cannot delete admin'); 
@@ -11629,7 +12050,7 @@ function viewUsers(){ if(!canTab('Users')) return document.createElement('div');
         return; 
       }
     });
-    wrap.querySelector('#u_add').onclick=()=>{ const name=wrap.querySelector('#u_name').value.trim(); if(!name) return alert('Username required'); const u={id:uid(),username:name,password:(wrap.querySelector('#u_pass').value||'1234'),role:wrap.querySelector('#u_role').value,perms:defaultPerms()}; (db.users=db.users||[]).push(u); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','user',u.id,u.username); renderTable(); };
+    wrap.querySelector('#u_add').onclick=async ()=>{ const name=wrap.querySelector('#u_name').value.trim(); if(!name) return alert('Username required'); const plainPass = (wrap.querySelector('#u_pass').value || '1234'); const u = {id:uid(), username:name, role:wrap.querySelector('#u_role').value, perms:defaultPerms()}; await setUserPasswordHashed(u, plainPass); (db.users=db.users||[]).push(u); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','user',u.id,u.username); renderTable(); };
   }
   renderTable(); return wrap;
 }
