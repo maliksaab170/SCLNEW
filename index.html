@@ -1310,10 +1310,40 @@ function escapeHtml(s){
 }
 
 // ===== Option 8 helpers =====
+function normalizeReg(reg){
+  return String(reg||'').replace(/\s+/g,'').trim().toUpperCase();
+}
+
+/** Return all vehicle records for a REG (supports re-acquired / PX / re-sold cycles) */
+function vehiclesByReg(reg){
+  const r = normalizeReg(reg);
+  if(!r) return [];
+  return (db.vehicles||[]).filter(v => normalizeReg(v && v.reg) === r);
+}
+
+/**
+ * Backwards-compatible: returns the "best" match for a reg.
+ * - Prefer in-stock (not sold) and newest purchaseDate/createdAt
+ * - Otherwise newest overall
+ */
 function findVehicleByReg(reg){
-  reg = String(reg||'').trim().toUpperCase();
-  if(!reg) return null;
-  return (db.vehicles||[]).find(v => String(v.reg||'').trim().toUpperCase() === reg) || null;
+  const list = vehiclesByReg(reg);
+  if(!list.length) return null;
+
+  const score = (v)=>{
+    const inStock = String(v.status||'').toLowerCase() !== 'sold';
+    const d = v.purchaseDate || v.createdAt || '';
+    return (inStock ? 10_000_000_000 : 0) + (d ? (Date.parse(d) || 0) : 0);
+  };
+
+  return list.slice().sort((a,b)=> score(b)-score(a))[0] || null;
+}
+
+function makeStockRef(reg, purchaseDate){
+  const r = normalizeReg(reg);
+  const d = String(purchaseDate || new Date().toISOString().slice(0,10)).slice(0,10).replace(/-/g,'');
+  const rand = Math.random().toString(36).slice(2,6).toUpperCase();
+  return `${r}-${d}-${rand}`;
 }
 
 function vehicleTotalCostByVehicleId(vehicleId){
@@ -3670,8 +3700,7 @@ function calcBalances(){
 
 /* ========= Global helper ========= */
 function findVehicleIdByReg(reg){
-  reg = (reg || '').toUpperCase().trim();
-  const v = (db.vehicles || []).find(x => (x.reg || '').toUpperCase() === reg);
+  const v = findVehicleByReg(reg);
   return v ? v.id : null;
 }
 
@@ -4739,10 +4768,29 @@ function viewVehicles(){
 
   wrap.querySelector('#v_add').onclick=()=>{ if(!canAction('add')) return alert('No permission');
   const reg=(wrap.querySelector('#v_reg').value||'').toUpperCase().trim(); if(!reg){ alert('Reg is required'); return; }
-  const dupe=(db.vehicles||[]).find(x=>x.reg===reg && x.id!==editId); if(dupe){ alert('Duplicate reg exists'); return; }
+  const matches = (db.vehicles||[]).filter(x=>normalizeReg(x.reg)===reg && x.id!==editId);
+  const dupe = matches[0];
+  if(dupe && !editId){
+    const st = String(dupe.status||'').toLowerCase();
+    if(st && st !== 'sold'){
+      alert('This REG already exists in stock. Open the existing record and edit it, or mark it sold first.');
+      return;
+    }
+    // If previous record(s) are SOLD, allow a NEW acquisition (PX / buy-back) as a separate vehicle record.
+    // This prevents overwriting the old sold history.
+  }
   const v={ 
     id:editId||uid(), 
     reg, 
+    stockRef: (()=>{
+      try{
+        if(editId){
+          const old = (db.vehicles||[]).find(x=>x.id===editId) || {};
+          return old.stockRef || '';
+        }
+      }catch(e){}
+      return makeStockRef(reg, wrap.querySelector('#v_purchaseDate')?.value || '');
+    })(),
     make:wrap.querySelector('#v_make').value.trim(), 
     model:wrap.querySelector('#v_model').value.trim(), 
     colour:wrap.querySelector('#v_colour').value.trim(), 
@@ -4825,7 +4873,11 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
       </datalist>
       <input id="e_vehicle" list="e_reg_list" placeholder="Type REG…" style="min-width:220px">
     </label>
-    <div id="e_vehicleInfo" class="small" style="color:#9fb4ff; margin-left:6px;">
+    <label id="e_cycleWrap" style="display:none;min-width:260px">
+      Cycle
+      <select id="e_cycle"></select>
+    </label>
+    <div id="e_vehicleInfo"  class="small" style="color:#9fb4ff; margin-left:6px;">
       Select a reg to see vehicle details
     </div>
     <input id="e_date" type="date"><input id="e_type" placeholder="Type (MOT/Repairs/Delivery/Advertising/Fuel…)"><select id="e_method"><option>bank</option><option>cash</option></select>
@@ -4834,6 +4886,70 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
   <div class="small" id="e_totHint"></div>
   <table class="table" style="margin-top:10px"><thead><tr><th>Reg</th><th>Date</th><th>Type</th><th>Method</th><th class="right">Amount</th><th>Note</th><th>Actions</th></tr></thead><tbody id="e_body"></tbody></table>`;
   const ebody=wrap.querySelector('#e_body'); let editId=null;
+  const eCycleWrap = wrap.querySelector('#e_cycleWrap');
+  const eCycle = wrap.querySelector('#e_cycle');
+
+  function bestLabelForCycle(v){
+    const pd = v.purchaseDate || v.createdAt || '';
+    const status = String(v.status||'').toLowerCase();
+    // Find sold date if any (for history clarity)
+    const sale = (db.sales||[]).find(s => s.vehicleId === v.id);
+    const soldDate = sale && sale.date ? sale.date : '';
+    const parts = [];
+    if(v.stockRef) parts.push(v.stockRef);
+    if(pd) parts.push('Buy/PX: ' + ddmmyyyy(pd));
+    if(status) parts.push(status.toUpperCase());
+    if(soldDate) parts.push('Sold: ' + ddmmyyyy(soldDate));
+    return parts.join(' • ') || (v.reg || '');
+  }
+
+  function vehiclesForRegSorted(reg){
+    const list = vehiclesByReg(reg);
+    if(!list.length) return [];
+    const score = (v)=>{
+      const inStock = String(v.status||'').toLowerCase() !== 'sold';
+      const d = v.purchaseDate || v.createdAt || '';
+      return (inStock ? 10_000_000_000 : 0) + (d ? (Date.parse(d) || 0) : 0);
+    };
+    return list.slice().sort((a,b)=> score(b)-score(a));
+  }
+
+  function updateCycleSelector(){
+    if(!eCycleWrap || !eCycle) return;
+
+    const reg = (wrap.querySelector('#e_vehicle').value || '').trim().toUpperCase();
+    const list = vehiclesForRegSorted(reg);
+
+    if(list.length <= 1){
+      eCycleWrap.style.display = 'none';
+      eCycle.innerHTML = '';
+      if(list[0]){
+        // keep a hidden selected value so expense attaches correctly
+        eCycle.innerHTML = `<option value="${list[0].id}">${bestLabelForCycle(list[0])}</option>`;
+        eCycle.value = list[0].id;
+      }
+      return;
+    }
+
+    eCycleWrap.style.display = '';
+    eCycle.innerHTML = list.map(v=>`<option value="${v.id}">${bestLabelForCycle(v)}</option>`).join('');
+    // default = newest in-stock (already sorted)
+    eCycle.value = list[0].id;
+  }
+
+  function getSelectedVehicle(){
+    const reg = (wrap.querySelector('#e_vehicle').value || '').trim().toUpperCase();
+    if(!reg) return null;
+
+    // If cycle selector is visible/useful, trust it
+    if(eCycle && eCycle.value){
+      const v = (db.vehicles||[]).find(x=>x.id===eCycle.value);
+      if(v) return v;
+    }
+
+    return findVehicleByReg(reg);
+  }
+
 
   function renderExpenseVehicleInfo(){
     const reg = (wrap.querySelector('#e_vehicle').value || '').trim().toUpperCase();
@@ -4845,7 +4961,7 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
       return;
     }
 
-    const v = findVehicleByReg(reg); // helper already exists in your file
+    const v = getSelectedVehicle(); // supports cycles (re-acquired / PX)
     if(!v){
       info.textContent = 'Reg not found in Vehicles';
       return;
@@ -4864,18 +4980,22 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
   }
 
   // Update live while typing / selecting
-  wrap.querySelector('#e_vehicle').addEventListener('input', renderExpenseVehicleInfo);
+  wrap.querySelector('#e_vehicle').addEventListener('input', ()=>{ updateCycleSelector(); renderExpenseVehicleInfo(); });
+  if(eCycle){ eCycle.addEventListener('change', renderExpenseVehicleInfo); }
+
 
   // Call once on load (in case field already has a value)
+  updateCycleSelector();
   renderExpenseVehicleInfo();
 
   function rows(list=db.vehicleExpenses){ ebody.innerHTML=''; list.forEach(e=>{ const v=db.vehicles.find(x=>x.id===e.vehicleId)||{}; const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${v.reg||''}</td><td>${ddmmyyyy(e.date)}</td><td>${e.type||''}</td><td>${e.method||'bank'}</td><td class="right">${fmtMoney(e.amount)}</td><td>${e.note||''}</td>
+    tr.innerHTML=`<td>${v.reg||''}${v.stockRef?`<div class="small">${escapeHtml(v.stockRef)}</div>`:''}</td><td>${ddmmyyyy(e.date)}</td><td>${e.type||''}</td><td>${e.method||'bank'}</td><td class="right">${fmtMoney(e.amount)}</td><td>${e.note||''}</td>
     <td>${canAction('edit')?`<button data-act="edit" data-id="${e.id}">Edit</button>`:''} ${canAction('del')?`<button class="danger" data-act="del" data-id="${e.id}">Delete</button>`:''}</td>`; ebody.appendChild(tr); }); }
   rows();
   wrap.querySelector('#e_add').onclick=()=>{ if(!canAction('add')) return alert('No permission');
     const regInput=(wrap.querySelector('#e_vehicle').value||'').toUpperCase().trim();
-    const vid=findVehicleIdByReg(regInput);
+    const selId = (eCycle && eCycle.value) ? eCycle.value : null;
+    const vid = selId || findVehicleIdByReg(regInput);
     if(!vid){ return alert('Enter a valid REG from the suggestions');
     // ✅ Block duplicate sales (manual typing protection)
     const vCheck = (db.vehicles || []).find(x => x.id === vid);
@@ -4908,7 +5028,7 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
     rows(); 
     hint();
   }
-  else if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const e=db.vehicleExpenses.find(x=>x.id===id); editId=id; const v=db.vehicles.find(x=>x.id===e.vehicleId)||{}; wrap.querySelector('#e_vehicle').value=(v.reg||'').toUpperCase(); wrap.querySelector('#e_date').value=e.date; wrap.querySelector('#e_type').value=e.type||''; wrap.querySelector('#e_method').value=e.method||'bank'; wrap.querySelector('#e_amt').value=e.amount||0; wrap.querySelector('#e_note').value=e.note||''; document.getElementById('app').scrollIntoView({ behavior: 'smooth' });}
+  else if(act==='edit'){ if(!canAction('edit')) return alert('No permission'); const e=db.vehicleExpenses.find(x=>x.id===id); editId=id; const v=db.vehicles.find(x=>x.id===e.vehicleId)||{}; wrap.querySelector('#e_vehicle').value=(v.reg||'').toUpperCase(); updateCycleSelector(); if(eCycle){ eCycle.value = e.vehicleId; } renderExpenseVehicleInfo(); wrap.querySelector('#e_date').value=e.date; wrap.querySelector('#e_type').value=e.type||''; wrap.querySelector('#e_method').value=e.method||'bank'; wrap.querySelector('#e_amt').value=e.amount||0; wrap.querySelector('#e_note').value=e.note||''; document.getElementById('app').scrollIntoView({ behavior: 'smooth' });}
   });
   function hint(){ const bal=calcBalances(); wrap.querySelector('#e_totHint').textContent='Live balance after expenses — Bank: '+fmtMoney(bal.bank)+' | Cash: '+fmtMoney(bal.cash); }
   hint();
