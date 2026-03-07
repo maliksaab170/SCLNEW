@@ -3963,16 +3963,76 @@ function viewDashboard(){
   })();
   
   const sum=(arr,p)=>(arr||[]).reduce((t,x)=>t+Number(p?p(x):x||0),0);
+  let dashCurrentVehicleId = '';
+  
+  function escHtml(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;');
+  }
+
+  function addDashboardExpense(){
+    const out=card.querySelector('#dash_result');
+    const msg=card.querySelector('#dash_qe_msg');
+    const vehicleId = dashCurrentVehicleId;
+    const v = (db.vehicles||[]).find(x=>x.id===vehicleId);
+
+    if(!v){
+      if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">Please show a vehicle first.</span>';
+      return;
+    }
+    if(!canAction('add')){
+      if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">No permission to add expense.</span>';
+      return;
+    }
+
+    const dateEl = card.querySelector('#dash_qe_date');
+    const typeEl = card.querySelector('#dash_qe_type');
+    const methodEl = card.querySelector('#dash_qe_method');
+    const amtEl = card.querySelector('#dash_qe_amt');
+    const noteEl = card.querySelector('#dash_qe_note');
+
+    const date = (dateEl?.value || '').trim();
+    const type = (typeEl?.value || '').trim();
+    const method = (methodEl?.value || 'bank').trim() || 'bank';
+    const amount = Number(amtEl?.value || 0);
+    const note = (noteEl?.value || '').trim();
+
+    if(!date || !type || !(amount > 0)){
+      if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">Date, type and amount are required.</span>';
+      return;
+    }
+
+    const e = { id: uid(), vehicleId, date, type, method, amount, note };
+    (db.vehicleExpenses = db.vehicleExpenses || []).unshift(e);
+    addAudit('add','vehicleExpense',e.id,(v.reg||'')+' '+e.type+' '+e.amount);
+    saveDB();
+    try{ renderAlertBell(); }catch(e){}
+
+    if(typeEl) typeEl.value='';
+    if(amtEl) amtEl.value='';
+    if(noteEl) noteEl.value='';
+
+    showResultByReg(v.reg || '');
+    const msg2=card.querySelector('#dash_qe_msg');
+    if(msg2) msg2.innerHTML = `<span class="small" style="color:#2ecc71">Expense added to <b>${escHtml((v.reg||'').toUpperCase())}</b>.</span>`;
+  }
   
   function showResultByReg(reg){
     reg=(reg||'').toUpperCase().trim(); 
-    const v=db.vehicles.find(x=>(x.reg||'').toUpperCase()===reg);
+    const v=(typeof findVehicleByReg==='function' ? findVehicleByReg(reg) : (db.vehicles||[]).find(x=>(x.reg||'').toUpperCase()===reg));
     const out=card.querySelector('#dash_result'); 
     
     if(!v){ 
+      dashCurrentVehicleId='';
       out.innerHTML='<span class="small">No vehicle found.</span>'; 
       return; 
     }
+
+    dashCurrentVehicleId = v.id || '';
     
     const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===v.id); 
     const totalExp=sum(vexp,e=>e.amount); 
@@ -4016,10 +4076,10 @@ function viewDashboard(){
     } else if (expSortEl && expSortEl.value === 'high') {
       vexpSorted.sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
     }
-    let rows = vexpSorted.map(e => `<tr><td>${ddmmyyyy(e.date||'')}</td><td>${e.type||''}</td><td class="right">${fmtMoney(e.amount)}</td><td>${e.note||''}</td></tr>`).join('');
+    let rows = vexpSorted.map(e => `<tr><td>${ddmmyyyy(e.date||'')}</td><td>${escHtml(e.type||'')}</td><td class="right">${fmtMoney(e.amount)}</td><td>${escHtml(e.note||'')}</td></tr>`).join('');
     if(!rows) rows='<tr><td colspan="4" class="small">No expenses yet</td></tr>';
     
-    out.innerHTML=`<div class="row"><span class="badge">${v.status||'for sale'}</span>&nbsp;<b>${v.reg}</b>&nbsp;${v.make||''} ${v.model||''}</div>
+    out.innerHTML=`<div class="row"><span class="badge">${v.status||'for sale'}</span>&nbsp;<b>${escHtml(v.reg)}</b>&nbsp;${escHtml(v.make||'')} ${escHtml(v.model||'')}</div>
       ${mediaHtml}
       <div class="tableWrap">
       <table class="table">
@@ -4027,10 +4087,27 @@ function viewDashboard(){
       <tr><th>Total Expenses</th><td class="right">${fmtMoney(totalExp)}</td></tr>
       <tr><th>Total Cost (incl. expenses)</th><td class="right">${fmtMoney(totalCost)}</td></tr>
       ${v.supplier === 'PART-EX' ? `<tr><th>Supplier Type</th><td>PART-EX</td></tr>` : ''}
-      ${v.supplierNote ? `<tr><th>Supplier Note</th><td>${v.supplierNote}</td></tr>` : ''}
+      ${v.supplierNote ? `<tr><th>Supplier Note</th><td>${escHtml(v.supplierNote)}</td></tr>` : ''}
       ${saleInfo}
       </tbody></table></div>
+
+      <div class="card" style="margin-top:10px">
+        <h4 style="margin:0 0 10px 0">Quick Add Vehicle Expense</h4>
+        <div class="row">
+          <label><span class="small">Date</span><input id="dash_qe_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
+          <label><span class="small">Type</span><input id="dash_qe_type" placeholder="Tyre / Service / Repair"></label>
+          <label><span class="small">Method</span><select id="dash_qe_method"><option value="bank">bank</option><option value="cash">cash</option></select></label>
+          <label><span class="small">Amount</span><input id="dash_qe_amt" type="number" min="0" step="0.01" placeholder="0.00"></label>
+          <label style="flex:1;min-width:260px"><span class="small">Note</span><input id="dash_qe_note" placeholder="Optional note"></label>
+          <button id="dash_qe_add" class="primary" type="button" style="align-self:end">Add Expense</button>
+        </div>
+        <div id="dash_qe_msg" style="margin-top:8px"></div>
+      </div>
+
       <h4>Expenses</h4><div class="tableWrap"><table class="table"><thead><tr><th>Date</th><th>Type</th><th class="right">Amount</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+
+    const addBtn = card.querySelector('#dash_qe_add');
+    if(addBtn) addBtn.onclick = addDashboardExpense;
   }
   
   card.querySelector('#dash_show').onclick=()=>showResultByReg(card.querySelector('#dash_reg').value);
@@ -9016,6 +9093,7 @@ function viewReports(){
         <button id="rf_export">Export CSV</button>
       </div>
 
+      <div id="rf_alert" style="margin-top:10px"></div>
       <div id="rf_summary" class="small" style="margin-top:10px"></div>
 
       <details open style="margin-top:10px">
@@ -9026,6 +9104,11 @@ function viewReports(){
       <details style="margin-top:10px">
         <summary>Salesperson breakdown (from Audit Log)</summary>
         <div id="rf_by_user" style="margin-top:10px"></div>
+      </details>
+
+      <details open style="margin-top:10px">
+        <summary>Cars needing finance details set</summary>
+        <div id="rf_missing" style="margin-top:10px"></div>
       </details>
 
     </details>
@@ -9072,24 +9155,32 @@ function viewReports(){
   </div>
   `;
 
-  
-  // ===== Finance Sales (Accounts) — dedicated wiring (fix) =====
+  // ===== Finance Sales (Accounts) — full rebuilt version =====
   (function(){
-    // prevent double wiring if viewReports re-opened
     if(wrap.__rf_wired) return;
     wrap.__rf_wired = true;
 
+    function esc(v){
+      return String(v == null ? '' : v)
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#39;');
+    }
+
+    function yn(v){
+      return v ? 'YES' : 'NO';
+    }
+
     function getSaleCreatedUser(saleId){
       const id = String(saleId ?? '');
-
       const sale = (db.sales || []).find(s => String(s?.id ?? '') === id) || {};
+      const audit = (db.audit || []);
 
       const actionsAdd = new Set(['add','create','new','sale_add']);
       const actionsUpd = new Set(['update','edit','sale_update']);
 
-      const audit = (db.audit || []);
-
-      // Try: sale add/create first
       let a = audit.find(x =>
         String(x?.entity ?? '').toLowerCase() === 'sale' &&
         String(x?.entityId ?? x?.id ?? '') === id &&
@@ -9097,7 +9188,6 @@ function viewReports(){
         String(x?.user ?? '').trim()
       );
 
-      // Fallback: any sale update that has user
       if(!a){
         a = audit.find(x =>
           String(x?.entity ?? '').toLowerCase() === 'sale' &&
@@ -9107,132 +9197,333 @@ function viewReports(){
         );
       }
 
-      const u =
+      return (
         (a && String(a.user || '').trim()) ||
         String(sale.soldBy || '').trim() ||
         String(sale.salesperson || '').trim() ||
         String(sale.salesPerson || '').trim() ||
         String(sale.createdBy || '').trim() ||
-        String(sale.user || '').trim();
+        String(sale.user || '').trim() ||
+        'UNKNOWN'
+      );
+    }
 
-      return u;
+    function getVehicleForSale(s){
+      return (db.vehicles || []).find(v => String(v?.id ?? '') === String(s?.vehicleId ?? '')) || {};
     }
 
     function buildFinanceAccounts(monthKey){
-      const sales = (db.sales || []).filter(s =>
+      const allSales = (db.sales || []).filter(s =>
         isRealSale(s) &&
-        (s.date || '').slice(0,7) === monthKey &&
-        (
-          Number(s.finance || 0) > 0 ||
-          String(s.financeCompany || '').trim() !== '' ||
-          Number(s.financeAdminFee || 0) > 0 ||
-          Number(s.financePayoutAmount || 0) > 0
-        )
+        (s.date || '').slice(0,7) === monthKey
+      );
+
+      // finance-related sales only
+      const sales = allSales.filter(s =>
+        Number(s.finance || 0) > 0 ||
+        String(s.financeCompany || '').trim() !== '' ||
+        Number(s.financeAdminFee || 0) > 0 ||
+        Number(s.financePayoutAmount || 0) > 0 ||
+        !!s.financePayoutPaid
       );
 
       const byCo = {};
-      sales.forEach(s => {
-        const rawCo = String(s.financeCompany || '').trim();
-        const co = rawCo ? rawCo.toUpperCase() : '(NOT SET)';
-        if(!byCo[co]) byCo[co] = { company: co, deals: 0, financeAmt: 0, payoutPaid: 0, adminFee: 0 };
-        byCo[co].deals += 1;
-        byCo[co].financeAmt += Number(s.finance || 0);
-        byCo[co].adminFee += Number(s.financeAdminFee || 0);
-        if (s.financePayoutPaid) byCo[co].payoutPaid += Number(s.financePayoutAmount || 0);
-      });
-
       const byUser = {};
+      const missing = [];
+
       sales.forEach(s => {
-        const u = (getSaleCreatedUser(s.id) || 'UNKNOWN');
-        if(!byUser[u]) byUser[u] = { user: u, deals: 0, financeAmt: 0, payoutPaid: 0, adminFee: 0 };
-        byUser[u].deals += 1;
-        byUser[u].financeAmt += Number(s.finance || 0);
-        byUser[u].adminFee += Number(s.financeAdminFee || 0);
-        if (s.financePayoutPaid) byUser[u].payoutPaid += Number(s.financePayoutAmount || 0);
+        const v = getVehicleForSale(s);
+
+        const financeAmt = Number(s.finance || 0);
+        const financeCompany = String(s.financeCompany || '').trim();
+        const payoutAmt = Number(s.financePayoutAmount || 0);
+        const payoutPaid = !!s.financePayoutPaid;
+        const adminFee = Number(s.financeAdminFee || 0);
+        const user = getSaleCreatedUser(s.id);
+
+        // company summary
+        const coKey = financeCompany ? financeCompany.toUpperCase() : '(NOT SET)';
+        if(!byCo[coKey]){
+          byCo[coKey] = {
+            company: coKey,
+            deals: 0,
+            financeAmt: 0,
+            payoutPaid: 0,
+            adminFee: 0
+          };
+        }
+        byCo[coKey].deals += 1;
+        byCo[coKey].financeAmt += financeAmt;
+        byCo[coKey].adminFee += adminFee;
+        if(payoutPaid) byCo[coKey].payoutPaid += payoutAmt;
+
+        // user summary
+        if(!byUser[user]){
+          byUser[user] = {
+            user,
+            deals: 0,
+            financeAmt: 0,
+            payoutPaid: 0,
+            adminFee: 0
+          };
+        }
+        byUser[user].deals += 1;
+        byUser[user].financeAmt += financeAmt;
+        byUser[user].adminFee += adminFee;
+        if(payoutPaid) byUser[user].payoutPaid += payoutAmt;
+
+        // missing / not set checks
+        const issues = [];
+
+        if(!financeCompany) issues.push('Finance company not set');
+        if(financeAmt > 0 && payoutAmt <= 0) issues.push('Payout amount not set');
+        if(financeAmt > 0 && !payoutPaid) issues.push('Payout not marked paid');
+
+        if(issues.length){
+          missing.push({
+            saleId: s.id || '',
+            invNo: s.invNo || '',
+            date: s.date || '',
+            reg: v.reg || '',
+            make: v.make || '',
+            model: v.model || '',
+            customer: s.customerName || s.name || '',
+            salesperson: user,
+            financeCompany: financeCompany || '(NOT SET)',
+            financeAmt,
+            payoutAmt,
+            adminFee,
+            payoutPaid: yn(payoutPaid),
+            issues: issues.join(' | ')
+          });
+        }
       });
 
-      const companies = Object.values(byCo).sort((a,b)=> b.deals - a.deals);
-      const users = Object.values(byUser).sort((a,b)=> b.deals - a.deals);
+      const companies = Object.values(byCo).sort((a,b)=>{
+        if(b.deals !== a.deals) return b.deals - a.deals;
+        return b.financeAmt - a.financeAmt;
+      });
 
-      const totals = companies.reduce((acc,r)=>{
-        acc.deals += r.deals; acc.financeAmt += r.financeAmt; acc.payoutPaid += r.payoutPaid; acc.adminFee += r.adminFee;
+      const users = Object.values(byUser).sort((a,b)=>{
+        if(b.deals !== a.deals) return b.deals - a.deals;
+        return b.financeAmt - a.financeAmt;
+      });
+
+      const totals = sales.reduce((acc,s)=>{
+        acc.deals += 1;
+        acc.financeAmt += Number(s.finance || 0);
+        acc.adminFee += Number(s.financeAdminFee || 0);
+        if(s.financePayoutPaid) acc.payoutPaid += Number(s.financePayoutAmount || 0);
         return acc;
       }, {deals:0, financeAmt:0, payoutPaid:0, adminFee:0});
+
+      const missingPayoutValue = missing
+        .filter(x => x.payoutPaid !== 'YES')
+        .reduce((t,x)=> t + Number(x.payoutAmt || 0), 0);
+
+      return {
+        monthKey,
+        companies,
+        users,
+        missing,
+        totals,
+        missingPayoutValue
+      };
+    }
+
+    function renderFinanceCompanyTable(rows){
+      if(!rows.length) return `<div class="small">No finance deals found for this month.</div>`;
+      return `
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Finance Company</th>
+                <th class="right">Deals</th>
+                <th class="right">Finance Amount</th>
+                <th class="right">Payout Received (Paid)</th>
+                <th class="right">Admin Fees</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(r=>`
+                <tr>
+                  <td>${esc(r.company)}</td>
+                  <td class="right">${r.deals}</td>
+                  <td class="right">${fmtMoney(r.financeAmt)}</td>
+                  <td class="right">${fmtMoney(r.payoutPaid)}</td>
+                  <td class="right">${fmtMoney(r.adminFee)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderFinanceUserTable(rows){
+      if(!rows.length) return `<div class="small">No finance deals found for this month.</div>`;
+      return `
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Salesperson (from Audit)</th>
+                <th class="right">Deals</th>
+                <th class="right">Finance Amount</th>
+                <th class="right">Payout Received (Paid)</th>
+                <th class="right">Admin Fees</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(r=>`
+                <tr>
+                  <td>${esc(r.user)}</td>
+                  <td class="right">${r.deals}</td>
+                  <td class="right">${fmtMoney(r.financeAmt)}</td>
+                  <td class="right">${fmtMoney(r.payoutPaid)}</td>
+                  <td class="right">${fmtMoney(r.adminFee)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderFinanceMissingTable(rows){
+      if(!rows.length) return `<div class="small">No cars missing finance setup this month.</div>`;
+      return `
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Invoice</th>
+                <th>Reg</th>
+                <th>Make</th>
+                <th>Model</th>
+                <th>Customer</th>
+                <th>Salesperson</th>
+                <th>Finance Company</th>
+                <th class="right">Finance Amt</th>
+                <th class="right">Payout Amt</th>
+                <th class="right">Admin Fee</th>
+                <th>Payout Paid</th>
+                <th>Issues</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(r=>`
+                <tr>
+                  <td>${esc(r.date)}</td>
+                  <td>${esc(r.invNo)}</td>
+                  <td>${esc(r.reg)}</td>
+                  <td>${esc(r.make)}</td>
+                  <td>${esc(r.model)}</td>
+                  <td>${esc(r.customer)}</td>
+                  <td>${esc(r.salesperson)}</td>
+                  <td>${esc(r.financeCompany)}</td>
+                  <td class="right">${fmtMoney(r.financeAmt)}</td>
+                  <td class="right">${fmtMoney(r.payoutAmt)}</td>
+                  <td class="right">${fmtMoney(r.adminFee)}</td>
+                  <td>${esc(r.payoutPaid)}</td>
+                  <td>${esc(r.issues)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderFinanceAccounts(monthKey){
+      const res = buildFinanceAccounts(monthKey);
+
+      const alertEl = wrap.querySelector('#rf_alert');
+      if(alertEl){
+        alertEl.innerHTML = res.missing.length
+          ? `<div style="padding:10px 12px;border:1px solid #b91c1c;background:#fee2e2;color:#991b1b;border-radius:10px;font-weight:700">
+              ⚠ ${res.missing.length} finance deal(s) need attention
+            </div>`
+          : `<div style="padding:10px 12px;border:1px solid #166534;background:#dcfce7;color:#166534;border-radius:10px;font-weight:700">
+              ✓ All finance deals look fully set for this month
+            </div>`;
+      }
 
       const summaryEl = wrap.querySelector('#rf_summary');
       if(summaryEl){
         summaryEl.innerHTML =
-          `<b>${monthKey}</b> • Deals: <b>${totals.deals}</b> • Finance: <b>${fmtMoney(totals.financeAmt)}</b> • Payout received: <b>${fmtMoney(totals.payoutPaid)}</b> • Admin fees: <b>${fmtMoney(totals.adminFee)}</b>`;
+          `<b>${res.monthKey}</b> • Deals: <b>${res.totals.deals}</b> • Finance: <b>${fmtMoney(res.totals.financeAmt)}</b> • Payout received: <b>${fmtMoney(res.totals.payoutPaid)}</b> • Admin fees: <b>${fmtMoney(res.totals.adminFee)}</b> • Missing setup: <b>${res.missing.length}</b> • Unpaid / incomplete payout value: <b>${fmtMoney(res.missingPayoutValue)}</b>`;
       }
 
       const out = wrap.querySelector('#rf_out');
-      if(out){
-        out.innerHTML = companies.length ? `
-          <div class="tableWrap">
-          <table class="table">
-            <thead>
-              <tr><th>Finance Company</th><th class="right">Deals</th><th class="right">Finance</th><th class="right">Payout Received</th><th class="right">Admin Fees</th></tr>
-            </thead>
-            <tbody>
-              ${companies.map(r=>`
-                <tr>
-                  <td>${r.company}</td>
-                  <td class="right">${r.deals}</td>
-                  <td class="right">${fmtMoney(r.financeAmt)}</td>
-                  <td class="right">${fmtMoney(r.payoutPaid)}</td>
-                  <td class="right">${fmtMoney(r.adminFee)}</td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-          </div>
-        ` : `<div class="small">No finance deals found for this month.</div>`;
-      }
+      if(out) out.innerHTML = renderFinanceCompanyTable(res.companies);
 
       const outU = wrap.querySelector('#rf_by_user');
-      if(outU){
-        outU.innerHTML = users.length ? `
-          <div class="tableWrap">
-          <table class="table">
-            <thead>
-              <tr><th>Salesperson (Audit)</th><th class="right">Deals</th><th class="right">Finance</th><th class="right">Payout Received</th><th class="right">Admin Fees</th></tr>
-            </thead>
-            <tbody>
-              ${users.map(r=>`
-                <tr>
-                  <td>${r.user}</td>
-                  <td class="right">${r.deals}</td>
-                  <td class="right">${fmtMoney(r.financeAmt)}</td>
-                  <td class="right">${fmtMoney(r.payoutPaid)}</td>
-                  <td class="right">${fmtMoney(r.adminFee)}</td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-          </div>
-        ` : `<div class="small">No finance deals found for this month.</div>`;
-      }
+      if(outU) outU.innerHTML = renderFinanceUserTable(res.users);
 
-      return {monthKey, companies, users, totals};
+      const outM = wrap.querySelector('#rf_missing');
+      if(outM) outM.innerHTML = renderFinanceMissingTable(res.missing);
+
+      wrap.__rf_last = res;
+      return res;
     }
 
-    const run = ()=>{
-      const m = (wrap.querySelector('#rf_month')?.value || '').slice(0,7);
-      if(!m) return alert('Please select a month');
-      buildFinanceAccounts(m);
-    };
-
     const rfRunBtn = wrap.querySelector('#rf_run');
-    if(rfRunBtn) rfRunBtn.onclick = run;
+    if(rfRunBtn){
+      rfRunBtn.onclick = ()=>{
+        const m = (wrap.querySelector('#rf_month')?.value || '').slice(0,7);
+        if(!m) return alert('Please select a month');
+        renderFinanceAccounts(m);
+      };
+    }
 
     const rfExportBtn = wrap.querySelector('#rf_export');
     if(rfExportBtn){
       rfExportBtn.onclick = ()=>{
         const m = (wrap.querySelector('#rf_month')?.value || '').slice(0,7);
         if(!m) return alert('Please select a month');
-        const res = buildFinanceAccounts(m);
+
+        const res = wrap.__rf_last && wrap.__rf_last.monthKey === m
+          ? wrap.__rf_last
+          : renderFinanceAccounts(m);
+
         const rows = [
-          ["Month","Finance Company","Deals","Finance Amount","Payout Received (Paid)","Admin Fees"]
-        ].concat(res.companies.map(r=>[res.monthKey, r.company, r.deals, r.financeAmt, r.payoutPaid, r.adminFee]));
-        const csv = rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+          ['FINANCE COMPANY BREAKDOWN'],
+          ['Month','Finance Company','Deals','Finance Amount','Payout Received (Paid)','Admin Fees'],
+          ...res.companies.map(r => [
+            res.monthKey,
+            r.company,
+            r.deals,
+            r.financeAmt,
+            r.payoutPaid,
+            r.adminFee
+          ]),
+          [],
+          ['CARS NEEDING FINANCE DETAILS SET'],
+          ['Date','Invoice','Reg','Make','Model','Customer','Salesperson','Finance Company','Finance Amt','Payout Amt','Admin Fee','Payout Paid','Issues'],
+          ...res.missing.map(r => [
+            r.date,
+            r.invNo,
+            r.reg,
+            r.make,
+            r.model,
+            r.customer,
+            r.salesperson,
+            r.financeCompany,
+            r.financeAmt,
+            r.payoutAmt,
+            r.adminFee,
+            r.payoutPaid,
+            r.issues
+          ])
+        ];
+
+        const csv = rows
+          .map(r => r.map(v => `"${String(v ?? '').replace(/"/g,'""')}"`).join(','))
+          .join('\n');
+
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
         a.download = `finance_accounts_${res.monthKey}.csv`;
@@ -9240,6 +9531,7 @@ function viewReports(){
       };
     }
   })();
+
 // Reports tiles quick-jump (fix: make the top tiles clickable)
   (wrap.querySelectorAll('.reportTile')||[]).forEach(tile=>{
     tile.onclick = () => {
@@ -9433,165 +9725,6 @@ function viewReports(){
         sellCount++; 
       }
     });
-
-    /* ========= Finance Sales (Accounts) ========= */
-    function getSaleCreatedUser(saleId){
-      // Uses Audit Log to guess who created the sale (works even if sale object has no user field)
-      const a = (db.audit || []).find(x => x.entity === 'sale' && x.entityId === saleId && x.action === 'add');
-      return (a && a.user) ? a.user : '';
-    }
-
-    function buildFinanceAccounts(monthKey){
-      const sales = (db.sales || []).filter(s =>
-        isRealSale(s) &&
-        (s.date || '').slice(0,7) === monthKey &&
-        (
-          Number(s.finance || 0) > 0 ||
-          String(s.financeCompany || '').trim() !== '' ||
-          Number(s.financeAdminFee || 0) > 0 ||
-          Number(s.financePayoutAmount || 0) > 0
-        )
-      );
-
-      // Group by finance company
-      const byCo = {};
-      sales.forEach(s => {
-        const co = (String(s.financeCompany || '').trim() || 'UNKNOWN').toUpperCase();
-        if(!byCo[co]) byCo[co] = { company: co, deals: 0, financeAmt: 0, payoutPaid: 0, adminFee: 0 };
-
-        byCo[co].deals += 1;
-        byCo[co].financeAmt += Number(s.finance || 0);
-        byCo[co].adminFee += Number(s.financeAdminFee || 0);
-
-        // Only count payout if marked paid, otherwise it’s not “received”
-        if (s.financePayoutPaid) byCo[co].payoutPaid += Number(s.financePayoutAmount || 0);
-      });
-
-      // Group by salesperson (from audit)
-      const byUser = {};
-      sales.forEach(s => {
-        const u = (getSaleCreatedUser(s.id) || 'UNKNOWN');
-        if(!byUser[u]) byUser[u] = { user: u, deals: 0, financeAmt: 0, payoutPaid: 0, adminFee: 0 };
-        byUser[u].deals += 1;
-        byUser[u].financeAmt += Number(s.finance || 0);
-        byUser[u].adminFee += Number(s.financeAdminFee || 0);
-        if (s.financePayoutPaid) byUser[u].payoutPaid += Number(s.financePayoutAmount || 0);
-      });
-
-      const companies = Object.values(byCo).sort((a,b) => b.deals - a.deals);
-      const users = Object.values(byUser).sort((a,b) => b.deals - a.deals);
-
-      const totals = companies.reduce((acc,r) => {
-        acc.deals += r.deals;
-        acc.financeAmt += r.financeAmt;
-        acc.payoutPaid += r.payoutPaid;
-        acc.adminFee += r.adminFee;
-        return acc;
-      }, {deals:0, financeAmt:0, payoutPaid:0, adminFee:0});
-
-      // Render summary
-      const summaryEl = wrap.querySelector('#rf_summary');
-      if(summaryEl){
-        summaryEl.innerHTML =
-          `<b>${monthKey}</b> • Deals: <b>${totals.deals}</b> • Finance: <b>${fmtMoney(totals.financeAmt)}</b> • Payout received: <b>${fmtMoney(totals.payoutPaid)}</b> • Admin fees: <b>${fmtMoney(totals.adminFee)}</b>`;
-      }
-
-      // Render company table
-      const out = wrap.querySelector('#rf_out');
-      if(out){
-        out.innerHTML = `
-          <div class="tableWrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Finance Company</th>
-                <th class="right">Deals</th>
-                <th class="right">Finance Amount</th>
-                <th class="right">Payout Received (Paid)</th>
-                <th class="right">Admin Fees</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${companies.map(r => `
-                <tr>
-                  <td>${r.company}</td>
-                  <td class="right">${r.deals}</td>
-                  <td class="right">${fmtMoney(r.financeAmt)}</td>
-                  <td class="right">${fmtMoney(r.payoutPaid)}</td>
-                  <td class="right">${fmtMoney(r.adminFee)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          </div>
-        `;
-      }
-
-      // Render user table
-      const outU = wrap.querySelector('#rf_by_user');
-      if(outU){
-        outU.innerHTML = `
-          <div class="tableWrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Salesperson (from Audit)</th>
-                <th class="right">Deals</th>
-                <th class="right">Finance Amount</th>
-                <th class="right">Payout Received (Paid)</th>
-                <th class="right">Admin Fees</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${users.map(r => `
-                <tr>
-                  <td>${r.user}</td>
-                  <td class="right">${r.deals}</td>
-                  <td class="right">${fmtMoney(r.financeAmt)}</td>
-                  <td class="right">${fmtMoney(r.payoutPaid)}</td>
-                  <td class="right">${fmtMoney(r.adminFee)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          </div>
-        `;
-      }
-
-      return { monthKey, companies, users, totals };
-    }
-
-    // Hook buttons
-    const rfRunBtn = wrap.querySelector('#rf_run');
-    const rfExportBtn = wrap.querySelector('#rf_export');
-
-    if(rfRunBtn){
-      rfRunBtn.onclick = () => {
-        const m = (wrap.querySelector('#rf_month')?.value || '').slice(0,7);
-        if(!m) return alert('Please select a month');
-        buildFinanceAccounts(m);
-      };
-    }
-
-    if(rfExportBtn){
-      rfExportBtn.onclick = () => {
-        const m = (wrap.querySelector('#rf_month')?.value || '').slice(0,7);
-        if(!m) return alert('Please select a month');
-        const res = buildFinanceAccounts(m);
-
-        const rows = [
-          ["Month","Finance Company","Deals","Finance Amount","Payout Received (Paid)","Admin Fees"]
-        ].concat(res.companies.map(r => [
-          res.monthKey, r.company, r.deals, r.financeAmt, r.payoutPaid, r.adminFee
-        ]));
-
-        const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g,'""')}"`).join(',')).join('\n');
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
-        a.download = `finance_accounts_${res.monthKey}.csv`;
-        a.click();
-      };
-    }
 
     const cover = wrap.querySelector('#rm_cover').checked; 
     const showExpShown = cover ? 0 : showExp; 
@@ -10361,11 +10494,27 @@ function viewReports(){
       const purchase = num(v.purchase);
       const exp = num(expByVeh[v.id]);
       const total = purchase + exp;
+
+      const supplier = String(v.supplier || '').trim();
+      const supplierNote = String(v.supplierNote || '').trim();
+
+      let cameFrom = '';
+      if (supplier === 'PART-EX') {
+        cameFrom = supplierNote ? `PART-EX - ${supplierNote}` : 'PART-EX';
+      } else if (supplier && supplierNote) {
+        cameFrom = `${supplier} - ${supplierNote}`;
+      } else if (supplier) {
+        cameFrom = supplier;
+      } else if (supplierNote) {
+        cameFrom = supplierNote;
+      }
+
       return {
         reg: v.reg || '',
         make: v.make || '',
         model: v.model || '',
         purchaseDate: (getPurchaseDate(v)||'').slice(0,10),
+        cameFrom: cameFrom,
         purchase: purchase.toFixed(2),
         expensesToEnd: exp.toFixed(2),
         stockValue: total.toFixed(2)
@@ -10376,6 +10525,7 @@ function viewReports(){
 
     return { end, rows, totalStockValue };
   }
+
 
   // ---------- Wire it to your Reports UI (IDs from the HTML block) ----------
   const monthEl = wrap.querySelector('#si_month');
@@ -10467,10 +10617,13 @@ function viewReports(){
       `As at <b>${r.end}</b> — Vehicles in stock: <b>${r.rows.length}</b> — Total stock value: <b>${fmtMoney(r.totalStockValue)}</b>`;
 
     tblStock.innerHTML = renderSimpleTable(
-      ['Reg','Make','Model','Purchase date','Purchase £','Expenses to end £','Stock value £'],
+      ['Reg','Make','Model','Purchase date','Supplier / PX Source','Purchase £','Expenses to end £','Stock value £'],
       r.rows.map(x=>[
-        x.reg, x.make, x.model,
+        x.reg,
+        x.make,
+        x.model,
         x.purchaseDate,
+        x.cameFrom || '',
         fmtMoney(x.purchase),
         fmtMoney(x.expensesToEnd),
         fmtMoney(x.stockValue)
@@ -10486,13 +10639,35 @@ function viewReports(){
     if(!rows.length) return alert('Build Stock List first (no rows to export).');
 
     const end = wrap.__si_last_stock_end || '';
-    const headers = ['reg','make','model','purchaseDate','purchase','expensesToEnd','stockValue'];
+
+    const headers = [
+      'reg',
+      'make',
+      'model',
+      'purchaseDate',
+      'Supplier / PX Source',
+      'purchase',
+      'expensesToEnd',
+      'stockValue'
+    ];
 
     const csv = [headers.join(',')].concat(
-      rows.map(r => headers.map(h=>{
-        const s = (r[h]==null?'':String(r[h]));
-        return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
-      }).join(','))
+      rows.map(r => {
+        const vals = [
+          r.reg,
+          r.make,
+          r.model,
+          r.purchaseDate,
+          r.cameFrom,
+          r.purchase,
+          r.expensesToEnd,
+          r.stockValue
+        ];
+        return vals.map(v=>{
+          const s = (v==null ? '' : String(v));
+          return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+        }).join(',');
+      })
     ).join('\n');
 
     const a = document.createElement('a');
