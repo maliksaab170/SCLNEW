@@ -3974,6 +3974,89 @@ function viewDashboard(){
       .replace(/'/g,'&#39;');
   }
 
+  let dashEditingExpenseId = '';
+
+  function resetDashboardExpenseForm(){
+    const dateEl = card.querySelector('#dash_qe_date');
+    const typeEl = card.querySelector('#dash_qe_type');
+    const methodEl = card.querySelector('#dash_qe_method');
+    const amtEl = card.querySelector('#dash_qe_amt');
+    const noteEl = card.querySelector('#dash_qe_note');
+    const addBtn = card.querySelector('#dash_qe_add');
+    const cancelBtn = card.querySelector('#dash_qe_cancel');
+    const titleEl = card.querySelector('#dash_qe_title');
+    const msgEl = card.querySelector('#dash_qe_msg');
+
+    dashEditingExpenseId = '';
+    if(dateEl) dateEl.value = new Date().toISOString().slice(0,10);
+    if(typeEl) typeEl.value = '';
+    if(methodEl) methodEl.value = 'bank';
+    if(amtEl) amtEl.value = '';
+    if(noteEl) noteEl.value = '';
+    if(addBtn) addBtn.textContent = 'Add Expense';
+    if(cancelBtn) cancelBtn.style.display = 'none';
+    if(titleEl) titleEl.textContent = 'Quick Add Vehicle Expense';
+    if(msgEl) msgEl.innerHTML = '';
+  }
+
+  function startDashboardExpenseEdit(expenseId){
+    const e = (db.vehicleExpenses || []).find(x => x.id === expenseId);
+    const msg = card.querySelector('#dash_qe_msg');
+    if(!e){
+      if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">Expense not found.</span>';
+      return;
+    }
+
+    dashEditingExpenseId = expenseId;
+    const dateEl = card.querySelector('#dash_qe_date');
+    const typeEl = card.querySelector('#dash_qe_type');
+    const methodEl = card.querySelector('#dash_qe_method');
+    const amtEl = card.querySelector('#dash_qe_amt');
+    const noteEl = card.querySelector('#dash_qe_note');
+    const addBtn = card.querySelector('#dash_qe_add');
+    const cancelBtn = card.querySelector('#dash_qe_cancel');
+    const titleEl = card.querySelector('#dash_qe_title');
+
+    if(dateEl) dateEl.value = e.date || new Date().toISOString().slice(0,10);
+    if(typeEl) typeEl.value = e.type || '';
+    if(methodEl) methodEl.value = e.method || 'bank';
+    if(amtEl) amtEl.value = e.amount || '';
+    if(noteEl) noteEl.value = e.note || '';
+    if(addBtn) addBtn.textContent = 'Update Expense';
+    if(cancelBtn) cancelBtn.style.display = 'inline-flex';
+    if(titleEl) titleEl.textContent = 'Edit Vehicle Expense';
+    if(msg) msg.innerHTML = '<span class="small" style="color:#f59e0b">Editing selected expense. Update it or press cancel.</span>';
+  }
+
+  function deleteDashboardExpense(expenseId){
+    const msg=card.querySelector('#dash_qe_msg');
+    const e = (db.vehicleExpenses || []).find(x => x.id === expenseId);
+    const v = (db.vehicles||[]).find(x=>x.id===dashCurrentVehicleId);
+
+    if(!e || !v){
+      if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">Expense not found.</span>';
+      return;
+    }
+    if(!canAction('delete')){
+      if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">No permission to delete expense.</span>';
+      return;
+    }
+    if(!confirm(`Delete expense ${e.type || ''} ${fmtMoney(e.amount || 0)} from ${String(v.reg||'').toUpperCase()}?`)) return;
+
+    if(typeof markDeleted === 'function'){
+      try{ markDeleted('vehicleExpenses', expenseId); }catch(err){}
+    }
+    db.vehicleExpenses = (db.vehicleExpenses || []).filter(x => x.id !== expenseId);
+    addAudit('delete','vehicleExpense',expenseId,(v.reg||'')+' '+(e.type||'')+' '+(e.amount||0));
+    saveDB();
+    try{ renderAlertBell(); }catch(err){}
+
+    if(dashEditingExpenseId === expenseId) resetDashboardExpenseForm();
+    showResultByReg(v.reg || '');
+    const msg2=card.querySelector('#dash_qe_msg');
+    if(msg2) msg2.innerHTML = `<span class="small" style="color:#2ecc71">Expense deleted from <b>${escHtml((v.reg||'').toUpperCase())}</b>.</span>`;
+  }
+
   function addDashboardExpense(){
     const out=card.querySelector('#dash_result');
     const msg=card.querySelector('#dash_qe_msg');
@@ -3984,8 +4067,10 @@ function viewDashboard(){
       if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">Please show a vehicle first.</span>';
       return;
     }
-    if(!canAction('add')){
-      if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">No permission to add expense.</span>';
+
+    const isEdit = !!dashEditingExpenseId;
+    if(!canAction(isEdit ? 'edit' : 'add')){
+      if(msg) msg.innerHTML = `<span class="small" style="color:#ff6b6b">No permission to ${isEdit ? 'edit' : 'add'} expense.</span>`;
       return;
     }
 
@@ -4003,6 +4088,25 @@ function viewDashboard(){
 
     if(!date || !type || !(amount > 0)){
       if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">Date, type and amount are required.</span>';
+      return;
+    }
+
+    if(isEdit){
+      const oldE = (db.vehicleExpenses || []).find(x => x.id === dashEditingExpenseId);
+      if(!oldE){
+        if(msg) msg.innerHTML = '<span class="small" style="color:#ff6b6b">Expense to edit was not found.</span>';
+        return;
+      }
+      const updated = { ...oldE, vehicleId, date, type, method, amount, note };
+      db.vehicleExpenses = (db.vehicleExpenses || []).map(x => x.id === dashEditingExpenseId ? updated : x);
+      addAudit('update','vehicleExpense',updated.id,(v.reg||'')+' '+updated.type+' '+updated.amount);
+      saveDB();
+      try{ renderAlertBell(); }catch(e){}
+      const reg = v.reg || '';
+      resetDashboardExpenseForm();
+      showResultByReg(reg);
+      const msg2=card.querySelector('#dash_qe_msg');
+      if(msg2) msg2.innerHTML = `<span class="small" style="color:#2ecc71">Expense updated for <b>${escHtml((reg||'').toUpperCase())}</b>.</span>`;
       return;
     }
 
@@ -4076,8 +4180,18 @@ function viewDashboard(){
     } else if (expSortEl && expSortEl.value === 'high') {
       vexpSorted.sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
     }
-    let rows = vexpSorted.map(e => `<tr><td>${ddmmyyyy(e.date||'')}</td><td>${escHtml(e.type||'')}</td><td class="right">${fmtMoney(e.amount)}</td><td>${escHtml(e.note||'')}</td></tr>`).join('');
-    if(!rows) rows='<tr><td colspan="4" class="small">No expenses yet</td></tr>';
+    let rows = vexpSorted.map(e => `<tr>
+      <td>${ddmmyyyy(e.date||'')}</td>
+      <td>${escHtml(e.type||'')}</td>
+      <td>${escHtml(e.method||'bank')}</td>
+      <td class="right">${fmtMoney(e.amount)}</td>
+      <td>${escHtml(e.note||'')}</td>
+      <td class="right">
+        <button class="smallBtn" type="button" data-dash-exp-edit="${escHtml(e.id||'')}">Edit</button>
+        <button class="smallBtn danger" type="button" data-dash-exp-del="${escHtml(e.id||'')}">Delete</button>
+      </td>
+    </tr>`).join('');
+    if(!rows) rows='<tr><td colspan="6" class="small">No expenses yet</td></tr>';
     
     out.innerHTML=`<div class="row"><span class="badge">${v.status||'for sale'}</span>&nbsp;<b>${escHtml(v.reg)}</b>&nbsp;${escHtml(v.make||'')} ${escHtml(v.model||'')}</div>
       ${mediaHtml}
@@ -4092,7 +4206,10 @@ function viewDashboard(){
       </tbody></table></div>
 
       <div class="card" style="margin-top:10px">
-        <h4 style="margin:0 0 10px 0">Quick Add Vehicle Expense</h4>
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h4 id="dash_qe_title" style="margin:0">Quick Add Vehicle Expense</h4>
+          <button id="dash_qe_cancel" type="button" style="display:none">Cancel Edit</button>
+        </div>
         <div class="row">
           <label><span class="small">Date</span><input id="dash_qe_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
           <label><span class="small">Type</span><input id="dash_qe_type" placeholder="Tyre / Service / Repair"></label>
@@ -4104,10 +4221,18 @@ function viewDashboard(){
         <div id="dash_qe_msg" style="margin-top:8px"></div>
       </div>
 
-      <h4>Expenses</h4><div class="tableWrap"><table class="table"><thead><tr><th>Date</th><th>Type</th><th class="right">Amount</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <h4>Expenses</h4><div class="tableWrap"><table class="table"><thead><tr><th>Date</th><th>Type</th><th>Method</th><th class="right">Amount</th><th>Note</th><th class="right">Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
     const addBtn = card.querySelector('#dash_qe_add');
     if(addBtn) addBtn.onclick = addDashboardExpense;
+    const cancelBtn = card.querySelector('#dash_qe_cancel');
+    if(cancelBtn) cancelBtn.onclick = resetDashboardExpenseForm;
+    out.querySelectorAll('[data-dash-exp-edit]').forEach(btn=>{
+      btn.onclick = ()=> startDashboardExpenseEdit(btn.getAttribute('data-dash-exp-edit'));
+    });
+    out.querySelectorAll('[data-dash-exp-del]').forEach(btn=>{
+      btn.onclick = ()=> deleteDashboardExpense(btn.getAttribute('data-dash-exp-del'));
+    });
   }
   
   card.querySelector('#dash_show').onclick=()=>showResultByReg(card.querySelector('#dash_reg').value);
@@ -5273,6 +5398,11 @@ function viewSales(){
     <label>Total Paid £<input id="sale_totalPaid" type="number" readonly></label>
     <label>Balance Due £<input id="sale_balanceDue" type="number" readonly></label>
     <label>Status<input id="sale_payStatus" readonly></label>
+    <label>Add-ons Total £<input id="sale_addonsTotal" type="number" readonly></label>
+    <label>Add-on Profit £<input id="sale_addonProfit" type="number" readonly></label>
+    <label>Vehicle Profit £<input id="sale_vehicleProfit" type="number" readonly></label>
+    <label>Total Deal Profit £<input id="sale_totalDealProfit" type="number" readonly></label>
+    <label>Grand Received £<input id="sale_grandReceived" type="number" readonly></label>
     <button id="auto_balance">Auto-balance</button><span id="sale_warn" class="small"></span>
     <div class="card">
       <label style="display: flex; flex-direction: column; align-items: center;">
@@ -5345,6 +5475,49 @@ function viewSales(){
     <label>Warranty Provider<input id="sale_warrantyProvider" placeholder="Handler / RAC / etc"></label>
     <label>Warranty Months<input id="sale_warrantyMonths" type="number" placeholder="e.g. 3"></label>
     <label>Warranty Policy #<input id="sale_warrantyPolicy" placeholder="Policy number"></label>
+
+    <div class="card" style="margin-top:10px; padding:10px; background: rgba(19,26,43,.45); min-width:100%;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:700;">Extras / Add-ons</div>
+          <div class="small" style="opacity:.85">
+            Use this for commission, warranty sold, admin fee, delivery or other extra income. These do not change the vehicle invoice price.
+          </div>
+        </div>
+
+        <div class="row" style="margin:0;">
+          <label class="small">Type
+            <select id="ao_type">
+              <option value="Commission">Commission</option>
+              <option value="Warranty">Warranty</option>
+              <option value="Admin Fee">Admin Fee</option>
+              <option value="Delivery">Delivery</option>
+              <option value="Other">Other</option>
+            </select>
+          </label>
+          <label class="small">Description<input id="ao_desc" placeholder="e.g. Warranty sold / finance commission" style="min-width:220px;"></label>
+          <label class="small">Sell Amount £<input id="ao_sell" type="number" placeholder="0" style="min-width:120px;"></label>
+          <label class="small">Cost £<input id="ao_cost" type="number" placeholder="0" style="min-width:120px;"></label>
+          <button id="ao_addLine" class="primary" type="button">Add add-on</button>
+        </div>
+      </div>
+
+      <div id="ao_summary" class="small" style="margin-top:8px;"></div>
+
+      <table class="table" style="margin-top:8px;">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Description</th>
+            <th class="right">Sell</th>
+            <th class="right">Cost</th>
+            <th class="right">Profit</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="ao_body"></tbody>
+      </table>
+    </div>
     
     <label style="min-width:320px">
       Invoice Special Notes (max 2 lines)
@@ -5378,7 +5551,7 @@ function viewSales(){
         <div>
           <div style="font-weight:700;">Funds to Receive (Settlements)</div>
           <div class="small" style="opacity:.85">
-            Track card settlement & finance payouts (multiple lines allowed).
+            Track card settlement, finance payouts and any extra money received such as commission or warranty (multiple lines allowed).
           </div>
         </div>
 
@@ -5390,6 +5563,10 @@ function viewSales(){
               <option value="bank">Bank transfer</option>
               <option value="cash">Cash</option>
               <option value="deposit">Deposit</option>
+              <option value="commission">Commission</option>
+              <option value="warranty">Warranty</option>
+              <option value="admin">Admin / Fee</option>
+              <option value="other">Other</option>
             </select>
           </label>
 
@@ -5604,6 +5781,10 @@ function viewSales(){
     if (t === 'bank') return 'Bank';
     if (t === 'cash') return 'Cash';
     if (t === 'deposit') return 'Deposit';
+    if (t === 'commission') return 'Commission';
+    if (t === 'warranty') return 'Warranty';
+    if (t === 'admin') return 'Admin / Fee';
+    if (t === 'other') return 'Other';
     return t || '';
   }
 
@@ -5731,8 +5912,15 @@ function viewSales(){
     // finance admin fee (not always saved yet while typing) – show it live
     const finFee = Number(wrap.querySelector('#sale_finFee')?.value || 0);
 
-    const gross = salePrice - totalCost;
-    const net   = salePrice - (totalCost + finFee);
+    const addons = addonsFromForm();
+    const addonsSell = addons.reduce((t,x)=>t+Number(x.sellAmount||0),0);
+    const addonsCost = addons.reduce((t,x)=>t+Number(x.costAmount||0),0);
+    const addonProfit = addonsSell - addonsCost;
+
+    const vehicleProfit = salePrice - totalCost;
+    const netVehicleProfit = salePrice - (totalCost + finFee);
+    const totalDealProfit = vehicleProfit + addonProfit;
+    const totalDealProfitAfterFinFee = netVehicleProfit + addonProfit;
 
     const diffVsAd = (advertised>0) ? (salePrice - advertised) : 0; // negative = discount
 
@@ -5741,7 +5929,7 @@ function viewSales(){
         <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
           <div>
             <b>Sale Snapshot (Admin)</b> <span class="badge" style="margin-left:6px">${escapeHtml(reg)}</span><br>
-            <span class="small">Purchase: <b>${fmtMoney(purchase)}</b> &nbsp;|&nbsp; Vehicle Exp: <b>${fmtMoney(vexp)}</b> &nbsp;|&nbsp; Total Cost: <b>${fmtMoney(totalCost)}</b></span>
+            <span class="small">Purchase: <b>${fmtMoney(purchase)}</b> &nbsp;|&nbsp; Vehicle Exp: <b>${fmtMoney(vexp)}</b> &nbsp;|&nbsp; Vehicle Cost: <b>${fmtMoney(totalCost)}</b></span>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button type="button" class="outline small" onclick="openVehicleByReg('${reg}')">Open Vehicle</button>
@@ -5753,12 +5941,18 @@ function viewSales(){
           <div class="small">
             Advertised: <b>${fmtMoney(advertised)}</b><br>
             Sale Price: <b>${fmtMoney(salePrice)}</b><br>
-            Diff: <b>${fmtMoney(diffVsAd)}</b>
+            Diff vs Advert: <b>${fmtMoney(diffVsAd)}</b>
           </div>
           <div class="small">
-            Gross Profit: <b>${fmtMoney(gross)}</b><br>
+            Vehicle Profit: <b>${fmtMoney(vehicleProfit)}</b><br>
+            Add-on Profit: <b>${fmtMoney(addonProfit)}</b><br>
+            Total Deal Profit: <b>${fmtMoney(totalDealProfit)}</b>
+          </div>
+          <div class="small">
+            Add-ons Sell: <b>${fmtMoney(addonsSell)}</b><br>
+            Add-ons Cost: <b>${fmtMoney(addonsCost)}</b><br>
             Finance Admin Fee: <b>${fmtMoney(finFee)}</b><br>
-            Net Profit: <b>${fmtMoney(net)}</b>
+            Deal Profit After Fin Fee: <b>${fmtMoney(totalDealProfitAfterFinFee)}</b>
           </div>
         </div>
       </div>
@@ -5811,6 +6005,57 @@ function viewSales(){
     return isNaN(v) ? 0 : v;
   }
 
+  function ensureAddonsOnSale(s){
+    if(!s) return s;
+    if(!Array.isArray(s.addons)) s.addons = [];
+    return s;
+  }
+  function addonsFromForm(){
+    return wrap._currentAddons || [];
+  }
+  function addonsToForm(arr){
+    wrap._currentAddons = Array.isArray(arr) ? arr : [];
+    renderAddonsTable();
+    try { calcSalePaymentSummary(wrap); } catch(_) {}
+  }
+  function calcAddonsSummary(){
+    const arr = addonsFromForm();
+    const sell = arr.reduce((t,x)=>t+Number(x.sellAmount||0),0);
+    const cost = arr.reduce((t,x)=>t+Number(x.costAmount||0),0);
+    const profit = sell - cost;
+    const el = wrap.querySelector('#ao_summary');
+    if(el){
+      el.innerHTML = `Lines: <b>${arr.length}</b> • Sell: <b>${fmtMoney(sell)}</b> • Cost: <b>${fmtMoney(cost)}</b> • Profit: <b>${fmtMoney(profit)}</b>`;
+    }
+    const at = wrap.querySelector('#sale_addonsTotal');
+    if(at) at.value = (Math.round(sell * 100) / 100);
+  }
+  function renderAddonsTable(){
+    const body = wrap.querySelector('#ao_body');
+    if(!body) return;
+    const arr = addonsFromForm();
+    body.innerHTML = '';
+    arr.forEach((r, idx) => {
+      const tr = document.createElement('tr');
+      const sell = Number(r.sellAmount||0);
+      const cost = Number(r.costAmount||0);
+      tr.innerHTML = `
+        <td>${escapeHtml(r.type||'')}</td>
+        <td>${escapeHtml(r.description||'')}</td>
+        <td class="right">${fmtMoney(sell)}</td>
+        <td class="right">${fmtMoney(cost)}</td>
+        <td class="right">${fmtMoney(sell-cost)}</td>
+        <td>
+          <button data-ao="edit" data-i="${idx}" type="button">Edit</button>
+          <button class="danger" data-ao="del" data-i="${idx}" type="button">Delete</button>
+        </td>
+      `;
+      body.appendChild(tr);
+    });
+    calcAddonsSummary();
+    try { updateSaleCostProfitPreview(); } catch(_) {}
+  }
+
   // calculate payment summary from SALES form
   function calcSalePaymentSummary(wrap){
     const salePrice = _num(wrap, '#sale_price');
@@ -5825,6 +6070,22 @@ function viewSales(){
     const totalPaid = deposit + cash + card + bank + finance + pxAllowance;
     const balanceDue = salePrice - totalPaid;
 
+    const addons = addonsFromForm();
+    const addonsTotal = addons.reduce((t,x)=>t+Number(x.sellAmount||0),0);
+    const addonsCost = addons.reduce((t,x)=>t+Number(x.costAmount||0),0);
+    const addonProfit = addonsTotal - addonsCost;
+    const grandReceived = totalPaid + addonsTotal;
+
+    const reg = String(wrap.querySelector('#sale_reg')?.value || '').trim().toUpperCase();
+    const vehicle = (db.vehicles||[]).find(v => String(v.reg||'').trim().toUpperCase() === reg) || {};
+    const purchase = Number(vehicle.purchase || 0);
+    const vehicleExpenses = (db.vehicleExpenses||[])
+      .filter(e => e.vehicleId === vehicle.id)
+      .reduce((t,e)=>t + Number(e.amount||0), 0);
+    const vehicleCost = purchase + vehicleExpenses;
+    const vehicleProfit = salePrice - vehicleCost;
+    const totalDealProfit = vehicleProfit + addonProfit;
+
     let status = '';
     if(salePrice > 0){
       if(balanceDue <= 0.01) status = 'PAID';
@@ -5836,11 +6097,21 @@ function viewSales(){
     const tp = wrap.querySelector('#sale_totalPaid');
     const bd = wrap.querySelector('#sale_balanceDue');
     const ps = wrap.querySelector('#sale_payStatus');
+    const at = wrap.querySelector('#sale_addonsTotal');
+    const ap = wrap.querySelector('#sale_addonProfit');
+    const vp = wrap.querySelector('#sale_vehicleProfit');
+    const tdp = wrap.querySelector('#sale_totalDealProfit');
+    const gr = wrap.querySelector('#sale_grandReceived');
     if(tp) tp.value = (Math.round(totalPaid * 100) / 100);
     if(bd) bd.value = (Math.round(balanceDue * 100) / 100);
     if(ps) ps.value = status;
+    if(at) at.value = (Math.round(addonsTotal * 100) / 100);
+    if(ap) ap.value = (Math.round(addonProfit * 100) / 100);
+    if(vp) vp.value = (Math.round(vehicleProfit * 100) / 100);
+    if(tdp) tdp.value = (Math.round(totalDealProfit * 100) / 100);
+    if(gr) gr.value = (Math.round(grandReceived * 100) / 100);
 
-    return { totalPaid, balanceDue, status };
+    return { totalPaid, balanceDue, status, addonsTotal, addonsCost, addonProfit, vehicleProfit, totalDealProfit, grandReceived };
   }
 
   // hook inputs (safe)
@@ -5854,6 +6125,61 @@ function viewSales(){
   }
 
   hookSalePaymentSummary(wrap);
+
+  // ===== Add-ons / Extras =====
+  const aoAddBtn = wrap.querySelector('#ao_addLine');
+  if(aoAddBtn){
+    aoAddBtn.onclick = () => {
+      const type = wrap.querySelector('#ao_type')?.value || 'Other';
+      const description = (wrap.querySelector('#ao_desc')?.value || '').trim();
+      const sellAmount = Number(wrap.querySelector('#ao_sell')?.value || 0);
+      const costAmount = Number(wrap.querySelector('#ao_cost')?.value || 0);
+      if(sellAmount <= 0) return alert('Enter Sell Amount > 0');
+      const editIdx = Number(aoAddBtn.dataset.editIdx || -1);
+      const arr = addonsFromForm();
+      const row = { type, description, sellAmount: Math.round(sellAmount*100)/100, costAmount: Math.round(costAmount*100)/100 };
+      if(editIdx >= 0 && arr[editIdx]){
+        arr[editIdx] = row;
+      } else {
+        arr.push(row);
+      }
+      wrap.querySelector('#ao_type').value = 'Commission';
+      wrap.querySelector('#ao_desc').value = '';
+      wrap.querySelector('#ao_sell').value = '';
+      wrap.querySelector('#ao_cost').value = '';
+      aoAddBtn.dataset.editIdx = '';
+      aoAddBtn.textContent = 'Add add-on';
+      renderAddonsTable();
+      calcSalePaymentSummary(wrap);
+    };
+  }
+  wrap.querySelector('#ao_body')?.addEventListener('click', (e)=>{
+    const b = e.target.closest('button[data-ao]');
+    if(!b) return;
+    const idx = Number(b.dataset.i);
+    const arr = addonsFromForm();
+    const row = arr[idx];
+    if(!row) return;
+    if(b.dataset.ao === 'del'){
+      if(!confirm('Delete this add-on line?')) return;
+      arr.splice(idx,1);
+      renderAddonsTable();
+      calcSalePaymentSummary(wrap);
+      return;
+    }
+    if(b.dataset.ao === 'edit'){
+      wrap.querySelector('#ao_type').value = row.type || 'Other';
+      wrap.querySelector('#ao_desc').value = row.description || '';
+      wrap.querySelector('#ao_sell').value = Number(row.sellAmount||0) || '';
+      wrap.querySelector('#ao_cost').value = Number(row.costAmount||0) || '';
+      const btn = wrap.querySelector('#ao_addLine');
+      if(btn){
+        btn.dataset.editIdx = String(idx);
+        btn.textContent = 'Update add-on';
+      }
+    }
+  });
+  addonsToForm([]);
 
   function buildAutoReceiptsFromSale(s){
     const out = [];
@@ -5918,6 +6244,10 @@ function viewSales(){
     if(t==='bank') return 'Bank transfer';
     if(t==='cash') return 'Cash';
     if(t==='deposit') return 'Deposit';
+    if(t==='commission') return 'Commission';
+    if(t==='warranty') return 'Warranty';
+    if(t==='admin') return 'Admin / Fee';
+    if(t==='other') return 'Other';
     return t || '';
   }
   function calcReceiptsSummary(){
@@ -6077,7 +6407,8 @@ function viewSales(){
       '#sale_pxModel', '#sale_finCoList', '#sale_agree', '#sale_deliver',
       '#sale_keys', '#sale_mot', '#sale_sh', '#sale_invNo', '#sale_warrantyType',
       '#sale_warrantyProvider', '#sale_warrantyMonths', '#sale_warrantyPolicy',
-      '#sale_finFee', '#sale_finPayoutAmount', '#sale_finPayoutDate', '#sale_finPayout'
+      '#sale_finFee', '#sale_finPayoutAmount', '#sale_finPayoutDate', '#sale_finPayout',
+      '#ao_desc', '#ao_sell', '#ao_cost'
     ];
 
     // Reset collapsible toggles + hide sections
@@ -6118,6 +6449,7 @@ function viewSales(){
     editId = null;
 
     receiptsToForm([]);
+    addonsToForm([]);
   }
   
   function rows(){ 
@@ -6137,13 +6469,20 @@ function viewSales(){
           .filter(e => e.vehicleId === s.vehicleId)
           .reduce((t,x) => t + Number(x.amount||0), 0);
 
-        const totalCost = (s.vehicleTotalCostAtSale != null && s.vehicleTotalCostAtSale !== '')
+        const vehicleCost = (s.vehicleTotalCostAtSale != null && s.vehicleTotalCostAtSale !== '')
           ? Number(s.vehicleTotalCostAtSale || 0)
           : (Number(v.purchase||0) + vexp);
+        const addons = Array.isArray(s.addons) ? s.addons : [];
+        const addonsSell = addons.reduce((t,x)=>t + Number(x.sellAmount||0), 0);
+        const addonsCost = addons.reduce((t,x)=>t + Number(x.costAmount||0), 0);
+        const totalCost = vehicleCost + addonsCost;
 
-        const profit = Number(s.salePrice||0) - totalCost; 
+        const profit = Number(s.salePrice||0) + addonsSell - totalCost; 
 
-        const br = `£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
+        let br = `£${Number(s.deposit||0).toFixed(2)} dep, £${Number(s.cash||0).toFixed(2)} cash, £${Number(s.card||0).toFixed(2)} card, £${Number(s.bank||0).toFixed(2)} bank, £${Number(s.finance||0).toFixed(2)} finance, PX £${Number(s.pxAllowance||0).toFixed(2)}`;
+        if(addonsSell > 0 || addonsCost > 0){
+          br += `<br><small style="color:#9fd3ff;">Add-ons: ${fmtMoney(addonsSell)} sell / ${fmtMoney(addonsCost)} cost / ${fmtMoney(addonsSell-addonsCost)} profit</small>`;
+        }
         const partexVehicle = (db.vehicles||[]).find(vv => vv.originalSaleId === s.id);
         const partexInfo = partexVehicle
           ? `<br><small style="color:#53a8ff;">PX: ${partexVehicle.reg} (in stock)</small>`
@@ -6681,6 +7020,8 @@ function viewSales(){
 
       ensureReceiptsOnSale(s);
       receiptsToForm(s.receipts);
+      ensureAddonsOnSale(s);
+      addonsToForm(s.addons);
 
       updateWarn();
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
@@ -6793,6 +7134,10 @@ function viewSales(){
     invNo: invNoValue || (Date.now() + '').slice(-6),
     status: saleStatus,
     receipts: receiptsFromForm(),
+    addons: addonsFromForm(),
+    addonsTotal: addonsFromForm().reduce((t,x)=>t+Number(x.sellAmount||0),0),
+    addonsCostTotal: addonsFromForm().reduce((t,x)=>t+Number(x.costAmount||0),0),
+    grandReceivedTotal: (Number(wrap.querySelector('#sale_totalPaid')?.value || 0) + addonsFromForm().reduce((t,x)=>t+Number(x.sellAmount||0),0)),
     warrantyType: (wrap.querySelector('#sale_warrantyType')?.value || ''),
     warrantyProvider: (wrap.querySelector('#sale_warrantyProvider')?.value || '').trim(),
     warrantyMonths: Number((wrap.querySelector('#sale_warrantyMonths')?.value || 0)),
@@ -8875,6 +9220,11 @@ function viewReports(){
       <div class="tSub">Finance Sales + Accounts reports</div>
       <div class="tMeta">Companies • Payout • Admin</div>
     </div>
+    <div class="reportTile" data-jump="#rep_addons">
+      <div class="tTitle">Add-ons</div>
+      <div class="tSub">Warranty, commission and extras income</div>
+      <div class="tMeta">Totals • Profit • From who</div>
+    </div>
     <div class="reportTile" data-jump="#rep_stock">
       <div class="tTitle">Stock & Prep</div>
       <div class="tSub">Stock days, not ready, month-end list</div>
@@ -9109,6 +9459,44 @@ function viewReports(){
       <details open style="margin-top:10px">
         <summary>Cars needing finance details set</summary>
         <div id="rf_missing" style="margin-top:10px"></div>
+      </details>
+
+    </details>
+  </div>
+
+  <div class="reportCard" id="rep_addons">
+    <details>
+      <summary class="repSum">Add-ons Income (Warranty / Commission / Extras)</summary>
+
+      <div class="row" style="margin-top:10px">
+        <label style="min-width:220px">
+          <span class="small">Month</span>
+          <input id="ra_month" type="month" value="${new Date().toISOString().slice(0,7)}">
+        </label>
+        <button id="ra_run" class="primary">Run</button>
+        <button id="ra_export">Export CSV</button>
+      </div>
+
+      <div id="ra_summary" class="small" style="margin-top:10px"></div>
+
+      <details open style="margin-top:10px">
+        <summary>Totals by add-on type</summary>
+        <div id="ra_type" style="margin-top:10px"></div>
+      </details>
+
+      <details open style="margin-top:10px">
+        <summary>Detailed lines (shows who it came from)</summary>
+        <div id="ra_lines" style="margin-top:10px"></div>
+      </details>
+
+      <details style="margin-top:10px">
+        <summary>Customer totals</summary>
+        <div id="ra_customer" style="margin-top:10px"></div>
+      </details>
+
+      <details style="margin-top:10px">
+        <summary>Salesperson totals</summary>
+        <div id="ra_user" style="margin-top:10px"></div>
       </details>
 
     </details>
@@ -9527,6 +9915,203 @@ function viewReports(){
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
         a.download = `finance_accounts_${res.monthKey}.csv`;
+        a.click();
+      };
+    }
+  })();
+
+  // ===== Add-ons Income report =====
+  (function(){
+    if(wrap.__ra_wired) return;
+    wrap.__ra_wired = true;
+
+    function getAddonSaleUser(saleId){
+      const id = String(saleId ?? '');
+      const sale = (db.sales || []).find(s => String(s?.id ?? '') === id) || {};
+      const audit = (db.audit || []);
+      const actionsAdd = new Set(['add','create','new','sale_add']);
+      const actionsUpd = new Set(['update','edit','sale_update']);
+      let a = audit.find(x =>
+        String(x?.entity ?? '').toLowerCase() === 'sale' &&
+        String(x?.entityId ?? x?.id ?? '') === id &&
+        actionsAdd.has(String(x?.action ?? '').toLowerCase()) &&
+        String(x?.user ?? '').trim()
+      );
+      if(!a){
+        a = audit.find(x =>
+          String(x?.entity ?? '').toLowerCase() === 'sale' &&
+          String(x?.entityId ?? x?.id ?? '') === id &&
+          actionsUpd.has(String(x?.action ?? '').toLowerCase()) &&
+          String(x?.user ?? '').trim()
+        );
+      }
+      return (
+        (a && String(a.user || '').trim()) ||
+        String(sale.soldBy || '').trim() ||
+        String(sale.salesperson || '').trim() ||
+        String(sale.salesPerson || '').trim() ||
+        String(sale.createdBy || '').trim() ||
+        String(sale.user || '').trim() ||
+        'UNKNOWN'
+      );
+    }
+
+    function buildAddonIncomeReport(monthKey){
+      const lines = [];
+      (db.sales || []).forEach(s => {
+        if(!isRealSale(s)) return;
+        if((String(s.date || '').slice(0,7)) !== monthKey) return;
+        const addons = Array.isArray(s.addons) ? s.addons : [];
+        if(!addons.length) return;
+        const v = (db.vehicles || []).find(x => String(x?.id ?? '') === String(s?.vehicleId ?? '')) || {};
+        const user = getAddonSaleUser(s.id);
+        addons.forEach((a, idx) => {
+          const type = String(a.type || 'Other').trim() || 'Other';
+          const sell = Number(a.sellAmount || 0);
+          const cost = Number(a.costAmount || 0);
+          lines.push({
+            saleId: s.id || '',
+            lineNo: idx + 1,
+            date: s.date || '',
+            invNo: s.invNo || '',
+            reg: v.reg || '',
+            make: v.make || '',
+            model: v.model || '',
+            customer: s.buyer || s.customerName || s.name || '',
+            salesperson: user,
+            type,
+            description: a.description || '',
+            sell,
+            cost,
+            profit: sell - cost
+          });
+        });
+      });
+
+      const byType = {};
+      const byCustomer = {};
+      const byUser = {};
+      lines.forEach(r => {
+        const tk = r.type || 'Other';
+        if(!byType[tk]) byType[tk] = { type: tk, lines: 0, sell: 0, cost: 0, profit: 0 };
+        byType[tk].lines += 1;
+        byType[tk].sell += r.sell;
+        byType[tk].cost += r.cost;
+        byType[tk].profit += r.profit;
+
+        const ck = (r.customer || 'UNKNOWN CUSTOMER').trim() || 'UNKNOWN CUSTOMER';
+        if(!byCustomer[ck]) byCustomer[ck] = { customer: ck, lines: 0, sell: 0, cost: 0, profit: 0 };
+        byCustomer[ck].lines += 1;
+        byCustomer[ck].sell += r.sell;
+        byCustomer[ck].cost += r.cost;
+        byCustomer[ck].profit += r.profit;
+
+        const uk = (r.salesperson || 'UNKNOWN').trim() || 'UNKNOWN';
+        if(!byUser[uk]) byUser[uk] = { user: uk, lines: 0, sell: 0, cost: 0, profit: 0 };
+        byUser[uk].lines += 1;
+        byUser[uk].sell += r.sell;
+        byUser[uk].cost += r.cost;
+        byUser[uk].profit += r.profit;
+      });
+
+      return {
+        monthKey,
+        lines: lines.sort((a,b)=> (a.date+a.invNo+a.reg).localeCompare(b.date+b.invNo+b.reg)),
+        types: Object.values(byType).sort((a,b)=> b.sell - a.sell),
+        customers: Object.values(byCustomer).sort((a,b)=> b.sell - a.sell),
+        users: Object.values(byUser).sort((a,b)=> b.sell - a.sell),
+        totals: {
+          lines: lines.length,
+          sell: lines.reduce((t,x)=>t + x.sell, 0),
+          cost: lines.reduce((t,x)=>t + x.cost, 0),
+          profit: lines.reduce((t,x)=>t + x.profit, 0),
+          commissionSell: lines.filter(x=> String(x.type).toLowerCase() === 'commission').reduce((t,x)=>t+x.sell,0),
+          warrantySell: lines.filter(x=> String(x.type).toLowerCase() === 'warranty').reduce((t,x)=>t+x.sell,0),
+          commissionProfit: lines.filter(x=> String(x.type).toLowerCase() === 'commission').reduce((t,x)=>t+x.profit,0),
+          warrantyProfit: lines.filter(x=> String(x.type).toLowerCase() === 'warranty').reduce((t,x)=>t+x.profit,0)
+        }
+      };
+    }
+
+    function raTable(headers, rows){
+      if(!rows.length) return '<div class="small">No add-ons found for this month.</div>';
+      return renderSimpleTable(headers, rows);
+    }
+
+    function renderAddonIncome(monthKey){
+      const res = buildAddonIncomeReport(monthKey);
+      const sumEl = wrap.querySelector('#ra_summary');
+      if(sumEl){
+        sumEl.innerHTML = `Month: <b>${res.monthKey}</b> • Lines: <b>${res.totals.lines}</b> • Add-on income: <b>${fmtMoney(res.totals.sell)}</b> • Add-on cost: <b>${fmtMoney(res.totals.cost)}</b> • Add-on profit: <b>${fmtMoney(res.totals.profit)}</b> • Commission income: <b>${fmtMoney(res.totals.commissionSell)}</b> • Commission profit: <b>${fmtMoney(res.totals.commissionProfit)}</b> • Warranty income: <b>${fmtMoney(res.totals.warrantySell)}</b> • Warranty profit: <b>${fmtMoney(res.totals.warrantyProfit)}</b>`;
+      }
+      const typeEl = wrap.querySelector('#ra_type');
+      if(typeEl){
+        typeEl.innerHTML = raTable(
+          ['Type','Lines','Income','Cost','Profit'],
+          res.types.map(r => [r.type, r.lines, fmtMoney(r.sell), fmtMoney(r.cost), fmtMoney(r.profit)])
+        );
+      }
+      const linesEl = wrap.querySelector('#ra_lines');
+      if(linesEl){
+        linesEl.innerHTML = raTable(
+          ['Date','Invoice','Reg','Make','Model','Customer','Salesperson','Type','Description','Income','Cost','Profit'],
+          res.lines.map(r => [r.date, r.invNo, r.reg, r.make, r.model, r.customer, r.salesperson, r.type, r.description, fmtMoney(r.sell), fmtMoney(r.cost), fmtMoney(r.profit)])
+        );
+      }
+      const custEl = wrap.querySelector('#ra_customer');
+      if(custEl){
+        custEl.innerHTML = raTable(
+          ['Customer','Lines','Income','Cost','Profit'],
+          res.customers.map(r => [r.customer, r.lines, fmtMoney(r.sell), fmtMoney(r.cost), fmtMoney(r.profit)])
+        );
+      }
+      const userEl = wrap.querySelector('#ra_user');
+      if(userEl){
+        userEl.innerHTML = raTable(
+          ['Salesperson','Lines','Income','Cost','Profit'],
+          res.users.map(r => [r.user, r.lines, fmtMoney(r.sell), fmtMoney(r.cost), fmtMoney(r.profit)])
+        );
+      }
+      wrap.__ra_last = res;
+      return res;
+    }
+
+    const raRunBtn = wrap.querySelector('#ra_run');
+    if(raRunBtn){
+      raRunBtn.onclick = ()=>{
+        const m = (wrap.querySelector('#ra_month')?.value || '').slice(0,7);
+        if(!m) return alert('Please select a month');
+        renderAddonIncome(m);
+      };
+    }
+
+    const raExportBtn = wrap.querySelector('#ra_export');
+    if(raExportBtn){
+      raExportBtn.onclick = ()=>{
+        const m = (wrap.querySelector('#ra_month')?.value || '').slice(0,7);
+        if(!m) return alert('Please select a month');
+        const res = wrap.__ra_last && wrap.__ra_last.monthKey === m ? wrap.__ra_last : renderAddonIncome(m);
+        const rows = [
+          ['ADD-ON TYPE TOTALS'],
+          ['Month','Type','Lines','Income','Cost','Profit'],
+          ...res.types.map(r => [res.monthKey, r.type, r.lines, r.sell, r.cost, r.profit]),
+          [],
+          ['ADD-ON DETAIL LINES'],
+          ['Date','Invoice','Reg','Make','Model','Customer','Salesperson','Type','Description','Income','Cost','Profit'],
+          ...res.lines.map(r => [r.date, r.invNo, r.reg, r.make, r.model, r.customer, r.salesperson, r.type, r.description, r.sell, r.cost, r.profit]),
+          [],
+          ['CUSTOMER TOTALS'],
+          ['Customer','Lines','Income','Cost','Profit'],
+          ...res.customers.map(r => [r.customer, r.lines, r.sell, r.cost, r.profit]),
+          [],
+          ['SALESPERSON TOTALS'],
+          ['Salesperson','Lines','Income','Cost','Profit'],
+          ...res.users.map(r => [r.user, r.lines, r.sell, r.cost, r.profit])
+        ];
+        const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g,'""')}"`).join(',')).join('\n');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+        a.download = `addons_income_${res.monthKey}.csv`;
         a.click();
       };
     }
