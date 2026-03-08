@@ -7341,8 +7341,22 @@ try {
     }
   }
   
+  try{
+    const prevMonthKey = String((prevSale && prevSale.date) || '').slice(0,7);
+    const newMonthKey = String(s.date || '').slice(0,7);
+    if (prevMonthKey) markMonthCloseDirty(prevMonthKey);
+    if (newMonthKey) markMonthCloseDirty(newMonthKey);
+  } catch(_) {}
+
   saveDB(); 
   try{renderAlertBell();}catch(e){}; 
+  try{
+    const prevMonthKey = String((prevSale && prevSale.date) || '').slice(0,7);
+    const newMonthKey = String(s.date || '').slice(0,7);
+    if (prevMonthKey) notifyMonthCloseChanged(prevMonthKey, 'sale-save');
+    if (newMonthKey && newMonthKey !== prevMonthKey) notifyMonthCloseChanged(newMonthKey, 'sale-save');
+    if (newMonthKey && !prevMonthKey) notifyMonthCloseChanged(newMonthKey, 'sale-save');
+  } catch(_) {}
   rows(); 
   clearSaleForm();
 };
@@ -11544,10 +11558,26 @@ function viewReports(){
   function calcMonthClose(k){
     const showroomMonthTotal = (db.showroomExpenses||[]).filter(e=>ymStr(e.date)===k).reduce((t,e)=>t+Number(e.amount||0),0);
     const sold=(db.sales||[]).filter(s=>ymStr(s.date)===k && isRealSale(s));
+
     const items=sold.map(s=>{
       const v=db.vehicles.find(x=>x.id===s.vehicleId)||{};
-      const vexp=(db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,x)=>t+Number(x.amount||0),0);
-      const gross = Number(s.salePrice || 0) - Number(v.purchase || 0) - vexp;
+
+      const liveVehicleExp=(db.vehicleExpenses||[])
+        .filter(e=>e.vehicleId===s.vehicleId)
+        .reduce((t,x)=>t+Number(x.amount||0),0);
+
+      const frozenVehicleCost = Number(s.vehicleTotalCostAtSale);
+      const vehicleCost = Number.isFinite(frozenVehicleCost) && frozenVehicleCost > 0
+        ? frozenVehicleCost
+        : (Number(v.purchase||0) + liveVehicleExp);
+
+      const addons = Array.isArray(s.addons) ? s.addons : [];
+      const addonsSell = addons.reduce((t,x)=>t+Number((x&&x.sellAmount)||0),0);
+      const addonsCost = addons.reduce((t,x)=>t+Number((x&&x.costAmount)||0),0);
+      const addonProfit = addonsSell - addonsCost;
+
+      const vehicleProfit = Number(s.salePrice || 0) - vehicleCost;
+      const gross = vehicleProfit + addonProfit;
       const isInvestor = (v.ownerType === 'investor' && v.investor);
 
       // Mgmt fees only if car made a profit
@@ -11559,28 +11589,37 @@ function viewReports(){
       let afterInvestor = gross;
 
       if (isInvestor && gross > 0) {
-        // Step 1: subtract £175 (mgmtFlat) and 20% of remaining (mgmtPct)
         const baseAfterFees = Math.max(0, gross - mgmtFlat - mgmtPct);
-
-        // Step 2: investor gets 30% of the remaining
         investorShare = 0.30 * baseAfterFees;
-
-        // Step 3: remainder from this car for directors pot (before showroom / post-expenses)
         afterInvestor = Math.max(0, baseAfterFees - investorShare);
       } else {
-        // Dealer-owned car: all gross goes to directors pot (before showroom / post-expenses)
         afterInvestor = gross;
       }
 
-      return { s, v, gross, mgmtFlat, mgmtPct, investorShare, afterInvestor, isInvestor, investorName: v.investor || '' };
+      return {
+        s, v,
+        vehicleCost,
+        vehicleProfit,
+        addonsSell,
+        addonsCost,
+        addonProfit,
+        gross,
+        mgmtFlat,
+        mgmtPct,
+        investorShare,
+        afterInvestor,
+        isInvestor,
+        investorName: v.investor || ''
+      };
     });
 
+    const totalVehicleProfit=items.reduce((t,x)=>t+x.vehicleProfit,0);
+    const totalAddonProfit=items.reduce((t,x)=>t+x.addonProfit,0);
     const totalGross=items.reduce((t,x)=>t+x.gross,0);
     const totalFlat=items.reduce((t,x)=>t+x.mgmtFlat,0);
     const totalPct=items.reduce((t,x)=>t+x.mgmtPct,0);
     const totalInvestor=items.reduce((t,x)=>t+x.investorShare,0);
 
-    // Post-sale expenses this month for vehicles sold earlier
     const postExp = (db.vehicleExpenses||[]).filter(e=>ymStr(e.date)===k).map(e=>{
       const v=db.vehicles.find(x=>x.id===e.vehicleId);
       if(!v) return null;
@@ -11594,7 +11633,6 @@ function viewReports(){
     const remainderBeforeShowroom = items.reduce((t,x)=>t+x.afterInvestor,0) - postExpTotal;
     const remainder = remainderBeforeShowroom - showroomMonthTotal;
 
-    // ✅ count directors properly (unique non-empty names)
     const norm = s => String(s||'').trim().toLowerCase();
     const directorsUnique = (db.partners||[])
       .filter(p => norm(p && p.name))
@@ -11604,7 +11642,7 @@ function viewReports(){
     const directorEach = remainder / directorCount;
 
     return {
-      items,totalGross,totalFlat,totalPct,totalInvestor,
+      items,totalVehicleProfit,totalAddonProfit,totalGross,totalFlat,totalPct,totalInvestor,
       remainder,directorEach,directorCount,
       directorHalf: directorEach,
       postExp,postExpTotal,showroomMonthTotal,remainderBeforeShowroom
@@ -11635,8 +11673,11 @@ function viewReports(){
     const k=(wrap.querySelector('#mc_month').value||'').slice(0,7);
     const c=calcMonthClose(k);
     const box=wrap.querySelector('#mc_box');
+    box.dataset.previewMonth = k;
     box.innerHTML = '<b>Month:</b> '+k+'<br>'
-      + 'Gross profit on sold vehicles: '+fmtMoney(c.totalGross)+'<br>'
+      + 'Vehicle profit: '+fmtMoney(c.totalVehicleProfit)+'<br>'
+      + 'Add-on profit (warranty / commission / extras): '+fmtMoney(c.totalAddonProfit)+'<br>'
+      + 'Gross profit on sold vehicles incl add-ons: '+fmtMoney(c.totalGross)+'<br>'
       + 'Showroom mgmt (flat £175 each investor car): '+fmtMoney(c.totalFlat)+'<br>'
       + 'Showroom mgmt (20% each investor car): '+fmtMoney(c.totalPct)+'<br>'
       + 'Investor 30% total: '+fmtMoney(c.totalInvestor)+'<br>'
@@ -11646,7 +11687,9 @@ function viewReports(){
       + '<div class="card small" style="margin:8px 0;padding:8px">'
       + '<b>Breakdown</b><br>'
       + '<div class="tableWrap"><table class="table"><tbody>'
-      + '<tr><td>Gross profit on sold vehicles</td><td class="right">'+fmtMoney(c.totalGross)+'</td></tr>'
+      + '<tr><td>Vehicle profit</td><td class="right">'+fmtMoney(c.totalVehicleProfit)+'</td></tr>'
+      + '<tr><td>Add-on profit</td><td class="right">'+fmtMoney(c.totalAddonProfit)+'</td></tr>'
+      + '<tr><td><b>Gross profit on sold vehicles incl add-ons</b></td><td class="right"><b>'+fmtMoney(c.totalGross)+'</b></td></tr>'
       + '<tr><td>Mgmt flat (£175) — investor cars</td><td class="right">'+fmtMoney(c.totalFlat)+'</td></tr>'
       + '<tr><td>Mgmt 20% — investor cars</td><td class="right">'+fmtMoney(c.totalPct)+'</td></tr>'
       + '<tr><td>Investor 30% total</td><td class="right">'+fmtMoney(c.totalInvestor)+'</td></tr>'
@@ -11657,13 +11700,14 @@ function viewReports(){
       + '<tr><td><b>Directors share (each)</b></td><td class="right"><b>'+fmtMoney(c.directorHalf)+'</b></td></tr>'
       + '</tbody></table></div>'
       + '</div>'
-      + '<div class="tableWrap"><table class="table"><thead><tr><th>Date</th><th>Reg</th><th>Investor</th><th>Gross</th><th>£175</th><th>20%</th><th>Investor 30%</th><th>Remainder</th></tr></thead><tbody>'
-      + c.items.map(x=>`<tr><td>${ddmmyyyy(x.s.date)}</td><td>${x.v.reg||''}</td><td>${x.investorName}</td><td class="right">${fmtMoney(x.gross)}</td><td class="right">${fmtMoney(x.mgmtFlat)}</td><td class="right">${fmtMoney(x.mgmtPct)}</td><td class="right">${fmtMoney(x.investorShare)}</td><td class="right">${fmtMoney(x.afterInvestor)}</td></tr>`).join('')
+      + '<div class="tableWrap"><table class="table"><thead><tr><th>Date</th><th>Reg</th><th>Investor</th><th>Vehicle Profit</th><th>Add-on Profit</th><th>Total Gross</th><th>£175</th><th>20%</th><th>Investor 30%</th><th>Remainder</th></tr></thead><tbody>'
+      + c.items.map(x=>`<tr><td>${ddmmyyyy(x.s.date)}</td><td>${x.v.reg||''}</td><td>${x.investorName}</td><td class="right">${fmtMoney(x.vehicleProfit)}</td><td class="right">${fmtMoney(x.addonProfit)}</td><td class="right">${fmtMoney(x.gross)}</td><td class="right">${fmtMoney(x.mgmtFlat)}</td><td class="right">${fmtMoney(x.mgmtPct)}</td><td class="right">${fmtMoney(x.investorShare)}</td><td class="right">${fmtMoney(x.afterInvestor)}</td></tr>`).join('')
       + '</tbody></table></div>'
       + (c.postExp.length ? ('<br><div class="small"><b>Post-sale expenses this month:</b><ul>'
           + c.postExp.map(pe=>`<li>${ddmmyyyy(pe.e.date)} — ${pe.v.reg||''} — ${pe.e.type||''}: ${fmtMoney(pe.amount)}</li>`).join('')
           + '</ul></div>') : '');
-    const warn=wrap.querySelector('#mc_warn'); warn.textContent = alreadyPosted(k) ? ('Already posted for '+k+' — new posting will replace the previous one.') : '';}
+    const warn=wrap.querySelector('#mc_warn'); warn.textContent = alreadyPosted(k) ? ('Already posted for '+k+' — new posting will replace the previous one.') : '';
+  }
   function postClose(){
     const k=(wrap.querySelector('#mc_month').value||'').slice(0,7); if(!k) return alert('Pick a month');
     if(alreadyPosted(k)) { if(!confirm('This month was already posted. Recalculate and re-post?')) return; purgeMonthClose(k); }
@@ -11740,8 +11784,42 @@ function viewReports(){
     return !!(db._monthCloseDirty && db._monthCloseDirty[k] && db._monthCloseDirty[k].dirty);
   }
 
+function notifyMonthCloseChanged(monthKey, reason){
+  const k = (monthKey || '').slice(0,7);
+  if(!k) return;
+  try{
+    document.dispatchEvent(new CustomEvent('starcars:monthclose-changed', {
+      detail: { monthKey: k, reason: reason || 'data-change', ts: new Date().toISOString() }
+    }));
+  }catch(_){ }
+}
+
   wrap.querySelector('#mc_prev').onclick=previewClose;
   wrap.querySelector('#mc_post').onclick=postClose;
+
+  if(!window.__monthCloseLiveRefreshBound){
+    window.__monthCloseLiveRefreshBound = true;
+    document.addEventListener('starcars:monthclose-changed', function(ev){
+      try{
+        if(currentTab !== 'Reports') return;
+        const box = document.querySelector('#mc_box');
+        const monthEl = document.querySelector('#mc_month');
+        if(!box || !monthEl || !box.innerHTML.trim()) return;
+        const currentMonth = String(monthEl.value || '').slice(0,7);
+        const changedMonth = String(ev && ev.detail && ev.detail.monthKey || '').slice(0,7);
+        if(changedMonth && currentMonth && changedMonth !== currentMonth) return;
+        if(typeof previewClose === 'function') previewClose();
+      }catch(_){ }
+    });
+    document.addEventListener('starcars:dataChanged', function(){
+      try{
+        if(currentTab !== 'Reports') return;
+        const box = document.querySelector('#mc_box');
+        if(!box || !box.innerHTML.trim()) return;
+        if(typeof previewClose === 'function') previewClose();
+      }catch(_){ }
+    });
+  }
 
   
   wrap.querySelector('#mc_export').onclick=()=>{
@@ -11750,7 +11828,7 @@ function viewReports(){
     const html = '<html><head><meta charset=\"utf-8\"><title>Month Close '+k+'</title>'+
       '<style>body{font:14px system-ui;padding:20px} .right{text-align:right} table{width:100%;border-collapse:collapse} th,td{border:1px solid #ccc;padding:6px}</style></head><body>'+
       '<h2>Month Close '+k+'</h2>'+
-      '<p><b>Gross:</b> '+fmtMoney(c.totalGross)+'<br>'+
+      '<p><b>Vehicle profit:</b> '+fmtMoney(c.totalVehicleProfit)+'<br>'+'<b>Add-on profit:</b> '+fmtMoney(c.totalAddonProfit)+'<br>'+'<b>Gross incl add-ons:</b> '+fmtMoney(c.totalGross)+'<br>'+
       'Mgmt flat (£175): '+fmtMoney(c.totalFlat)+'<br>'+
       'Mgmt 20%: '+fmtMoney(c.totalPct)+'<br>'+
       'Investor 30% total: '+fmtMoney(c.totalInvestor)+'<br>'+
