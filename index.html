@@ -11853,20 +11853,39 @@ function notifyMonthCloseChanged(monthKey, reason){
     const k=(wrap.querySelector('#mc_month').value||'').slice(0,7); if(!k) return alert('Pick a month');
     const c=calcMonthClose(k);
     const html = '<html><head><meta charset="utf-8"><title>Month Close '+k+'</title>'+
-      '<style>body{font:14px system-ui;padding:20px} .right{text-align:right} table{width:100%;border-collapse:collapse} th,td{border:1px solid #ccc;padding:6px}</style></head><body>'+
+      '<style>body{font:14px system-ui;padding:20px} .right{text-align:right} table{width:100%;border-collapse:collapse;margin-top:8px} th,td{border:1px solid #ccc;padding:6px} .section{margin:12px 0} ul{margin-top:6px}</style></head><body>'+
       '<h2>Month Close '+k+'</h2>'+
-      '<p><b>Vehicle profit:</b> '+fmtMoney(c.totalVehicleProfit)+'<br>'+'<b>Add-on profit:</b> '+fmtMoney(c.totalAddonProfit)+'<br>'+'<b>Gross incl add-ons:</b> '+fmtMoney(c.totalGross)+'<br>'+
-      'Mgmt flat (£175): '+fmtMoney(c.totalFlat)+'<br>'+
-      'Mgmt 20%: '+fmtMoney(c.totalPct)+'<br>'+
-      'Investor 30% total: '+fmtMoney(c.totalInvestor)+'<br>'+
-      'Post-sale expenses: '+fmtMoney(c.postExpTotal)+'<br>'+
-      '<b>Remainder before showroom:</b> '+fmtMoney(c.remainderBeforeShowroom)+'<br>'+
-      'Showroom (net): '+fmtMoney(c.showroomMonthTotal)+'<br>'+
-      '<b>Remainder after showroom:</b> '+fmtMoney(c.remainder)+'<br>'+
+      '<p><b>Vehicle profit:</b> '+fmtMoney(c.totalVehicleProfit)+'<br>' +
+      '<b>Add-on profit:</b> '+fmtMoney(c.totalAddonProfit)+'<br>' +
+      '<b>Gross incl add-ons:</b> '+fmtMoney(c.totalGross)+'<br>' +
+      'Mgmt flat (£175): '+fmtMoney(c.totalFlat)+'<br>' +
+      'Mgmt 20%: '+fmtMoney(c.totalPct)+'<br>' +
+      'Investor 30% total: '+fmtMoney(c.totalInvestor)+'<br>' +
+      'Post-sale expenses: '+fmtMoney(c.postExpTotal)+'<br>' +
+      '<b>Remainder before showroom:</b> '+fmtMoney(c.remainderBeforeShowroom)+'<br>' +
+      'Showroom (net): '+fmtMoney(c.showroomMonthTotal)+'<br>' +
+      '<b>Remainder after showroom:</b> '+fmtMoney(c.remainder)+'<br>' +
       '<b>Directors share (each):</b> '+fmtMoney(c.directorHalf)+'</p>'+
-      '<table><thead><tr><th>Date</th><th>Reg</th><th>Investor</th><th class="right">Gross</th><th class="right">£175</th><th class="right">20%</th><th class="right">Inv 30%</th><th class="right">Remainder</th></tr></thead><tbody>'+
-      c.items.map(x=>'<tr><td>'+ddmmyyyy(x.s.date)+'</td><td>'+(x.v.reg||'')+'</td><td>'+(x.investorName||'')+'</td><td class="right">'+fmtMoney(x.gross)+'</td><td class="right">'+fmtMoney(x.mgmtFlat)+'</td><td class="right">'+fmtMoney(x.mgmtPct)+'</td><td class="right">'+fmtMoney(x.investorShare)+'</td><td class="right">'+fmtMoney(x.afterInvestor)+'</td></tr>').join('')+
+      '<div class="section"><b>Breakdown</b>'+
+      '<table><tbody>'+
+      '<tr><td>Vehicle profit</td><td class="right">'+fmtMoney(c.totalVehicleProfit)+'</td></tr>'+
+      '<tr><td>Add-on profit</td><td class="right">'+fmtMoney(c.totalAddonProfit)+'</td></tr>'+
+      '<tr><td><b>Gross profit on sold vehicles incl add-ons</b></td><td class="right"><b>'+fmtMoney(c.totalGross)+'</b></td></tr>'+
+      '<tr><td>Mgmt flat (£175) — investor cars</td><td class="right">'+fmtMoney(c.totalFlat)+'</td></tr>'+
+      '<tr><td>Mgmt 20% — investor cars</td><td class="right">'+fmtMoney(c.totalPct)+'</td></tr>'+
+      '<tr><td>Investor 30% total</td><td class="right">'+fmtMoney(c.totalInvestor)+'</td></tr>'+
+      '<tr><td>Post-sale expenses (this month on earlier sales)</td><td class="right">'+fmtMoney(c.postExpTotal)+'</td></tr>'+
+      '<tr><td><b>Remainder before showroom</b></td><td class="right"><b>'+fmtMoney(c.remainderBeforeShowroom)+'</b></td></tr>'+
+      '<tr><td>Showroom expenses this month (net)</td><td class="right">'+fmtMoney(c.showroomMonthTotal)+'</td></tr>'+
+      '<tr><td><b>Remainder after showroom</b></td><td class="right"><b>'+fmtMoney(c.remainder)+'</b></td></tr>'+
+      '<tr><td><b>Directors share (each)</b></td><td class="right"><b>'+fmtMoney(c.directorHalf)+'</b></td></tr>'+
+      '</tbody></table></div>'+
+      '<table><thead><tr><th>Date</th><th>Reg</th><th>Investor</th><th class="right">Vehicle Profit</th><th class="right">Add-on Profit</th><th class="right">Total Gross</th><th class="right">£175</th><th class="right">20%</th><th class="right">Inv 30%</th><th class="right">Remainder</th></tr></thead><tbody>'+
+      c.items.map(x=>'<tr><td>'+ddmmyyyy(x.s.date)+'</td><td>'+(x.v.reg||'')+'</td><td>'+(x.investorName||'')+'</td><td class="right">'+fmtMoney(x.vehicleProfit)+'</td><td class="right">'+fmtMoney(x.addonProfit)+'</td><td class="right">'+fmtMoney(x.gross)+'</td><td class="right">'+fmtMoney(x.mgmtFlat)+'</td><td class="right">'+fmtMoney(x.mgmtPct)+'</td><td class="right">'+fmtMoney(x.investorShare)+'</td><td class="right">'+fmtMoney(x.afterInvestor)+'</td></tr>').join('')+
       '</tbody></table>'+
+      (c.postExp.length ? ('<div class="section"><b>Post-sale expenses this month:</b><ul>' +
+        c.postExp.map(pe=>'<li>'+ddmmyyyy(pe.e.date)+' — '+(pe.v.reg||'')+' — '+(pe.e.type||'')+': '+fmtMoney(pe.amount)+'</li>').join('') +
+        '</ul></div>') : '') +
       '</body></html>';
     openPrintable(html);
   };
