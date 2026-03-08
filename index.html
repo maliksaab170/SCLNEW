@@ -1109,6 +1109,11 @@ function saveDB(){
   try {
     // Normal save
     localStorage.setItem(DBKEY, JSON.stringify(db));
+    try{
+      document.dispatchEvent(new CustomEvent('starcars:dataChanged', {
+        detail: { ts: new Date().toISOString() }
+      }));
+    }catch(_){ }
   } catch (e) {
     console.error('saveDB quota error:', e);
 
@@ -6116,15 +6121,30 @@ function viewSales(){
 
   // hook inputs (safe)
   function hookSalePaymentSummary(wrap){
-    const ids = ['#sale_price','#sale_dep','#sale_cash','#sale_card','#sale_bank','#sale_fin','#sale_pxAllowance'];
+    const ids = ['#sale_price','#sale_dep','#sale_cash','#sale_card','#sale_bank','#sale_fin','#sale_pxAllowance','#sale_finFee'];
     ids.forEach(sel=>{
       const el = wrap.querySelector(sel);
-      if(el) el.addEventListener('input', ()=> calcSalePaymentSummary(wrap));
+      if(el) el.addEventListener('input', ()=> { calcSalePaymentSummary(wrap); updateSaleCostProfitPreview(); });
+      if(el) el.addEventListener('change', ()=> { calcSalePaymentSummary(wrap); updateSaleCostProfitPreview(); });
     });
     calcSalePaymentSummary(wrap);
   }
 
   hookSalePaymentSummary(wrap);
+  window.__starcarsRefreshSalesLive = function(){
+    try{ calcSalePaymentSummary(wrap); }catch(_){ }
+    try{ updateSaleCostProfitPreview(); }catch(_){ }
+    try{ rows(); }catch(_){ }
+  };
+  if(!window.__starcarsSalesLiveBound){
+    window.__starcarsSalesLiveBound = true;
+    document.addEventListener('starcars:dataChanged', function(){
+      try{
+        if(currentTab !== 'Sales') return;
+        if(typeof window.__starcarsRefreshSalesLive === 'function') window.__starcarsRefreshSalesLive();
+      }catch(_){ }
+    });
+  }
 
   // ===== Add-ons / Extras =====
   const aoAddBtn = wrap.querySelector('#ao_addLine');
@@ -6469,9 +6489,7 @@ function viewSales(){
           .filter(e => e.vehicleId === s.vehicleId)
           .reduce((t,x) => t + Number(x.amount||0), 0);
 
-        const vehicleCost = (s.vehicleTotalCostAtSale != null && s.vehicleTotalCostAtSale !== '')
-          ? Number(s.vehicleTotalCostAtSale || 0)
-          : (Number(v.purchase||0) + vexp);
+        const vehicleCost = Number(v.purchase||0) + vexp;
         const addons = Array.isArray(s.addons) ? s.addons : [];
         const addonsSell = addons.reduce((t,x)=>t + Number(x.sellAmount||0), 0);
         const addonsCost = addons.reduce((t,x)=>t + Number(x.costAmount||0), 0);
@@ -7449,14 +7467,11 @@ function viewSold(){
   }
 
   function totalCostForSale(s, v){
-    // Prefer frozen cost at time of sale (so later edits don’t change history)
-    const frozen = Number(s.vehicleTotalCostAtSale);
-    if (isFinite(frozen) && frozen > 0) return frozen;
-
-    // fallback: current purchase+expenses
+    // LIVE cost: always use current purchase + current vehicle expenses
+    // so Sold / Reports / Month Close update when expenses or admin fees change later.
     if (typeof vehicleTotalCostByVehicleId === 'function') {
       const r = vehicleTotalCostByVehicleId(s.vehicleId);
-      return Number(r && r.total || 0);
+      return Number((r && r.total) || 0);
     }
     const purchase = Number(v && v.purchase || 0);
     const exp = (db.vehicleExpenses||[]).filter(e=>e.vehicleId===s.vehicleId).reduce((t,e)=>t+Number(e.amount||0),0);
@@ -7547,6 +7562,20 @@ function viewSold(){
     }
 
     summary.textContent = txt;
+  }
+
+
+  window.__starcarsRefreshSoldLive = function(){
+    try{ renderSoldRows(); }catch(_){ }
+  };
+  if(!window.__starcarsSoldLiveBound){
+    window.__starcarsSoldLiveBound = true;
+    document.addEventListener('starcars:dataChanged', function(){
+      try{
+        if(currentTab !== 'Sold') return;
+        if(typeof window.__starcarsRefreshSoldLive === 'function') window.__starcarsRefreshSoldLive();
+      }catch(_){ }
+    });
   }
 
   // listeners
@@ -11566,10 +11595,7 @@ function viewReports(){
         .filter(e=>e.vehicleId===s.vehicleId)
         .reduce((t,x)=>t+Number(x.amount||0),0);
 
-      const frozenVehicleCost = Number(s.vehicleTotalCostAtSale);
-      const vehicleCost = Number.isFinite(frozenVehicleCost) && frozenVehicleCost > 0
-        ? frozenVehicleCost
-        : (Number(v.purchase||0) + liveVehicleExp);
+      const vehicleCost = Number(v.purchase||0) + liveVehicleExp;
 
       const addons = Array.isArray(s.addons) ? s.addons : [];
       const addonsSell = addons.reduce((t,x)=>t+Number((x&&x.sellAmount)||0),0);
