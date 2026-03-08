@@ -3761,7 +3761,7 @@ function syncSoldStatusFromSales() {
 function viewDashboard(){
   syncSoldStatusFromSales();
   const card=document.createElement('div'); card.className='card';
-  const options=(db.vehicles||[]).map(v=>`<option value="${(v.reg||'').toUpperCase()}">`).join('');
+  const options=(db.vehicles||[]).map(v=>`<option value="${(v.reg||'').toUpperCase()}">`).join('\n');
   const dirTotal=(db.partners||[]).reduce((t,p)=>t+Number(p.balance||0),0);
   const invTotal=(db.investors||[]).reduce((t,i)=>t+Number(i.balance||0),0);
   const vehSpend=(db.vehicles||[]).reduce((t,v)=>t+Number(v.purchase||0),0);
@@ -3889,7 +3889,7 @@ function viewDashboard(){
           <td>${v.model||''}</td>
           <td>${expDisp} ${daysTxt}</td>
         </tr>`;
-      }).join('');
+      }).join('\n');
 
       out.innerHTML = `
         <div class="small"><b>${title}</b> (showing up to 50)</div>
@@ -4195,7 +4195,7 @@ function viewDashboard(){
         <button class="smallBtn" type="button" data-dash-exp-edit="${escHtml(e.id||'')}">Edit</button>
         <button class="smallBtn danger" type="button" data-dash-exp-del="${escHtml(e.id||'')}">Delete</button>
       </td>
-    </tr>`).join('');
+    </tr>`).join('\n');
     if(!rows) rows='<tr><td colspan="6" class="small">No expenses yet</td></tr>';
     
     out.innerHTML=`<div class="row"><span class="badge">${v.status||'for sale'}</span>&nbsp;<b>${escHtml(v.reg)}</b>&nbsp;${escHtml(v.make||'')} ${escHtml(v.model||'')}</div>
@@ -4360,7 +4360,7 @@ function viewVehicles(){
       '<option value="">-- Select investor (if any) --</option>' +
       (db.investors || [])
         .map(i => `<option value="${i.id}">${i.name}</option>`)
-        .join('');
+        .join('\n');
   }
 
   let editId=null; const body=wrap.querySelector('#vehBody');
@@ -5139,7 +5139,7 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
     }
 
     eCycleWrap.style.display = '';
-    eCycle.innerHTML = list.map(v=>`<option value="${v.id}">${bestLabelForCycle(v)}</option>`).join('');
+    eCycle.innerHTML = list.map(v=>`<option value="${v.id}">${bestLabelForCycle(v)}</option>`).join('\n');
     // default = newest in-stock (already sorted)
     eCycle.value = list[0].id;
   }
@@ -5181,7 +5181,7 @@ function viewExpenses(){ if(!canTab('Expenses')) return document.createElement('
       v.colour ? ('| ' + v.colour) : '',
       v.fuel ? ('| ' + v.fuel) : '',
       (v.mileage!=null && v.mileage!=='') ? ('| ' + Number(v.mileage).toLocaleString() + ' miles') : '',
-    ].filter(Boolean).join(' ');
+    ].filter(Boolean).join('\n');
 
     info.textContent = (v.reg||reg) + ' — ' + bits;
   }
@@ -5344,7 +5344,7 @@ function viewSales(){
   .filter(v => v && String(v.status || '').toLowerCase() !== 'sold')
   .filter(v => !soldVehicleIds.has(v.id))
   .map(v => `<option value="${(v.reg || '').toUpperCase()}">`)
-  .join('');
+  .join('\n');
   const finCos = (db.company.financeCompanies||[]).filter(Boolean);
 
   wrap.innerHTML=`<h2>Sales</h2>
@@ -5870,7 +5870,7 @@ function viewSales(){
           <td class="right"><b>${fmtMoney(Number(s.balanceDue||0))}</b></td>
           <td>${s.payStatus||''}</td>
         </tr>`;
-      }).join('');
+      }).join('\n');
 
       const out = wrap.querySelector('#sales_debtors_out');
       if(out){
@@ -6566,7 +6566,7 @@ function viewSales(){
                 return `<button data-act="rcLine" data-id="${s.id}" data-idx="${i}" title="Mark ${typeLabel(r.type)} as received">
                           ${typeLabel(r.type)} ${fmtMoney(exp)}
                         </button>`;
-              }).join(' ');
+              }).join('\n');
 
               return parts + `<div class="small" style="margin-top:6px;">Click a method to mark received</div>`;
             })()}
@@ -9333,6 +9333,7 @@ function viewReports(){
         <button id="mc_post" class="primary">Post</button>
         <button id="mc_repost">Repost month (fix returned deals)</button>
         <button id="mc_export">Export PDF</button>
+        <button id="mc_export_csv">Export CSV</button>
       </span>
     </h3>
 
@@ -10478,7 +10479,7 @@ function viewReports(){
     if(bdEl){
       const rows = Object.keys(byMethod).sort().map(m=>`
         <tr><td>${m}</td><td class="right">${fmtMoney(byMethod[m])}</td></tr>
-      `).join('');
+      `).join('\n');
       bdEl.innerHTML = `
         <div class="tableWrap">
         <table class="table">
@@ -10791,7 +10792,7 @@ function viewReports(){
           <td class="right">${fmtMoney(r.payout)}</td>
           <td class="right">${fmtMoney(r.admin)}</td>
         </tr>`;
-      }).join('');
+      }).join('\n');
 
       return `
         <details class="card" style="margin-top:10px">
@@ -10810,7 +10811,7 @@ function viewReports(){
           </div>
         </details>
       `;
-    }).join('');
+    }).join('\n');
   }
 
   wrap.querySelector('#fr_run').onclick = buildFinanceReport;
@@ -11329,7 +11330,7 @@ function viewReports(){
             <td class="right"><b>${fmtMoney(net)}</b></td>
             <td>${s.customer||''}</td>
           </tr>`;
-      }).join('');
+      }).join('\n');
 
     wrap.querySelector('#rep_fin_unpaid_out').innerHTML = `
       <table class="tbl">
@@ -11851,7 +11852,7 @@ function notifyMonthCloseChanged(monthKey, reason){
   wrap.querySelector('#mc_export').onclick=()=>{
     const k=(wrap.querySelector('#mc_month').value||'').slice(0,7); if(!k) return alert('Pick a month');
     const c=calcMonthClose(k);
-    const html = '<html><head><meta charset=\"utf-8\"><title>Month Close '+k+'</title>'+
+    const html = '<html><head><meta charset="utf-8"><title>Month Close '+k+'</title>'+
       '<style>body{font:14px system-ui;padding:20px} .right{text-align:right} table{width:100%;border-collapse:collapse} th,td{border:1px solid #ccc;padding:6px}</style></head><body>'+
       '<h2>Month Close '+k+'</h2>'+
       '<p><b>Vehicle profit:</b> '+fmtMoney(c.totalVehicleProfit)+'<br>'+'<b>Add-on profit:</b> '+fmtMoney(c.totalAddonProfit)+'<br>'+'<b>Gross incl add-ons:</b> '+fmtMoney(c.totalGross)+'<br>'+
@@ -11863,12 +11864,123 @@ function notifyMonthCloseChanged(monthKey, reason){
       'Showroom (net): '+fmtMoney(c.showroomMonthTotal)+'<br>'+
       '<b>Remainder after showroom:</b> '+fmtMoney(c.remainder)+'<br>'+
       '<b>Directors share (each):</b> '+fmtMoney(c.directorHalf)+'</p>'+
-      '<table><thead><tr><th>Date</th><th>Reg</th><th>Investor</th><th class=\"right\">Gross</th><th class=\"right\">£175</th><th class=\"right\">20%</th><th class=\"right\">Inv 30%</th><th class=\"right\">Remainder</th></tr></thead><tbody>'+
-      c.items.map(x=>'<tr><td>'+ddmmyyyy(x.s.date)+'</td><td>'+(x.v.reg||'')+'</td><td>'+(x.investorName||'')+'</td><td class=\"right\">'+fmtMoney(x.gross)+'</td><td class=\"right\">'+fmtMoney(x.mgmtFlat)+'</td><td class=\"right\">'+fmtMoney(x.mgmtPct)+'</td><td class=\"right\">'+fmtMoney(x.investorShare)+'</td><td class=\"right\">'+fmtMoney(x.afterInvestor)+'</td></tr>').join('')+
+      '<table><thead><tr><th>Date</th><th>Reg</th><th>Investor</th><th class="right">Gross</th><th class="right">£175</th><th class="right">20%</th><th class="right">Inv 30%</th><th class="right">Remainder</th></tr></thead><tbody>'+
+      c.items.map(x=>'<tr><td>'+ddmmyyyy(x.s.date)+'</td><td>'+(x.v.reg||'')+'</td><td>'+(x.investorName||'')+'</td><td class="right">'+fmtMoney(x.gross)+'</td><td class="right">'+fmtMoney(x.mgmtFlat)+'</td><td class="right">'+fmtMoney(x.mgmtPct)+'</td><td class="right">'+fmtMoney(x.investorShare)+'</td><td class="right">'+fmtMoney(x.afterInvestor)+'</td></tr>').join('')+
       '</tbody></table>'+
       '</body></html>';
     openPrintable(html);
   };
+
+  const mcCsvBtn = wrap.querySelector('#mc_export_csv');
+  if(mcCsvBtn){
+    mcCsvBtn.onclick = ()=>{
+      const k=(wrap.querySelector('#mc_month').value||'').slice(0,7);
+      if(!k) return alert('Pick a month');
+
+      const c = calcMonthClose(k);
+      const csvRows = [
+        ['MONTH CLOSE SUMMARY'],
+        ['Month', k],
+        ['Vehicle Profit', c.totalVehicleProfit],
+        ['Add-on Profit', c.totalAddonProfit],
+        ['Gross incl add-ons', c.totalGross],
+        ['Mgmt Flat Total', c.totalFlat],
+        ['Mgmt 20% Total', c.totalPct],
+        ['Investor 30% Total', c.totalInvestor],
+        ['Post-sale Expenses', c.postExpTotal],
+        ['Remainder Before Showroom', c.remainderBeforeShowroom],
+        ['Showroom Expenses (net)', c.showroomMonthTotal],
+        ['Remainder After Showroom', c.remainder],
+        ['Directors Share Each', c.directorHalf],
+        [],
+        ['MONTH CLOSE DETAIL'],
+        ['Date','Invoice','Reg','Make','Model','Customer','Salesperson','Purchase Price','Vehicle Expenses','Vehicle Cost','Sale Price','Warranty Income','Warranty Cost','Warranty Profit','Commission Income','Commission Cost','Commission Profit','Other Add-ons Income','Other Add-ons Cost','Other Add-ons Profit','Add-ons Total Income','Add-ons Total Cost','Add-on Profit','Vehicle Profit','Total Deal Profit','Investor','Investor Car','Mgmt Flat 175','Mgmt 20%','Investor 30%','Director Remainder']
+      ];
+
+      (c.items||[]).forEach(x=>{
+        const s = x.s || {};
+        const v = x.v || {};
+        const addons = Array.isArray(s.addons) ? s.addons : [];
+        const sumType = (matchFn) => addons.reduce((acc,a)=>{
+          const type = String((a && a.type) || '').trim().toLowerCase();
+          if(!matchFn(type)) return acc;
+          acc.sell += Number((a && a.sellAmount) || 0);
+          acc.cost += Number((a && a.costAmount) || 0);
+          return acc;
+        }, {sell:0, cost:0});
+
+        const warranty = sumType(type => type === 'warranty');
+        const commission = sumType(type => type === 'commission');
+        const other = sumType(type => type && type !== 'warranty' && type !== 'commission');
+        warranty.profit = warranty.sell - warranty.cost;
+        commission.profit = commission.sell - commission.cost;
+        other.profit = other.sell - other.cost;
+
+        const customer = s.buyer || s.customerName || s.name || '';
+        const salesperson = s.soldBy || s.salesperson || s.salesPerson || s.createdBy || s.user || '';
+        const purchasePrice = Number((v && v.purchase) || 0);
+        const vehicleExpenses = Number(x.vehicleCost || 0) - purchasePrice;
+
+        csvRows.push([
+          s.date || '',
+          s.invNo || '',
+          v.reg || '',
+          v.make || '',
+          v.model || '',
+          customer,
+          salesperson,
+          purchasePrice,
+          vehicleExpenses,
+          x.vehicleCost || 0,
+          Number(s.salePrice || 0),
+          warranty.sell,
+          warranty.cost,
+          warranty.profit,
+          commission.sell,
+          commission.cost,
+          commission.profit,
+          other.sell,
+          other.cost,
+          other.profit,
+          x.addonsSell || 0,
+          x.addonsCost || 0,
+          x.addonProfit || 0,
+          x.vehicleProfit || 0,
+          x.gross || 0,
+          x.investorName || '',
+          x.isInvestor ? 'YES' : 'NO',
+          x.mgmtFlat || 0,
+          x.mgmtPct || 0,
+          x.investorShare || 0,
+          x.afterInvestor || 0
+        ]);
+      });
+
+      if((c.postExp||[]).length){
+        csvRows.push([]);
+        csvRows.push(['POST-SALE EXPENSES THIS MONTH']);
+        csvRows.push(['Date','Reg','Type','Amount','Note']);
+        (c.postExp||[]).forEach(pe=>{
+          csvRows.push([
+            (pe.e && pe.e.date) || '',
+            (pe.v && pe.v.reg) || '',
+            (pe.e && pe.e.type) || '',
+            pe.amount || 0,
+            (pe.e && pe.e.note) || ''
+          ]);
+        });
+      }
+
+      const csv = csvRows
+        .map(r => r.map(v => `"${String(v ?? '').replace(/"/g,'""')}"`).join(','))
+        .join('\n');
+
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+      a.download='month_close_'+k+'.csv';
+      a.click();
+    };
+  }
 return wrap;
 }
 
@@ -12238,7 +12350,7 @@ function viewComplaints(){
         <td>${e.note || ''}</td>
         <td class="right">${fmtMoney(e.amount || 0)}</td>
       </tr>`;
-    }).join('');
+    }).join('\n');
     const expTotal = expenses.reduce((t,e)=>t + Number(e.amount||0),0);
     
     const saleDate   = s && s.date ? ddmmyyyy(s.date) : '';
@@ -12383,7 +12495,7 @@ function viewComplaints(){
         <td>${e.note || ''}</td>
         <td class="right">${fmtMoney(e.amount || 0)}</td>
       </tr>`;
-    }).join('');
+    }).join('\n');
     const expTotal = expenses.reduce((t,e)=>t + Number(e.amount||0),0);
     
     const saleDate   = s && s.date ? ddmmyyyy(s.date) : '';
@@ -12992,8 +13104,8 @@ function viewUsers(){ if(!canTab('Users')) return document.createElement('div');
     if(out.length !== (db.users||[]).length){ db.users=out; saveDB(); }
   })();
     const body=wrap.querySelector('#u_body'); (db.users||[]).forEach(u=>{ const p=normalizePerms(u.perms);
-      const tabChecks=tabs.map(t=>`<label class="small" style="display:inline-block;min-width:110px"><input data-user="${u.id}" data-k="tab" data-tab="${t}" type="checkbox" ${p.tabs[t]?'checked':''}> ${t}</label>`).join(' ');
-      const actionChecks=['view','add','edit','del'].map(a=>`<label class="small"><input data-user="${u.id}" data-k="act" data-act="${a}" type="checkbox" ${p.actions[a]?'checked':''}> ${a}</label>`).join(' ');
+      const tabChecks=tabs.map(t=>`<label class="small" style="display:inline-block;min-width:110px"><input data-user="${u.id}" data-k="tab" data-tab="${t}" type="checkbox" ${p.tabs[t]?'checked':''}> ${t}</label>`).join('\n');
+      const actionChecks=['view','add','edit','del'].map(a=>`<label class="small"><input data-user="${u.id}" data-k="act" data-act="${a}" type="checkbox" ${p.actions[a]?'checked':''}> ${a}</label>`).join('\n');
       const extraChecks=`<label class="small"><input data-user="${u.id}" data-k="profit" type="checkbox" ${p.profit?'checked':''}> can see profit</label> <label class="small"><input data-user="${u.id}" data-k="settings" type="checkbox" ${p.settings?'checked':''}> can edit settings</label>`;
       const tr=document.createElement('tr'); tr.innerHTML=`<td>${u.username}</td><td>${u.role}</td><td>${tabChecks}<div style="margin-top:6px">${actionChecks} &nbsp; ${extraChecks}</div></td>
       <td><button data-act="chpass" data-id="${u.id}">Change Password</button> <button data-act="reset" data-id="${u.id}">Reset pass to '1234'</button> <button class="danger" data-act="del" data-id="${u.id}">Delete</button></td>`; body.appendChild(tr); });
