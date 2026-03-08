@@ -3681,6 +3681,25 @@ function render(){
   applyPullLockUI();
 }
 
+if(!window.__starcarsGlobalLiveRefreshBound){
+  window.__starcarsGlobalLiveRefreshBound = true;
+  let __starcarsGlobalLiveRefreshTimer = null;
+
+  document.addEventListener('starcars:dataChanged', function(){
+    clearTimeout(__starcarsGlobalLiveRefreshTimer);
+
+    __starcarsGlobalLiveRefreshTimer = setTimeout(function(){
+      try{
+        if(currentTab === 'Dashboard' || currentTab === 'Reports' || currentTab === 'Sold'){
+          render();
+        }
+      }catch(e){
+        console.error('Global live refresh failed:', e);
+      }
+    }, 120);
+  });
+}
+
 /* ========= Finance helpers ========= */
 
 function validateSaleEdit(obj){
@@ -3736,9 +3755,9 @@ function syncSoldStatusFromSales() {
     (db.sales || [])
       .filter(s => {
         if (!s) return false;
-        const st = String(s.status || 'completed').toLowerCase();
-        // Only **completed** and **not refunded** sales mark the car as SOLD
-        return !s.refunded && st === 'completed';
+        const st = String(s.saleStatus || s.status || 'completed').toLowerCase();
+        // Only completed / sold and not refunded sales mark the car as SOLD
+        return !s.refunded && (st === 'completed' || st === 'complete' || st === 'sold');
       })
       .map(s => s.vehicleId)
   );
@@ -3773,8 +3792,8 @@ function viewDashboard(){
     (db.sales || [])
       .filter(s => {
         if (!s) return false;
-        const st = String(s.status || 'completed').toLowerCase();
-        return !s.refunded && st === 'completed';
+        const st = String(s.saleStatus || s.status || 'completed').toLowerCase();
+        return !s.refunded && (st === 'completed' || st === 'complete' || st === 'sold');
       })
       .map(s => s.vehicleId)
   );
@@ -5897,7 +5916,9 @@ function viewSales(){
 
     // Managers/admin: show preview
     const reg = (wrap.querySelector('#sale_reg')?.value || '').trim().toUpperCase();
-    const v = (db.vehicles||[]).find(x => (x.reg||'').toUpperCase() === reg);
+    const v = (typeof findVehicleByReg === 'function')
+      ? findVehicleByReg(reg)
+      : (db.vehicles||[]).find(x => (x.reg||'').toUpperCase() === reg);
     if(!v){
       out.innerHTML = '';
       return;
@@ -7062,12 +7083,17 @@ function viewSales(){
     const prevSale = editId ? (db.sales || []).find(x => x.id === editId) : null;
     const prevStatus = prevSale ? (prevSale.status || 'completed') : null;
 
-    // 🔒 Prevent *double completed sale* on NEW sale
+    // 🔒 Prevent double completed sale on NEW sale
     if (!editId) {
       const vehicle = (db.vehicles || []).find(x => x.id === vid);
-      const hasRealSale = (db.sales || []).some(sale => sale.vehicleId === vid && isRealSale(sale));
+      const hasCompletedSale = (db.sales || []).some(existingSale => {
+        if (!existingSale || existingSale.id === editId) return false;
+        if (existingSale.vehicleId !== vid) return false;
+        const st = String(existingSale.saleStatus || existingSale.status || 'completed').toLowerCase();
+        return !existingSale.refunded && (st === 'completed' || st === 'complete' || st === 'sold');
+      });
 
-      if ((vehicle && vehicle.status === 'sold') || hasRealSale) {
+      if ((vehicle && String(vehicle.status || '').toLowerCase() === 'sold') || hasCompletedSale) {
         return alert('This vehicle already has a completed sale. Use EDIT on the existing sale or cancel/refund it first.');
       }
     }
