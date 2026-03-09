@@ -3690,7 +3690,7 @@ if(!window.__starcarsGlobalLiveRefreshBound){
 
     __starcarsGlobalLiveRefreshTimer = setTimeout(function(){
       try{
-        if(currentTab === 'Dashboard' || currentTab === 'Reports' || currentTab === 'Sold'){
+        if(currentTab === 'Reports' || currentTab === 'Sold'){
           render();
         }
       }catch(e){
@@ -4128,6 +4128,7 @@ function viewDashboard(){
       try{ renderAlertBell(); }catch(e){}
       const reg = v.reg || '';
       resetDashboardExpenseForm();
+      dashCurrentVehicleId = vehicleId;
       showResultByReg(reg);
       const msg2=card.querySelector('#dash_qe_msg');
       if(msg2) msg2.innerHTML = `<span class="small" style="color:#2ecc71">Expense updated for <b>${escHtml((reg||'').toUpperCase())}</b>.</span>`;
@@ -4144,6 +4145,7 @@ function viewDashboard(){
     if(amtEl) amtEl.value='';
     if(noteEl) noteEl.value='';
 
+    dashCurrentVehicleId = vehicleId;
     showResultByReg(v.reg || '');
     const msg2=card.querySelector('#dash_qe_msg');
     if(msg2) msg2.innerHTML = `<span class="small" style="color:#2ecc71">Expense added to <b>${escHtml((v.reg||'').toUpperCase())}</b>.</span>`;
@@ -6486,6 +6488,12 @@ function viewSales(){
       invEl.value = getNextInvoiceNo();
     }
 
+    // Reset sale terms back to company default
+    const saleTermsEl = wrap.querySelector('#sale_terms');
+    if (saleTermsEl) saleTermsEl.value = db.company.saleTerms || '';
+    const saleTermsHintEl = wrap.querySelector('#sale_termsHint');
+    if (saleTermsHintEl) saleTermsHintEl.textContent = 'Using default sale terms from Settings.';
+
     // Reset edit ID
     editId = null;
 
@@ -7057,6 +7065,15 @@ function viewSales(){
       const wpol = wrap.querySelector('#sale_warrantyPolicy'); 
       if (wpol) wpol.value = s.warrantyPolicy || '';
 
+      const saleTermsEl = wrap.querySelector('#sale_terms');
+      if (saleTermsEl) saleTermsEl.value = s.terms || db.company.saleTerms || '';
+      const saleTermsHintEl = wrap.querySelector('#sale_termsHint');
+      if (saleTermsHintEl) {
+        saleTermsHintEl.textContent = (String(s.terms || '').trim())
+          ? 'Using saved terms for this sale.'
+          : 'Using default sale terms from Settings.';
+      }
+
       ensureReceiptsOnSale(s);
       receiptsToForm(s.receipts);
       ensureAddonsOnSale(s);
@@ -7128,10 +7145,22 @@ function viewSales(){
   }
 
   const termsEl = wrap.querySelector('#sale_terms');
+  const termsHintEl = wrap.querySelector('#sale_termsHint');
+  function refreshSaleTermsHint(){
+    if (!termsHintEl || !termsEl) return;
+    termsHintEl.textContent = (String(termsEl.value || '').trim())
+      ? 'Override active: this invoice will print the saved sale terms.'
+      : 'Using default sale terms from Settings.';
+  }
   if (termsEl && !(termsEl.value || '').trim()) {
     // Only auto-load the DEFAULT sale invoice terms (not the ALWAYS terms)
     termsEl.value = (db.company.saleTerms || '');
   }
+  if (termsEl && !termsEl.dataset.hintBound) {
+    termsEl.addEventListener('input', refreshSaleTermsHint);
+    termsEl.dataset.hintBound = '1';
+  }
+  refreshSaleTermsHint();
 
   const price = Number(wrap.querySelector('#sale_price').value || 0);
 
