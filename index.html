@@ -850,6 +850,26 @@ body{scrollbar-gutter:stable both-edges;}
 .fitTable th,.fitTable td{white-space:normal;word-break:break-word;}
 .fitTable td{line-height:1.25;}
 
+
+
+/* ===== Sales Wizard ===== */
+.salesWizardTop{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 14px;}
+.salesWizardSteps{display:flex;gap:8px;flex-wrap:wrap;}
+.salesStepPill{padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);font-size:12px;font-weight:800;color:var(--mut);cursor:pointer;}
+.salesStepPill.active{background:linear-gradient(135deg, rgba(90,176,255,.18), rgba(122,92,255,.18));color:var(--ink);border-color:rgba(90,176,255,.40);}
+.salesWizardPane{display:none;margin-top:10px;}
+.salesWizardPane.active{display:block;}
+.salesSectionCard{padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.03);margin-bottom:12px;}
+.salesSectionTitle{font-size:13px;font-weight:900;margin-bottom:8px;color:var(--ink);letter-spacing:.03em;text-transform:uppercase;}
+.salesSectionHint{font-size:12px;color:var(--mut);margin:-2px 0 10px;}
+.salesWizardActions{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.08);}
+.salesQuickGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;}
+.salesAdvanced details{border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.02);}
+.salesAdvanced summary{cursor:pointer;font-weight:900;list-style:none;}
+.salesAdvanced summary::-webkit-details-marker{display:none;}
+.salesMetric label input[readonly]{font-weight:800;}
+@media(max-width:700px){.salesWizardActions{flex-direction:column;align-items:stretch;}}
+
 </style>
 
 </head><script>
@@ -5398,189 +5418,150 @@ function viewSales(){
   <div id="sales_debtors_out" style="margin-top:10px;"></div>
   
   <!-- Sale Entry Form -->
-  <div class="row">
-    <label>Vehicle REG<datalist id="sale_reg_list">${regOptions}</datalist><input id="sale_reg" list="sale_reg_list" placeholder="Type REG to select vehicle"></label>
-    <div id="sale_vehicleInfo" class="small" style="color:#9fb4ff; margin-left:6px;">
-      Select a reg to see vehicle details
+  <div class="salesWizardTop">
+    <div>
+      <div style="font-weight:900;font-size:16px;">Sales Wizard</div>
+      <div class="small">Simple mode for staff. All your existing options are still here.</div>
     </div>
-    <div id="sale_costProfitInfo" class="small" style="color:#9fb4ff; margin-left:6px; margin-top:4px;"></div>
-    <label>Sale Date<input id="sale_date" type="date"></label>
-    <label>Collected Date<input id="sale_collectedDate" type="date"></label>
-    <label><span class="req">Customer Name</span><input id="sale_buyer" placeholder="Customer name"></label>
-    <label>Customer Address<input id="sale_addr" placeholder="Address"></label>
-    <label>Phone<input id="sale_phone" placeholder="Phone"></label>
-    <label>Email<input id="sale_email" placeholder="Email"></label>
-    <label>Mileage at Sale<input id="sale_mileage" type="number" placeholder="0"></label>
-    <label>Date of First Reg<input id="sale_firstReg" type="date"></label>
-  </div>
-  <div class="row">
-    <label>Sale Price £<input id="sale_price" type="number" placeholder="0"></label>
-    <label>Advertised Price £<input id="sale_advertised" type="number" placeholder="0"></label>
-    <label>Deposit £<input id="sale_dep" type="number" placeholder="0"></label>
-    <label>Cash £<input id="sale_cash" type="number" placeholder="0"></label>
-    <label>Card £<input id="sale_card" type="number" placeholder="0"></label>
-    <label>Bank Transfer £<input id="sale_bank" type="number" placeholder="0"></label>
-    <label>PX Allowance £<input id="sale_pxAllowance" type="number" placeholder="0"></label>
-    <label>Total Paid £<input id="sale_totalPaid" type="number" readonly></label>
-    <label>Balance Due £<input id="sale_balanceDue" type="number" readonly></label>
-    <label>Status<input id="sale_payStatus" readonly></label>
-    <label>Add-ons Total £<input id="sale_addonsTotal" type="number" readonly></label>
-    <label>Add-on Profit £<input id="sale_addonProfit" type="number" readonly></label>
-    <label>Vehicle Profit £<input id="sale_vehicleProfit" type="number" readonly></label>
-    <label>Total Deal Profit £<input id="sale_totalDealProfit" type="number" readonly></label>
-    <label>Grand Received £<input id="sale_grandReceived" type="number" readonly></label>
-    <button id="auto_balance">Auto-balance</button><span id="sale_warn" class="small"></span>
-    <div class="card">
-      <label style="display: flex; flex-direction: column; align-items: center;">
-        <input id="sale_hasFinance" type="checkbox" style="margin-bottom:4px;">
-        <span style="user-select:none;">Finance deal?</span>
-      </label>
-    </div>
-    <div class="card">
-      <label style="display: flex; flex-direction: column; align-items: center;">
-        <input id="sale_hasPX" type="checkbox" style="margin-bottom:4px;">
-        <span style="user-select:none;">Part-Ex (PX)?</span>
-      </label>
+    <div class="row" style="margin:0;gap:8px;">
+      <button id="sales_mode_easy" class="primary small" type="button">Easy mode</button>
+      <button id="sales_mode_full" class="small" type="button">Show all options</button>
     </div>
   </div>
 
-  <div id="sale_fin_section" class="row" style="display:none; margin-top:6px; padding:10px; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
-    <div class="small" style="width:100%; color:#9fb4ff; margin-bottom:6px; font-weight:600;">Finance Details</div>
-    <div id="sale_finCompanyWrap">
-      <label>Finance Company
-        <select id="sale_finCoList" style="min-width:160px">
-          <option value="">-- Select --</option>
-          ${finCos.map(s=>`<option value="${s}">${s}</option>`).join('')}
-        </select>
-      </label>
+  <div class="salesWizardSteps" id="sales_wizard_steps">
+    <div class="salesStepPill active" data-pill="1">1. Vehicle</div>
+    <div class="salesStepPill" data-pill="2">2. Customer</div>
+    <div class="salesStepPill" data-pill="3">3. Payment</div>
+    <div class="salesStepPill" data-pill="4">4. Extras & Save</div>
+  </div>
+
+  <div class="salesWizardPane active" data-sale-step="1">
+    <div class="salesSectionCard">
+      <div class="salesSectionTitle">Vehicle</div>
+      <div class="salesSectionHint">Pick the reg first. Vehicle details and profit preview update automatically.</div>
+      <div class="row">
+        <label>Vehicle REG<datalist id="sale_reg_list">${regOptions}</datalist><input id="sale_reg" list="sale_reg_list" placeholder="Type REG to select vehicle"></label>
+        <label>Sale Date<input id="sale_date" type="date"></label>
+        <label>Collected Date<input id="sale_collectedDate" type="date"></label>
+        <label>Mileage at Sale<input id="sale_mileage" type="number" placeholder="0"></label>
+        <label>Date of First Reg<input id="sale_firstReg" type="date"></label>
+      </div>
+      <div id="sale_vehicleInfo" class="small" style="color:#9fb4ff; margin-top:8px;">Select a reg to see vehicle details</div>
+      <div id="sale_costProfitInfo" style="margin-top:8px;"></div>
+      <div class="row" style="margin-top:10px;">
+        <label><span class="req">Sale Price £</span><input id="sale_price" type="number" placeholder="0"></label>
+        <label>Advertised Price £<input id="sale_advertised" type="number" placeholder="0"></label>
+        <button id="sales_next_from_vehicle" class="primary" type="button">Next: Customer</button>
+      </div>
     </div>
-    <label>Agreement #<input id="sale_agree" placeholder="Agreement #"></label>
-    <label>Finance £<input id="sale_fin" type="number" placeholder="0"></label>
-    <label>Finance Admin Fee £<input id="sale_finFee" type="number" placeholder="0"></label>
-
-    <label>Payout status
-      <select id="sale_finPayout" placeholder="Status">
-        <option value="">Unpaid</option>
-        <option value="paid">Paid</option>
-      </select>
-    </label>
-    <label>Payout Date<input id="sale_finPayoutDate" type="date"></label>
-    <label>Payout Amount £<input id="sale_finPayoutAmount" type="number" placeholder="0"></label>
   </div>
 
-  <div id="sale_px_section" class="row" style="display:none; margin-top:6px; padding:10px; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
-    <div class="small" style="width:100%; color:#9fb4ff; margin-bottom:6px; font-weight:600;">PX Details</div>
-    <label>Part-ex Notes<input id="sale_partex" style="min-width:320px" placeholder="Optional notes"></label>
-    <label>PX Reg<input id="sale_pxReg" placeholder="AB12CDE"></label>
-    <label>PX Make<input id="sale_pxMake" placeholder="Make"></label>
-    <label>PX Model<input id="sale_pxModel" placeholder="Model"></label>
+  <div class="salesWizardPane" data-sale-step="2">
+    <div class="salesSectionCard">
+      <div class="salesSectionTitle">Customer</div>
+      <div class="salesSectionHint">Only the main customer details first to keep it easy for staff.</div>
+      <div class="row">
+        <label><span class="req">Customer Name</span><input id="sale_buyer" placeholder="Customer name"></label>
+        <label>Phone<input id="sale_phone" placeholder="Phone"></label>
+        <label>Email<input id="sale_email" placeholder="Email"></label>
+        <label style="min-width:320px;flex:1">Customer Address<input id="sale_addr" placeholder="Address"></label>
+      </div>
+    </div>
+
+    <div class="salesSectionCard">
+      <div class="salesSectionTitle">Handover</div>
+      <div class="row">
+        <label>Deliver To<input id="sale_deliver" placeholder="Name/address"></label>
+        <label>Keys<input id="sale_keys" placeholder="e.g. 2 keys"></label>
+        <label>MOT Expiry<input id="sale_mot" type="date" placeholder="e.g. 2025-11-30"></label>
+        <label>Service History<input id="sale_sh" placeholder="Full / Part / None"></label>
+      </div>
+    </div>
   </div>
 
-  <div class="row">
-    <label>Deliver To<input id="sale_deliver" placeholder="Name/address"></label>
-    <label>Keys<input id="sale_keys" placeholder="e.g. 2 keys"></label>
-    <label>MOT Expiry<input id="sale_mot" type="date" placeholder="e.g. 2025-11-30"></label>
-    <label>Service History<input id="sale_sh" placeholder="Full / Part / None"></label>
-    <label>Invoice # (optional)<input id="sale_invNo" placeholder="Leave blank for auto" maxlength="5" inputmode="numeric"></label>
-    <label>Sale Type
-      <select id="sale_status">
-        <option value="completed" selected>Completed Sale (customer bought car)</option>
-        <option value="proforma">Proforma / Finance Quote (NOT sold yet)</option>
-        <option value="cancelled">Cancelled / Finance Declined</option>
-        <option value="unwound">Unwound / Refunded (car returned)</option>
-      </select>
-    </label>
-    <label>Warranty Type
-      <select id="sale_warrantyType">
-        <option value="">None / Not set</option>
-        <option value="In-house">In-house Warranty</option>
-        <option value="Third-Party">Third-Party Warranty</option>
-        <option value="Manufacturer">Manufacturer</option>
-      </select>
-    </label>
-    <label>Warranty Provider<input id="sale_warrantyProvider" placeholder="Handler / RAC / etc"></label>
-    <label>Warranty Months<input id="sale_warrantyMonths" type="number" placeholder="e.g. 3"></label>
-    <label>Warranty Policy #<input id="sale_warrantyPolicy" placeholder="Policy number"></label>
-
-    <div class="card" style="margin-top:10px; padding:10px; background: rgba(19,26,43,.45); min-width:100%;">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-        <div>
-          <div style="font-weight:700;">Extras / Add-ons</div>
-          <div class="small" style="opacity:.85">
-            Use this for commission, warranty sold, admin fee, delivery or other extra income. These do not change the vehicle invoice price.
-          </div>
-        </div>
-
-        <div class="row" style="margin:0;">
-          <label class="small">Type
-            <select id="ao_type">
-              <option value="Commission">Commission</option>
-              <option value="Warranty">Warranty</option>
-              <option value="Admin Fee">Admin Fee</option>
-              <option value="Delivery">Delivery</option>
-              <option value="Other">Other</option>
-            </select>
-          </label>
-          <label class="small">Description<input id="ao_desc" placeholder="e.g. Warranty sold / finance commission" style="min-width:220px;"></label>
-          <label class="small">Sell Amount £<input id="ao_sell" type="number" placeholder="0" style="min-width:120px;"></label>
-          <label class="small">Cost £<input id="ao_cost" type="number" placeholder="0" style="min-width:120px;"></label>
-          <button id="ao_addLine" class="primary" type="button">Add add-on</button>
-        </div>
+  <div class="salesWizardPane" data-sale-step="3">
+    <div class="salesSectionCard">
+      <div class="salesSectionTitle">Payment & Deal Type</div>
+      <div class="row">
+        <label>Sale Type
+          <select id="sale_status">
+            <option value="completed" selected>Completed Sale (customer bought car)</option>
+            <option value="proforma">Proforma / Finance Quote (NOT sold yet)</option>
+            <option value="cancelled">Cancelled / Finance Declined</option>
+            <option value="unwound">Unwound / Refunded (car returned)</option>
+          </select>
+        </label>
+        <label>Deposit £<input id="sale_dep" type="number" placeholder="0"></label>
+        <label>Cash £<input id="sale_cash" type="number" placeholder="0"></label>
+        <label>Card £<input id="sale_card" type="number" placeholder="0"></label>
+        <label>Bank Transfer £<input id="sale_bank" type="number" placeholder="0"></label>
+        <label>Invoice # (optional)<input id="sale_invNo" placeholder="Leave blank for auto" maxlength="5" inputmode="numeric"></label>
+        <button id="auto_balance" type="button">Auto-balance</button><span id="sale_warn" class="small"></span>
       </div>
 
-      <div id="ao_summary" class="small" style="margin-top:8px;"></div>
-
-      <table class="table" style="margin-top:8px;">
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Description</th>
-            <th class="right">Sell</th>
-            <th class="right">Cost</th>
-            <th class="right">Profit</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="ao_body"></tbody>
-      </table>
+      <div class="salesQuickGrid" style="margin-top:10px;">
+        <label>Total Paid £<input id="sale_totalPaid" type="number" readonly></label>
+        <label>Balance Due £<input id="sale_balanceDue" type="number" readonly></label>
+        <label>Status<input id="sale_payStatus" readonly></label>
+        <label>Grand Received £<input id="sale_grandReceived" type="number" readonly></label>
+      </div>
     </div>
-    
-    <label style="min-width:320px">
-      Invoice Special Notes (max 2 lines)
-      <textarea id="s_invoiceNote" rows="2" style="min-height:42px;max-height:42px;resize:none;overflow:hidden"
-        placeholder="MAX 2 lines. e.g. 3 MONTH WARRANTY INCLUDED"></textarea>
-      <div class="small" style="opacity:.8">Tip: keep this max 2 lines. Long stuff goes in Terms.</div>
-    </label>
 
-    <label style="min-width:320px;flex:1">
-      Invoice Terms (auto from Settings — edit if needed)
-      <textarea id="sale_terms" style="min-height:120px" placeholder="Terms for this sale"></textarea>
-      <div id="sale_termsHint" class="small" style="opacity:.8">Using default sale terms from Settings.</div>
-    </label>
-
-    <label>Lead Source
-      <select id="sale_lead">
-        <option value="">Not set</option>
-        <option value="AutoTrader">AutoTrader</option>
-        <option value="Website">Website</option>
-        <option value="Walk-in">Walk-in</option>
-        <option value="Facebook">Facebook</option>
-        <option value="AA Cars">AA Cars</option>
-        <option value="Gumtree">Gumtree</option>
-        <option value="Referral">Referral</option>
-        <option value="Other">Other</option>
-      </select>
-    </label>
-
-    <div class="card" style="margin-top:10px; padding:10px; background: rgba(19,26,43,.45);">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-        <div>
-          <div style="font-weight:700;">Funds to Receive (Settlements)</div>
-          <div class="small" style="opacity:.85">
-            Track card settlement, finance payouts and any extra money received such as commission or warranty (multiple lines allowed).
-          </div>
+    <div class="salesSectionCard">
+      <div class="salesSectionTitle">Finance / Part Exchange</div>
+      <div class="row">
+        <div class="card flat" style="padding:10px 12px;min-width:160px;">
+          <label style="display:flex; flex-direction:column; align-items:center;">
+            <input id="sale_hasFinance" type="checkbox" style="margin-bottom:4px;">
+            <span style="user-select:none;">Finance deal?</span>
+          </label>
         </div>
+        <div class="card flat" style="padding:10px 12px;min-width:160px;">
+          <label style="display:flex; flex-direction:column; align-items:center;">
+            <input id="sale_hasPX" type="checkbox" style="margin-bottom:4px;">
+            <span style="user-select:none;">Part-Ex (PX)?</span>
+          </label>
+        </div>
+        <label>Finance £<input id="sale_fin" type="number" placeholder="0"></label>
+        <label>PX Allowance £<input id="sale_pxAllowance" type="number" placeholder="0"></label>
+      </div>
 
+      <div id="sale_fin_section" class="row" style="display:none; margin-top:10px; padding:10px; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
+        <div class="small" style="width:100%; color:#9fb4ff; margin-bottom:6px; font-weight:600;">Finance Details</div>
+        <div id="sale_finCompanyWrap">
+          <label>Finance Company
+            <select id="sale_finCoList" style="min-width:160px">
+              <option value="">-- Select --</option>
+              ${finCos.map(s=>`<option value="${s}">${s}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        <label>Agreement #<input id="sale_agree" placeholder="Agreement #"></label>
+        <label>Finance Admin Fee £<input id="sale_finFee" type="number" placeholder="0"></label>
+        <label>Payout status
+          <select id="sale_finPayout" placeholder="Status">
+            <option value="">Unpaid</option>
+            <option value="paid">Paid</option>
+          </select>
+        </label>
+        <label>Payout Date<input id="sale_finPayoutDate" type="date"></label>
+        <label>Payout Amount £<input id="sale_finPayoutAmount" type="number" placeholder="0"></label>
+      </div>
+
+      <div id="sale_px_section" class="row" style="display:none; margin-top:10px; padding:10px; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
+        <div class="small" style="width:100%; color:#9fb4ff; margin-bottom:6px; font-weight:600;">PX Details</div>
+        <label>Part-ex Notes<input id="sale_partex" style="min-width:320px" placeholder="Optional notes"></label>
+        <label>PX Reg<input id="sale_pxReg" placeholder="AB12CDE"></label>
+        <label>PX Make<input id="sale_pxMake" placeholder="Make"></label>
+        <label>PX Model<input id="sale_pxModel" placeholder="Model"></label>
+      </div>
+    </div>
+
+    <div class="salesAdvanced">
+      <details>
+        <summary>Funds to Receive / Settlements</summary>
+        <div class="small" style="margin:6px 0 10px;opacity:.85">Track card settlements, finance payouts and other money still to come in.</div>
         <div class="row" style="margin:0;">
           <label class="small">Type
             <select id="rc_type">
@@ -5595,35 +5576,115 @@ function viewSales(){
               <option value="other">Other</option>
             </select>
           </label>
-
           <label class="small">Amount £<input id="rc_amount" type="number" placeholder="0" style="min-width:120px;"></label>
           <label class="small">Expected date<input id="rc_expected" type="date" style="min-width:150px;"></label>
           <label class="small">Note<input id="rc_note" placeholder="e.g. Stripe / Close Brothers part 1" style="min-width:240px;"></label>
-
           <button id="rc_addLine" class="primary" type="button">Add line</button>
           <button id="rc_autoCard" type="button">Auto Card +3 days</button>
         </div>
+        <div id="rc_summary" class="small" style="margin-top:8px;"></div>
+        <table class="table" style="margin-top:8px;">
+          <thead>
+            <tr><th>Type</th><th class="right">Amount</th><th>Expected</th><th>Status</th><th>Received date</th><th>Note</th><th>Action</th></tr>
+          </thead>
+          <tbody id="rc_body"></tbody>
+        </table>
+      </details>
+    </div>
+  </div>
+
+  <div class="salesWizardPane" data-sale-step="4">
+    <div class="salesSectionCard">
+      <div class="salesSectionTitle">Extras, Warranty & Final Save</div>
+      <div class="salesQuickGrid salesMetric">
+        <label>Add-ons Total £<input id="sale_addonsTotal" type="number" readonly></label>
+        <label>Add-on Profit £<input id="sale_addonProfit" type="number" readonly></label>
+        <label>Vehicle Profit £<input id="sale_vehicleProfit" type="number" readonly></label>
+        <label>Total Deal Profit £<input id="sale_totalDealProfit" type="number" readonly></label>
       </div>
 
-      <div id="rc_summary" class="small" style="margin-top:8px;"></div>
+      <div class="row" style="margin-top:10px;">
+        <label>Warranty Type
+          <select id="sale_warrantyType">
+            <option value="">None / Not set</option>
+            <option value="In-house">In-house Warranty</option>
+            <option value="Third-Party">Third-Party Warranty</option>
+            <option value="Manufacturer">Manufacturer</option>
+          </select>
+        </label>
+        <label>Warranty Provider<input id="sale_warrantyProvider" placeholder="Handler / RAC / etc"></label>
+        <label>Warranty Months<input id="sale_warrantyMonths" type="number" placeholder="e.g. 3"></label>
+        <label>Warranty Policy #<input id="sale_warrantyPolicy" placeholder="Policy number"></label>
+        <label>Lead Source
+          <select id="sale_lead">
+            <option value="">Not set</option>
+            <option value="AutoTrader">AutoTrader</option>
+            <option value="Website">Website</option>
+            <option value="Walk-in">Walk-in</option>
+            <option value="Facebook">Facebook</option>
+            <option value="AA Cars">AA Cars</option>
+            <option value="Gumtree">Gumtree</option>
+            <option value="Referral">Referral</option>
+            <option value="Other">Other</option>
+          </select>
+        </label>
+      </div>
 
-      <table class="table" style="margin-top:8px;">
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th class="right">Amount</th>
-            <th>Expected</th>
-            <th>Status</th>
-            <th>Received date</th>
-            <th>Note</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="rc_body"></tbody>
-      </table>
+      <div class="row" style="margin-top:10px;">
+        <label style="min-width:320px">
+          Invoice Special Notes (max 2 lines)
+          <textarea id="s_invoiceNote" rows="2" style="min-height:42px;max-height:42px;resize:none;overflow:hidden" placeholder="MAX 2 lines. e.g. 3 MONTH WARRANTY INCLUDED"></textarea>
+          <div class="small" style="opacity:.8">Tip: keep this max 2 lines. Long stuff goes in Terms.</div>
+        </label>
+      </div>
+
+      <div class="salesAdvanced" style="margin-top:10px;">
+        <details>
+          <summary>Extras / Add-ons</summary>
+          <div class="small" style="margin:6px 0 10px;opacity:.85">Use this for commission, warranty sold, admin fee, delivery or other extra income. These do not change the vehicle invoice price.</div>
+          <div class="row" style="margin:0;">
+            <label class="small">Type
+              <select id="ao_type">
+                <option value="Commission">Commission</option>
+                <option value="Warranty">Warranty</option>
+                <option value="Admin Fee">Admin Fee</option>
+                <option value="Delivery">Delivery</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label class="small">Description<input id="ao_desc" placeholder="e.g. Warranty sold / finance commission" style="min-width:220px;"></label>
+            <label class="small">Sell Amount £<input id="ao_sell" type="number" placeholder="0" style="min-width:120px;"></label>
+            <label class="small">Cost £<input id="ao_cost" type="number" placeholder="0" style="min-width:120px;"></label>
+            <button id="ao_addLine" class="primary" type="button">Add add-on</button>
+          </div>
+          <div id="ao_summary" class="small" style="margin-top:8px;"></div>
+          <table class="table" style="margin-top:8px;">
+            <thead><tr><th>Type</th><th>Description</th><th class="right">Sell</th><th class="right">Cost</th><th class="right">Profit</th><th>Action</th></tr></thead>
+            <tbody id="ao_body"></tbody>
+          </table>
+        </details>
+      </div>
+
+      <div class="salesAdvanced" style="margin-top:10px;">
+        <details>
+          <summary>Advanced invoice terms</summary>
+          <label style="min-width:320px;flex:1;margin-top:10px;display:block;">
+            <span style="display:block;margin-bottom:6px;">Invoice Terms (auto from Settings — edit if needed)</span>
+            <textarea id="sale_terms" style="min-height:120px" placeholder="Terms for this sale"></textarea>
+            <div id="sale_termsHint" class="small" style="opacity:.8">Using default sale terms from Settings.</div>
+          </label>
+        </details>
+      </div>
     </div>
-    
-    <button id="sale_add" class="primary">Record / Update</button>
+  </div>
+
+  <div class="salesWizardActions">
+    <div class="small">Use Easy mode for staff. Show all options when admin needs everything visible.</div>
+    <div class="row" style="margin:0;gap:8px;">
+      <button id="sales_prev" type="button">Back</button>
+      <button id="sales_next" class="primary" type="button">Next</button>
+      <button id="sale_add" class="primary" type="button">Record / Update</button>
+    </div>
   </div>
 
   <table class="table" style="margin-top:10px">
@@ -5664,6 +5725,51 @@ function viewSales(){
     </table>
   </div>
   `;
+
+  (function initSalesWizard(){
+    const panes = [...wrap.querySelectorAll('[data-sale-step]')];
+    const pills = [...wrap.querySelectorAll('[data-pill]')];
+    const btnPrev = wrap.querySelector('#sales_prev');
+    const btnNext = wrap.querySelector('#sales_next');
+    const btnEasy = wrap.querySelector('#sales_mode_easy');
+    const btnFull = wrap.querySelector('#sales_mode_full');
+    const btnQuickNext = wrap.querySelector('#sales_next_from_vehicle');
+    const btnSave = wrap.querySelector('#sale_add');
+    let step = 1;
+    let fullMode = false;
+    function renderWizard(){
+      panes.forEach(p=>{
+        const n = Number(p.getAttribute('data-sale-step')||0);
+        p.classList.toggle('active', fullMode || n === step);
+        p.style.display = (fullMode || n === step) ? '' : 'none';
+      });
+      pills.forEach(p=>{
+        const n = Number(p.getAttribute('data-pill')||0);
+        p.classList.toggle('active', fullMode ? true : n === step);
+      });
+      if(btnPrev){ btnPrev.style.display = fullMode ? 'none' : ''; btnPrev.disabled = step <= 1; }
+      if(btnNext){ btnNext.style.display = fullMode ? 'none' : ''; btnNext.disabled = step >= 4; btnNext.textContent = step >= 4 ? 'Review complete' : 'Next'; }
+      if(btnSave){ btnSave.textContent = 'Record / Update'; }
+      if(btnEasy){ btnEasy.className = fullMode ? 'small' : 'primary small'; }
+      if(btnFull){ btnFull.className = fullMode ? 'primary small' : 'small'; }
+    }
+    function goToStep(n){
+      step = Math.max(1, Math.min(4, Number(n||1)));
+      renderWizard();
+    }
+    if(btnPrev) btnPrev.addEventListener('click', ()=>goToStep(step-1));
+    if(btnNext) btnNext.addEventListener('click', ()=>goToStep(step+1));
+    if(btnQuickNext) btnQuickNext.addEventListener('click', ()=>goToStep(2));
+    pills.forEach(p=>p.addEventListener('click', ()=>{ if(!fullMode) goToStep(p.getAttribute('data-pill')); }));
+    if(btnEasy) btnEasy.addEventListener('click', ()=>{ fullMode = false; renderWizard(); });
+    if(btnFull) btnFull.addEventListener('click', ()=>{ fullMode = true; renderWizard(); });
+    wrap._salesWizard = {
+      goToStep,
+      setFullMode(v){ fullMode = !!v; renderWizard(); },
+      reset(){ step = 1; fullMode = false; renderWizard(); }
+    };
+    renderWizard();
+  })();
 
   const finSel = wrap.querySelector('#sale_finCoList');
   
@@ -6499,6 +6605,7 @@ function viewSales(){
 
     receiptsToForm([]);
     addonsToForm([]);
+    try { if (wrap._salesWizard) wrap._salesWizard.reset(); } catch(_) {}
   }
   
   function rows(){ 
@@ -7080,6 +7187,7 @@ function viewSales(){
       addonsToForm(s.addons);
 
       updateWarn();
+      try { if (wrap._salesWizard) wrap._salesWizard.setFullMode(true); } catch(_) {}
       document.getElementById('app').scrollIntoView({ behavior: 'smooth' });
     }
 
