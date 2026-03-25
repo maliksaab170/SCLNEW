@@ -685,8 +685,21 @@ button.primary{
   font-weight:950;
   font-size:14px;
   list-style:none;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
 }
 .repSum::-webkit-details-marker{ display:none; }
+.repSum::after{
+  content:'▼';
+  font-size:12px;
+  color:var(--mut);
+  transition:transform .15s ease;
+}
+.reportsWrap details[open] > .repSum::after{
+  content:'▲';
+}
 
 .repTopRow{
   display:flex;
@@ -6639,7 +6652,7 @@ function viewSales(){
         }
         const partexVehicle = (db.vehicles||[]).find(vv => vv.originalSaleId === s.id);
         const partexInfo = partexVehicle
-          ? `<br><small style="color:#53a8ff;">PX: ${partexVehicle.reg} (in stock)</small>`
+          ? `<br><small style="color:#53a8ff;">PX: ${partexVehicle.reg} (${partexVehicle.status === 'sold' ? 'sold' : 'in stock'})</small>`
           : '';
         
         const st = s.status || 'completed';
@@ -7452,32 +7465,60 @@ try {
     if (!confirm('Payments + PX do not equal sale price. Continue?')) return;
   }
 
-  // 🧠 Helper to create PX vehicle (only for completed sales)
+  // 🧠 Helper to create or update PX vehicle for a completed sale
   function ensurePartExVehicle(sale, vStat){
-    if (!sale.pxReg || !(sale.pxAllowance > 0)) return;
-    const existingPx = (db.vehicles || []).find(v => v.originalSaleId === sale.id);
-    if (existingPx) return; // already created before
+    const pxReg = normalizeReg(sale.pxReg || '');
+    const pxAllowance = Number(sale.pxAllowance || 0);
+    if (!pxReg || !(pxAllowance > 0)) return null;
 
-    const px = {
-      id: uid(),
-      reg: sale.pxReg,
-      make: sale.pxMake,
-      model: sale.pxModel,
+    const nowIso = new Date().toISOString();
+    const existingPx = (db.vehicles || []).find(v => v.originalSaleId === sale.id);
+    const base = {
+      reg: pxReg,
+      make: sale.pxMake || '',
+      model: sale.pxModel || '',
       colour: '',
       fuel: '',
       mileage: 0,
-      purchase: sale.pxAllowance,
+      purchase: pxAllowance,
+      purchaseDate: sale.date || nowIso.slice(0,10),
+      stockRef: (existingPx && existingPx.stockRef) || makeStockRef(pxReg, sale.date || nowIso.slice(0,10)),
       ownerType: 'owned',
       investor: '',
+      investorId: null,
       supplier: 'PART-EX',
       supplierNote: `PX from sale ${sale.invNo} (${vStat?.reg || 'Unknown'})`,
       originalSaleId: sale.id,
       vin: '',
       status: 'for sale',
-      createdAt: new Date().toISOString(),
+      updatedAt: nowIso,
+    };
+
+    if (existingPx) {
+      Object.assign(existingPx, base, {
+        id: existingPx.id,
+        createdAt: existingPx.createdAt || nowIso,
+      });
+      addAudit('update', 'vehicle', existingPx.id, 'PX ' + existingPx.reg + ' ' + (existingPx.make || '') + ' ' + (existingPx.model || '') + ' from sale ' + sale.invNo + ' (' + (vStat?.reg || 'Unknown') + ')');
+      return existingPx;
+    }
+
+    const px = {
+      id: uid(),
+      createdAt: nowIso,
+      ...base,
     };
     db.vehicles.unshift(px);
     addAudit('add', 'vehicle', px.id, 'PX ' + px.reg + ' ' + px.make + ' ' + px.model + ' from sale ' + sale.invNo + ' (' + (vStat?.reg || 'Unknown') + ')');
+    return px;
+  }
+
+  function removePartExVehicle(saleId){
+    const pxVehicle = (db.vehicles || []).find(v => v.originalSaleId === saleId);
+    if (!pxVehicle) return;
+    db.vehicles = (db.vehicles || []).filter(v => v.id !== pxVehicle.id);
+    db.vehicleExpenses = (db.vehicleExpenses || []).filter(e => e.vehicleId !== pxVehicle.id);
+    addAudit('delete', 'vehicle', pxVehicle.id, 'Removed PX ' + (pxVehicle.reg || '') + ' linked to sale ' + saleId);
   }
 
   if (editId) { 
@@ -7488,19 +7529,14 @@ try {
     const vM = db.vehicles.find(x => x.id === s.vehicleId); 
     if (vM) vM.mileage = s.mileage || vM.mileage; 
 
-    // Status transitions:
-    if (prevStatus !== 'completed' && saleStatus === 'completed') {
-      // became a real sale now → mark sold + PX if needed
+    // Status / PX sync on edit
+    if (saleStatus === 'completed') {
       if (vM) vM.status = 'sold';
-      ensurePartExVehicle(s, vM);
-    } else if (prevStatus === 'completed' && saleStatus !== 'completed') {
-      // was completed, now proforma/cancelled → put back to stock + remove PX
+      if (s.pxReg && Number(s.pxAllowance || 0) > 0) ensurePartExVehicle(s, vM);
+      else removePartExVehicle(s.id);
+    } else {
       if (vM) vM.status = 'for sale';
-      const pxVehicle = (db.vehicles || []).find(v => v.originalSaleId === s.id);
-      if (pxVehicle) {
-        db.vehicles = db.vehicles.filter(v => v.id !== pxVehicle.id);
-        db.vehicleExpenses = (db.vehicleExpenses || []).filter(e => e.vehicleId !== pxVehicle.id);
-      }
+      removePartExVehicle(s.id);
     }
 
     editId = null;
@@ -7517,8 +7553,9 @@ try {
       vStat.mileage = s.mileage || vStat.mileage; 
     }
 
-    if (saleStatus === 'completed' && vStat) {
-      ensurePartExVehicle(s, vStat);
+    if (saleStatus === 'completed') {
+      if (s.pxReg && Number(s.pxAllowance || 0) > 0) ensurePartExVehicle(s, vStat);
+      else removePartExVehicle(s.id);
     }
   }
   
@@ -10324,12 +10361,33 @@ function viewReports(){
     }
   })();
 
-// Reports tiles quick-jump (fix: make the top tiles clickable)
+// Reports accordion + tiles quick-jump/toggle
+  function closeOtherReportDetails(current){
+    (wrap.querySelectorAll('.reportsWrap details') || []).forEach(d=>{
+      if(d !== current) d.open = false;
+    });
+  }
+
+  (wrap.querySelectorAll('.reportsWrap details') || []).forEach(det=>{
+    det.addEventListener('toggle', ()=>{
+      if(det.open) closeOtherReportDetails(det);
+    });
+  });
+
   (wrap.querySelectorAll('.reportTile')||[]).forEach(tile=>{
     tile.onclick = () => {
       const sel = tile.getAttribute('data-jump') || '';
       const target = sel ? wrap.querySelector(sel) : null;
       if(target){
+        const fold = target.matches('details') ? target : target.querySelector('details');
+        if(fold){
+          if(fold.open){
+            fold.open = false;
+          }else{
+            closeOtherReportDetails(fold);
+            fold.open = true;
+          }
+        }
         target.scrollIntoView({behavior:'smooth', block:'start'});
         // quick highlight
         const prev = target.style.boxShadow;
@@ -14084,6 +14142,13 @@ render();
       tile.onclick = function(){
         const target = wrap.querySelector('#rep_fca_ccr009');
         if(target){
+          const fold = target.querySelector('#fca_fold');
+          if (fold){
+            (wrap.querySelectorAll('.reportsWrap details') || []).forEach(function(d){
+              if(d !== fold) d.open = false;
+            });
+            fold.open = !fold.open;
+          }
           target.scrollIntoView({behavior:'smooth', block:'start'});
           const prev = target.style.boxShadow;
           target.style.boxShadow = '0 0 0 2px rgba(90,176,255,.45), 0 18px 46px rgba(0,0,0,.32)';
@@ -14098,9 +14163,10 @@ render();
     card.className = 'reportCard';
     card.id = 'rep_fca_ccr009';
     card.innerHTML = ''
-      + '<h3>FCA / CCR009 Dashboard <span class="fcaBadge">Credit broking</span></h3>'
-      + '<div class="small" style="margin-top:-4px;margin-bottom:10px">Annual internal pack for CCR009-style tracking, lender breakdown, revenue totals and missing-data checks.</div>'
-      + '<div class="grid2">'
+      + '<details id="fca_fold" data-anchor="rep_fca_ccr009">'
+      +   '<summary class="repSum">FCA / CCR009 Dashboard <span class="fcaBadge">Credit broking</span></summary>'
+      +   '<div class="small" style="margin-top:10px;margin-bottom:10px">Annual internal pack for CCR009-style tracking, lender breakdown, revenue totals and missing-data checks.</div>'
+      +   '<div class="grid2">'
       +   '<div class="card flat">'
       +     '<div class="fcaSectionTitle">Run annual report</div>'
       +     '<div class="row">'
@@ -14152,7 +14218,8 @@ render();
       +   '</div>'
       + '</div>'
 
-      + '<div id="fca_out" style="margin-top:12px"></div>';
+      +   '<div id="fca_out" style="margin-top:12px"></div>'
+      + '</details>';
 
     if (auditCard) auditCard.insertAdjacentElement('beforebegin', card);
     else wrap.appendChild(card);
