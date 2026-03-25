@@ -13094,7 +13094,24 @@ function viewComplaints(){
       .no-print{margin:8px 0}
       @media print{.no-print{display:none}}
     </style>
-    </head><body>
+    
+<style id="fca-reporting-patch-style">
+.fcaBadge{display:inline-block;padding:3px 9px;border-radius:999px;border:1px solid rgba(90,176,255,.30);background:rgba(90,176,255,.10);font-size:11px;font-weight:900;color:#cfe6ff}
+.fcaGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.fcaMetric{padding:12px;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03)}
+.fcaMetric .lbl{font-size:11px;color:var(--mut);font-weight:900;text-transform:uppercase;letter-spacing:.05em}
+.fcaMetric .val{font-size:24px;font-weight:950;margin-top:6px}
+.fcaSmall{font-size:12px;color:var(--mut)}
+.fcaIssueGood{color:#9ef0b8}
+.fcaIssueWarn{color:#ffd694}
+.fcaIssueBad{color:#ffb4b4}
+.fcaSectionTitle{font-size:12px;font-weight:950;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:0 0 8px}
+.fcaInlineChecks{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.fcaInlineChecks label{display:flex;flex-direction:row;align-items:center;gap:6px;background:rgba(255,255,255,.03);padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.08)}
+.fcaNote{padding:10px 12px;border-radius:12px;background:rgba(90,176,255,.08);border:1px solid rgba(90,176,255,.18);font-size:12px}
+</style>
+
+</head><body>
     <button class="no-print" onclick="window.print()">Print / Save PDF</button>
     <h2>Customer Complaints Log</h2>
     <table><thead><tr>
@@ -13712,6 +13729,613 @@ render();
     <div id="modalActions" class="modalActions"></div>
   </div>
 </div>
+
+
+<script id="fca-reporting-patch-script">
+(function(){
+  if (window.__fca_reporting_patch__) return;
+  window.__fca_reporting_patch__ = true;
+
+  function fcaEsc(s){
+    s = (s == null) ? '' : String(s);
+    return s.replace(/[&<>"]/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]; });
+  }
+  function fcaPrice(n){ return '£' + Number(n || 0).toFixed(2); }
+  function fcaYearStart(year){ return String(year) + '-01-01'; }
+  function fcaYearEnd(year){ return String(year) + '-12-31'; }
+  function fcaDateInYear(d, year){
+    const s = String(d || '').slice(0,10);
+    return !!s && s >= fcaYearStart(year) && s <= fcaYearEnd(year);
+  }
+  function ensureFCACompany(){
+    window.db = window.db || {};
+    db.company = db.company || {};
+    db.company.fca = db.company.fca || {};
+    const f = db.company.fca;
+    if (!Array.isArray(f.marketingChannels)) f.marketingChannels = [];
+    if (!Array.isArray(f.financeTypes)) f.financeTypes = [];
+    if (!Array.isArray(f.consumerChannels)) f.consumerChannels = [];
+    if (!Array.isArray(f.addonsNotIncluded)) f.addonsNotIncluded = [];
+    if (!Array.isArray(f.addonsIncluded)) f.addonsIncluded = [];
+    if (typeof f.tradeBodyMember !== 'string') f.tradeBodyMember = '';
+    if (typeof f.tradeBodyName !== 'string') f.tradeBodyName = '';
+    if (typeof f.vehicleCondition !== 'string') f.vehicleCondition = 'Used';
+    if (typeof f.arrangesVehicleType !== 'string') f.arrangesVehicleType = 'Motor vehicles';
+    if (typeof f.creditEngageWith !== 'string') f.creditEngageWith = 'Lenders';
+    if (typeof f.notes !== 'string') f.notes = '';
+    return f;
+  }
+  function ensureSaleFCA(s){
+    if (!s) return s;
+    if (typeof s.fcaIsCreditBrokered !== 'string') s.fcaIsCreditBrokered = '';
+    if (typeof s.fcaRemuneration !== 'string') s.fcaRemuneration = '';
+    if (typeof s.fcaCommissionEarned !== 'number') s.fcaCommissionEarned = Number(s.fcaCommissionEarned || 0);
+    if (typeof s.fcaFeeFromIndividual !== 'number') s.fcaFeeFromIndividual = Number(s.fcaFeeFromIndividual || 0);
+    if (typeof s.fcaOtherRevenue !== 'number') s.fcaOtherRevenue = Number(s.fcaOtherRevenue || 0);
+    if (typeof s.fcaCommissionPaid !== 'number') s.fcaCommissionPaid = Number(s.fcaCommissionPaid || 0);
+    if (typeof s.fcaCustomerChannel !== 'string') s.fcaCustomerChannel = '';
+    if (typeof s.fcaCommissionDisclosure !== 'string') s.fcaCommissionDisclosure = '';
+    if (typeof s.fcaCommissionValueDisclosure !== 'string') s.fcaCommissionValueDisclosure = '';
+    return s;
+  }
+  function getSaleCommissionAddon(s){
+    return (Array.isArray(s && s.addons) ? s.addons : []).reduce(function(t, a){
+      const type = String((a && a.type) || '').toLowerCase();
+      const desc = String((a && a.description) || '').toLowerCase();
+      const isComm = type === 'commission' || desc.indexOf('commission') >= 0 || desc.indexOf('finance') >= 0;
+      return t + (isComm ? Number((a && a.sellAmount) || 0) : 0);
+    }, 0);
+  }
+  function getSaleOtherAddonRevenue(s){
+    return (Array.isArray(s && s.addons) ? s.addons : []).reduce(function(t, a){
+      const type = String((a && a.type) || '').toLowerCase();
+      const isOther = type === 'admin fee' || type === 'delivery' || type === 'other';
+      return t + (isOther ? Number((a && a.sellAmount) || 0) : 0);
+    }, 0);
+  }
+  function isFinanceSaleForFCA(s){
+    if (typeof window.isRealSale === 'function' && !window.isRealSale(s)) return false;
+    return !!(
+      String((s && s.financeCompany) || '').trim() ||
+      Number((s && s.finance) || 0) > 0 ||
+      String((s && s.fcaIsCreditBrokered) || '').toLowerCase() === 'yes'
+    );
+  }
+  function normaliseChannel(v){
+    const s = String(v || '').trim();
+    return s || '(Not set)';
+  }
+  function buildFCAYearData(year){
+    ensureFCACompany();
+    const sales = (db.sales || []).map(ensureSaleFCA);
+    const complaints = db.complaints || [];
+    const yearSales = sales.filter(function(s){ return fcaDateInYear(s && s.date, year); });
+    const realSales = yearSales.filter(function(s){
+      return (typeof window.isRealSale === 'function') ? window.isRealSale(s) : true;
+    });
+    const financeSales = realSales.filter(isFinanceSaleForFCA);
+    const cashSales = realSales.filter(function(s){ return !isFinanceSaleForFCA(s); });
+
+    const out = {
+      year: Number(year),
+      totalSales: realSales.length,
+      financeSales: financeSales.length,
+      cashSales: cashSales.length,
+      introductions: financeSales.length,
+      complaints: complaints.filter(function(c){ return fcaDateInYear(c && (c.date || c.createdAt), year); }).length,
+      totalCreditBrokingRevenue: 0,
+      totalCommissionEarned: 0,
+      totalFeesFromIndividuals: 0,
+      totalOtherRevenue: 0,
+      totalCommissionPaid: 0,
+      lenders: {},
+      channels: {},
+      remuneration: {},
+      disclosure: { proactive: 0, value: 0, notSet: 0 },
+      dataIssues: [],
+      rows: []
+    };
+
+    financeSales.forEach(function(s){
+      const commissionEarned = Number(s.fcaCommissionEarned || getSaleCommissionAddon(s) || 0);
+      const feesFromIndividuals = Number(s.fcaFeeFromIndividual || 0);
+      const otherRevenue = Number(s.fcaOtherRevenue || getSaleOtherAddonRevenue(s) || 0);
+      const commissionPaid = Number(s.fcaCommissionPaid || 0);
+      const remuneration = String(s.fcaRemuneration || '').trim() || '(Not set)';
+      const lender = String(s.financeCompany || '').trim() || '(Not set)';
+      const channel = normaliseChannel(s.fcaCustomerChannel || s.leadSource);
+
+      out.totalCommissionEarned += commissionEarned;
+      out.totalFeesFromIndividuals += feesFromIndividuals;
+      out.totalOtherRevenue += otherRevenue;
+      out.totalCommissionPaid += commissionPaid;
+      out.totalCreditBrokingRevenue += (commissionEarned + feesFromIndividuals + otherRevenue);
+
+      out.lenders[lender] = out.lenders[lender] || { introductions: 0, revenue: 0, commissionPaid: 0 };
+      out.lenders[lender].introductions += 1;
+      out.lenders[lender].revenue += (commissionEarned + feesFromIndividuals + otherRevenue);
+      out.lenders[lender].commissionPaid += commissionPaid;
+
+      out.channels[channel] = (out.channels[channel] || 0) + 1;
+      out.remuneration[remuneration] = (out.remuneration[remuneration] || 0) + 1;
+
+      if (String(s.fcaCommissionDisclosure || '').toLowerCase() === 'yes') out.disclosure.proactive += 1;
+      if (String(s.fcaCommissionValueDisclosure || '').toLowerCase() === 'yes') out.disclosure.value += 1;
+      if (!String(s.fcaCommissionDisclosure || '').trim() || !String(s.fcaCommissionValueDisclosure || '').trim()) out.disclosure.notSet += 1;
+
+      const issues = [];
+      if (!String(s.financeCompany || '').trim()) issues.push('Finance company not set');
+      if (!String(s.fcaRemuneration || '').trim()) issues.push('Remuneration not set');
+      if (!(commissionEarned || feesFromIndividuals || otherRevenue) && remuneration !== 'No remuneration') issues.push('Broking revenue empty');
+      if (!String(s.fcaCustomerChannel || s.leadSource || '').trim()) issues.push('Customer channel missing');
+      if (issues.length){
+        out.dataIssues.push({
+          id: s.id || '',
+          date: s.date || '',
+          invNo: s.invNo || '',
+          reg: ((db.vehicles || []).find(function(v){ return v.id === s.vehicleId; }) || {}).reg || '',
+          customer: s.buyer || '',
+          issues: issues.join('; ')
+        });
+      }
+
+      out.rows.push({
+        date: s.date || '',
+        invoice: s.invNo || '',
+        reg: ((db.vehicles || []).find(function(v){ return v.id === s.vehicleId; }) || {}).reg || '',
+        customer: s.buyer || '',
+        financeCompany: lender,
+        financeAmount: Number(s.finance || 0),
+        commissionEarned: commissionEarned,
+        feesFromIndividuals: feesFromIndividuals,
+        otherRevenue: otherRevenue,
+        commissionPaid: commissionPaid,
+        remuneration: remuneration,
+        customerChannel: channel,
+        proactiveCommissionDisclosure: s.fcaCommissionDisclosure || '',
+        proactiveValueDisclosure: s.fcaCommissionValueDisclosure || ''
+      });
+    });
+
+    return out;
+  }
+  window.buildFCAYearData = buildFCAYearData;
+
+  function toCsvRow(arr){
+    return arr.map(function(v){
+      v = (v == null) ? '' : String(v);
+      return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    }).join(',');
+  }
+
+  function exportFCACSV(year){
+    const r = buildFCAYearData(year);
+    const rows = [];
+    rows.push(['Metric','Value']);
+    rows.push(['Reporting year', r.year]);
+    rows.push(['Total completed sales', r.totalSales]);
+    rows.push(['Finance / broking sales', r.financeSales]);
+    rows.push(['Cash sales', r.cashSales]);
+    rows.push(['Total introductions', r.introductions]);
+    rows.push(['Complaints', r.complaints]);
+    rows.push(['Total credit broking revenue', r.totalCreditBrokingRevenue.toFixed(2)]);
+    rows.push(['Total commission earned', r.totalCommissionEarned.toFixed(2)]);
+    rows.push(['Total fees from individuals', r.totalFeesFromIndividuals.toFixed(2)]);
+    rows.push(['Other revenue received', r.totalOtherRevenue.toFixed(2)]);
+    rows.push(['Total commission / merchant fees paid', r.totalCommissionPaid.toFixed(2)]);
+    rows.push([]);
+    rows.push(['Lender','Introductions','Revenue','Commission / merchant fees paid']);
+    Object.keys(r.lenders).sort().forEach(function(k){
+      const x = r.lenders[k];
+      rows.push([k, x.introductions, x.revenue.toFixed(2), x.commissionPaid.toFixed(2)]);
+    });
+    rows.push([]);
+    rows.push(['Date','Invoice','Reg','Customer','Finance Company','Finance Amount','Commission Earned','Fees From Individuals','Other Revenue','Commission Paid','Remuneration','Customer Channel','Proactive Commission Disclosure','Proactive Value Disclosure']);
+    r.rows.forEach(function(x){
+      rows.push([x.date,x.invoice,x.reg,x.customer,x.financeCompany,x.financeAmount,x.commissionEarned,x.feesFromIndividuals,x.otherRevenue,x.commissionPaid,x.remuneration,x.customerChannel,x.proactiveCommissionDisclosure,x.proactiveValueDisclosure]);
+    });
+    const csv = rows.map(toCsvRow).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    a.download = 'fca_ccr009_' + String(year) + '.csv';
+    a.click();
+  }
+  function exportFCAJSON(year){
+    const r = buildFCAYearData(year);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], {type:'application/json'}));
+    a.download = 'fca_ccr009_' + String(year) + '.json';
+    a.click();
+  }
+  function exportFCAXLSX(year){
+    const r = buildFCAYearData(year);
+    if (!window.XLSX) return exportFCACSV(year);
+    const wb = XLSX.utils.book_new();
+
+    const summary = [
+      ['Metric','Value'],
+      ['Reporting year', r.year],
+      ['Total completed sales', r.totalSales],
+      ['Finance / broking sales', r.financeSales],
+      ['Cash sales', r.cashSales],
+      ['Total introductions', r.introductions],
+      ['Complaints', r.complaints],
+      ['Total credit broking revenue', r.totalCreditBrokingRevenue],
+      ['Total commission earned', r.totalCommissionEarned],
+      ['Total fees from individuals', r.totalFeesFromIndividuals],
+      ['Other revenue received', r.totalOtherRevenue],
+      ['Total commission / merchant fees paid', r.totalCommissionPaid]
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
+
+    const lenders = [['Lender','Introductions','Revenue','Commission / merchant fees paid']];
+    Object.keys(r.lenders).sort().forEach(function(k){
+      const x = r.lenders[k];
+      lenders.push([k, x.introductions, x.revenue, x.commissionPaid]);
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(lenders), 'Lenders');
+
+    const sales = [['Date','Invoice','Reg','Customer','Finance Company','Finance Amount','Commission Earned','Fees From Individuals','Other Revenue','Commission Paid','Remuneration','Customer Channel','Proactive Commission Disclosure','Proactive Value Disclosure']];
+    r.rows.forEach(function(x){
+      sales.push([x.date,x.invoice,x.reg,x.customer,x.financeCompany,x.financeAmount,x.commissionEarned,x.feesFromIndividuals,x.otherRevenue,x.commissionPaid,x.remuneration,x.customerChannel,x.proactiveCommissionDisclosure,x.proactiveValueDisclosure]);
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sales), 'Sales');
+
+    if (r.dataIssues.length){
+      const issues = [['Date','Invoice','Reg','Customer','Issues']];
+      r.dataIssues.forEach(function(x){ issues.push([x.date,x.invNo,x.reg,x.customer,x.issues]); });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(issues), 'Data issues');
+    }
+
+    XLSX.writeFile(wb, 'fca_ccr009_' + String(year) + '.xlsx');
+  }
+  window.exportFCACSV = exportFCACSV;
+  window.exportFCAJSON = exportFCAJSON;
+  window.exportFCAXLSX = exportFCAXLSX;
+
+  function renderFCAReportInto(wrap){
+    const yearEl = wrap.querySelector('#fca_year');
+    const outEl = wrap.querySelector('#fca_out');
+    const year = Number((yearEl && yearEl.value) || new Date().getFullYear());
+    const r = buildFCAYearData(year);
+
+    const lenderRows = Object.keys(r.lenders).sort(function(a,b){
+      return (r.lenders[b].introductions - r.lenders[a].introductions) || a.localeCompare(b);
+    }).map(function(k){
+      const x = r.lenders[k];
+      return '<tr><td>' + fcaEsc(k) + '</td><td class="right">' + x.introductions + '</td><td class="right">' + fcaPrice(x.revenue) + '</td><td class="right">' + fcaPrice(x.commissionPaid) + '</td></tr>';
+    }).join('') || '<tr><td colspan="4" class="small">No finance / broking sales in this year.</td></tr>';
+
+    const channelRows = Object.keys(r.channels).sort().map(function(k){
+      return '<tr><td>' + fcaEsc(k) + '</td><td class="right">' + r.channels[k] + '</td></tr>';
+    }).join('') || '<tr><td colspan="2" class="small">No channels recorded.</td></tr>';
+
+    const issuesHtml = r.dataIssues.length
+      ? '<div class="fcaIssueWarn"><b>Data quality needs attention:</b> ' + r.dataIssues.length + ' finance sale(s) have missing FCA fields.</div>'
+      : '<div class="fcaIssueGood"><b>Data quality looks good:</b> no missing FCA essentials found for finance sales.</div>';
+
+    const issueRows = r.dataIssues.slice(0, 50).map(function(x){
+      return '<tr><td>' + fcaEsc(ddmmyyyy(x.date || '')) + '</td><td>' + fcaEsc(x.invNo) + '</td><td>' + fcaEsc(x.reg) + '</td><td>' + fcaEsc(x.customer) + '</td><td>' + fcaEsc(x.issues) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="small">No issues found.</td></tr>';
+
+    outEl.innerHTML = ''
+      + '<div class="fcaGrid">'
+      +   '<div class="fcaMetric"><div class="lbl">Completed sales</div><div class="val">' + r.totalSales + '</div></div>'
+      +   '<div class="fcaMetric"><div class="lbl">Finance / broking sales</div><div class="val">' + r.financeSales + '</div></div>'
+      +   '<div class="fcaMetric"><div class="lbl">Cash sales</div><div class="val">' + r.cashSales + '</div></div>'
+      +   '<div class="fcaMetric"><div class="lbl">Introductions</div><div class="val">' + r.introductions + '</div></div>'
+      +   '<div class="fcaMetric"><div class="lbl">Broking revenue</div><div class="val">' + fcaPrice(r.totalCreditBrokingRevenue) + '</div></div>'
+      +   '<div class="fcaMetric"><div class="lbl">Commission earned</div><div class="val">' + fcaPrice(r.totalCommissionEarned) + '</div></div>'
+      +   '<div class="fcaMetric"><div class="lbl">Fees from individuals</div><div class="val">' + fcaPrice(r.totalFeesFromIndividuals) + '</div></div>'
+      +   '<div class="fcaMetric"><div class="lbl">Commission / fees paid</div><div class="val">' + fcaPrice(r.totalCommissionPaid) + '</div></div>'
+      +   '<div class="fcaMetric"><div class="lbl">Complaints logged</div><div class="val">' + r.complaints + '</div></div>'
+      + '</div>'
+      + '<div class="grid2" style="margin-top:12px">'
+      +   '<div class="card flat">'
+      +     '<div class="fcaSectionTitle">Lender breakdown</div>'
+      +     '<div class="tableWrap"><table class="table compact"><thead><tr><th>Lender</th><th class="right">Introductions</th><th class="right">Revenue</th><th class="right">Commission paid</th></tr></thead><tbody>' + lenderRows + '</tbody></table></div>'
+      +   '</div>'
+      +   '<div class="card flat">'
+      +     '<div class="fcaSectionTitle">Customer channel breakdown</div>'
+      +     '<div class="tableWrap"><table class="table compact"><thead><tr><th>Channel</th><th class="right">Deals</th></tr></thead><tbody>' + channelRows + '</tbody></table></div>'
+      +     '<div class="small" style="margin-top:8px">Proactive commission disclosure: <b>' + r.disclosure.proactive + '</b> • Proactive value disclosure: <b>' + r.disclosure.value + '</b> • Not set: <b>' + r.disclosure.notSet + '</b></div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="card flat" style="margin-top:12px">'
+      +   '<div class="fcaSectionTitle">CCR009 readiness</div>'
+      +   '<div class="fcaNote">' + issuesHtml + '<div class="small" style="margin-top:6px">This dashboard is built for your internal tracking and export pack. Final My FCA answers still depend on your permissions and business model.</div></div>'
+      +   '<div class="tableWrap" style="margin-top:10px"><table class="table compact"><thead><tr><th>Date</th><th>Invoice</th><th>Reg</th><th>Customer</th><th>Issue</th></tr></thead><tbody>' + issueRows + '</tbody></table></div>'
+      + '</div>';
+  }
+
+  function saveFCACompanyFromWrap(wrap){
+    const f = ensureFCACompany();
+    function val(id){ const el = wrap.querySelector(id); return el ? String(el.value || '').trim() : ''; }
+    function checks(name){
+      return [].slice.call(wrap.querySelectorAll('input[name="' + name + '"]:checked')).map(function(el){ return el.value; });
+    }
+    f.tradeBodyMember = val('#fca_tradeBodyMember');
+    f.tradeBodyName = val('#fca_tradeBodyName');
+    f.vehicleCondition = val('#fca_vehicleCondition') || 'Used';
+    f.arrangesVehicleType = val('#fca_vehicleType') || 'Motor vehicles';
+    f.creditEngageWith = val('#fca_creditEngageWith') || 'Lenders';
+    f.notes = val('#fca_notes');
+    f.marketingChannels = checks('fca_marketing');
+    f.financeTypes = checks('fca_financeType');
+    f.consumerChannels = checks('fca_consumerChannel');
+    f.addonsNotIncluded = checks('fca_addonNotIncluded');
+    f.addonsIncluded = checks('fca_addonIncluded');
+    saveDB();
+    if (typeof addAudit === 'function') addAudit('edit','settings','','Saved FCA reporting profile');
+  }
+
+  function injectFCAReports(wrap){
+    if (!wrap || wrap.querySelector('#rep_fca_ccr009')) return wrap;
+    ensureFCACompany();
+    const f = ensureFCACompany();
+
+    const financeTile = wrap.querySelector('[data-jump="#rep_finance"]');
+    if (financeTile){
+      const tile = document.createElement('div');
+      tile.className = 'reportTile';
+      tile.setAttribute('data-jump', '#rep_fca_ccr009');
+      tile.innerHTML = '<div class="tTitle">FCA / CCR009</div><div class="tSub">Dashboard, data pack and readiness</div><div class="tMeta">Annual export • Lenders • Revenue</div>';
+      financeTile.insertAdjacentElement('afterend', tile);
+      tile.onclick = function(){
+        const target = wrap.querySelector('#rep_fca_ccr009');
+        if(target){
+          target.scrollIntoView({behavior:'smooth', block:'start'});
+          const prev = target.style.boxShadow;
+          target.style.boxShadow = '0 0 0 2px rgba(90,176,255,.45), 0 18px 46px rgba(0,0,0,.32)';
+          setTimeout(function(){ target.style.boxShadow = prev || ''; }, 900);
+        }
+      };
+    }
+
+    const auditCard = wrap.querySelector('#rep_audit');
+    const year = new Date().getFullYear();
+    const card = document.createElement('div');
+    card.className = 'reportCard';
+    card.id = 'rep_fca_ccr009';
+    card.innerHTML = ''
+      + '<h3>FCA / CCR009 Dashboard <span class="fcaBadge">Credit broking</span></h3>'
+      + '<div class="small" style="margin-top:-4px;margin-bottom:10px">Annual internal pack for CCR009-style tracking, lender breakdown, revenue totals and missing-data checks.</div>'
+      + '<div class="grid2">'
+      +   '<div class="card flat">'
+      +     '<div class="fcaSectionTitle">Run annual report</div>'
+      +     '<div class="row">'
+      +       '<label>Reporting year<input id="fca_year" type="number" min="2025" step="1" value="' + year + '"></label>'
+      +       '<button id="fca_run" class="primary" type="button">Run Dashboard</button>'
+      +       '<button id="fca_export_csv" type="button">Export CSV</button>'
+      +       '<button id="fca_export_xlsx" type="button">Export Excel</button>'
+      +       '<button id="fca_export_json" type="button">Export JSON</button>'
+      +     '</div>'
+      +     '<div class="small" style="margin-top:8px">Uses completed sales in the selected calendar year. Finance / broking sales are detected from finance company, finance amount or FCA broking flag.</div>'
+      +   '</div>'
+      +   '<div class="card flat">'
+      +     '<div class="fcaSectionTitle">Firm profile for reporting</div>'
+      +     '<div class="small">Save the static answers you repeatedly need when completing FCA returns.</div>'
+      +   '</div>'
+      + '</div>'
+
+      + '<div class="card flat" style="margin-top:12px">'
+      +   '<div class="fcaSectionTitle">Static FCA profile</div>'
+      +   '<div class="row">'
+      +     '<label>Trade body member<select id="fca_tradeBodyMember"><option value=""' + (f.tradeBodyMember === '' ? ' selected' : '') + '>Not set</option><option value="Yes"' + (f.tradeBodyMember === 'Yes' ? ' selected' : '') + '>Yes</option><option value="No"' + (f.tradeBodyMember === 'No' ? ' selected' : '') + '>No</option></select></label>'
+      +     '<label>Trade body / association<input id="fca_tradeBodyName" value="' + fcaEsc(f.tradeBodyName) + '" placeholder="e.g. IMDA / RMIF"></label>'
+      +     '<label>Vehicle type<select id="fca_vehicleType"><option' + (f.arrangesVehicleType === 'Motor vehicles' ? ' selected' : '') + '>Motor vehicles</option></select></label>'
+      +     '<label>Vehicle condition<select id="fca_vehicleCondition"><option' + (f.vehicleCondition === 'Used' ? ' selected' : '') + '>Used</option><option' + (f.vehicleCondition === 'New' ? ' selected' : '') + '>New</option><option' + (f.vehicleCondition === 'Both' ? ' selected' : '') + '>Both</option></select></label>'
+      +     '<label>Engage with<select id="fca_creditEngageWith"><option' + (f.creditEngageWith === 'Lenders' ? ' selected' : '') + '>Lenders</option><option' + (f.creditEngageWith === 'Brokers' ? ' selected' : '') + '>Brokers</option><option' + (f.creditEngageWith === 'Both' ? ' selected' : '') + '>Both</option></select></label>'
+      +   '</div>'
+      +   '<div class="grid2" style="margin-top:10px">'
+      +     '<div><div class="fcaSectionTitle">Marketing channels</div><div class="fcaInlineChecks">'
+      +       + ['Online','Email','Telephone','Social media','Traditional media','Outdoor advertising'].map(function(x){ return '<label><input type="checkbox" name="fca_marketing" value="' + x + '"' + (f.marketingChannels.indexOf(x) >= 0 ? ' checked' : '') + '><span>' + x + '</span></label>'; }).join('')
+      +     '</div></div>'
+      +     '<div><div class="fcaSectionTitle">Finance types offered</div><div class="fcaInlineChecks">'
+      +       + ['HP','PCP','Lease','Personal loan','Sub-prime finance','Consumer hire'].map(function(x){ return '<label><input type="checkbox" name="fca_financeType" value="' + x + '"' + (f.financeTypes.indexOf(x) >= 0 ? ' checked' : '') + '><span>' + x + '</span></label>'; }).join('')
+      +     '</div></div>'
+      +   '</div>'
+      +   '<div class="grid2" style="margin-top:10px">'
+      +     '<div><div class="fcaSectionTitle">Consumer channels used</div><div class="fcaInlineChecks">'
+      +       + ['In person','Phone','Email','Website','Social media','Referral'].map(function(x){ return '<label><input type="checkbox" name="fca_consumerChannel" value="' + x + '"' + (f.consumerChannels.indexOf(x) >= 0 ? ' checked' : '') + '><span>' + x + '</span></label>'; }).join('')
+      +     '</div></div>'
+      +     '<div><div class="fcaSectionTitle">Add-ons not included in credit</div><div class="fcaInlineChecks">'
+      +       + ['Regulated insurance product','Non-regulated warranty or service product provided by the firm','Non-regulated warranty or service product provided by a third party'].map(function(x){ return '<label><input type="checkbox" name="fca_addonNotIncluded" value="' + x + '"' + (f.addonsNotIncluded.indexOf(x) >= 0 ? ' checked' : '') + '><span>' + x + '</span></label>'; }).join('')
+      +     '</div></div>'
+      +   '</div>'
+      +   '<div style="margin-top:10px"><div class="fcaSectionTitle">Add-ons included in credit / consumer hire</div><div class="fcaInlineChecks">'
+      +     + ['Regulated insurance product','Non-regulated warranty or service product provided by the firm','Non-regulated warranty or service product provided by a third party'].map(function(x){ return '<label><input type="checkbox" name="fca_addonIncluded" value="' + x + '"' + (f.addonsIncluded.indexOf(x) >= 0 ? ' checked' : '') + '><span>' + x + '</span></label>'; }).join('')
+      +   '</div></div>'
+      +   '<div class="row" style="margin-top:10px">'
+      +     '<label style="min-width:320px;flex:1">Notes<textarea id="fca_notes" placeholder="Anything you want saved for next return">' + fcaEsc(f.notes) + '</textarea></label>'
+      +     '<button id="fca_profile_save" class="primary" type="button">Save FCA Profile</button>'
+      +   '</div>'
+      + '</div>'
+
+      + '<div id="fca_out" style="margin-top:12px"></div>';
+
+    if (auditCard) auditCard.insertAdjacentElement('beforebegin', card);
+    else wrap.appendChild(card);
+
+    const run = function(){ renderFCAReportInto(wrap); };
+    const btnRun = wrap.querySelector('#fca_run');
+    const btnCsv = wrap.querySelector('#fca_export_csv');
+    const btnXlsx = wrap.querySelector('#fca_export_xlsx');
+    const btnJson = wrap.querySelector('#fca_export_json');
+    const btnSave = wrap.querySelector('#fca_profile_save');
+    if (btnRun) btnRun.onclick = run;
+    if (btnCsv) btnCsv.onclick = function(){ exportFCACSV(Number((wrap.querySelector('#fca_year') || {}).value || new Date().getFullYear())); };
+    if (btnXlsx) btnXlsx.onclick = function(){ exportFCAXLSX(Number((wrap.querySelector('#fca_year') || {}).value || new Date().getFullYear())); };
+    if (btnJson) btnJson.onclick = function(){ exportFCAJSON(Number((wrap.querySelector('#fca_year') || {}).value || new Date().getFullYear())); };
+    if (btnSave) btnSave.onclick = function(){ saveFCACompanyFromWrap(wrap); alert('FCA profile saved.'); };
+    run();
+    return wrap;
+  }
+
+  function readFCASaleFields(wrap){
+    function v(id){ const el = wrap.querySelector(id); return el ? String(el.value || '').trim() : ''; }
+    function n(id){ const el = wrap.querySelector(id); return Number((el && el.value) || 0); }
+    return {
+      fcaIsCreditBrokered: v('#sale_fcaIsCreditBrokered'),
+      fcaRemuneration: v('#sale_fcaRemuneration'),
+      fcaCommissionEarned: n('#sale_fcaCommissionEarned'),
+      fcaFeeFromIndividual: n('#sale_fcaFeeFromIndividual'),
+      fcaOtherRevenue: n('#sale_fcaOtherRevenue'),
+      fcaCommissionPaid: n('#sale_fcaCommissionPaid'),
+      fcaCustomerChannel: v('#sale_fcaCustomerChannel'),
+      fcaCommissionDisclosure: v('#sale_fcaCommissionDisclosure'),
+      fcaCommissionValueDisclosure: v('#sale_fcaCommissionValueDisclosure')
+    };
+  }
+  function writeFCASaleFields(wrap, sale){
+    sale = ensureSaleFCA(sale || {});
+    function set(id, value){ const el = wrap.querySelector(id); if (el) el.value = (value == null ? '' : value); }
+    set('#sale_fcaIsCreditBrokered', sale.fcaIsCreditBrokered || '');
+    set('#sale_fcaRemuneration', sale.fcaRemuneration || '');
+    set('#sale_fcaCommissionEarned', sale.fcaCommissionEarned || 0);
+    set('#sale_fcaFeeFromIndividual', sale.fcaFeeFromIndividual || 0);
+    set('#sale_fcaOtherRevenue', sale.fcaOtherRevenue || 0);
+    set('#sale_fcaCommissionPaid', sale.fcaCommissionPaid || 0);
+    set('#sale_fcaCustomerChannel', sale.fcaCustomerChannel || '');
+    set('#sale_fcaCommissionDisclosure', sale.fcaCommissionDisclosure || '');
+    set('#sale_fcaCommissionValueDisclosure', sale.fcaCommissionValueDisclosure || '');
+  }
+  function resetFCASaleFields(wrap){
+    writeFCASaleFields(wrap, {});
+  }
+  function findSavedSaleByContext(ctx){
+    const all = db.sales || [];
+    let matches = all.slice();
+    if (ctx.id) {
+      const exact = all.find(function(s){ return s.id === ctx.id; });
+      if (exact) return exact;
+    }
+    if (ctx.vehicleId) matches = matches.filter(function(s){ return s.vehicleId === ctx.vehicleId; });
+    if (ctx.invNo) {
+      const exactInv = matches.find(function(s){ return String(s.invNo || '').trim() === ctx.invNo; });
+      if (exactInv) return exactInv;
+    }
+    if (ctx.date) matches = matches.filter(function(s){ return String(s.date || '') === ctx.date; });
+    return matches.sort(function(a,b){
+      return String(b.date || '').localeCompare(String(a.date || '')) || String(b.id || '').localeCompare(String(a.id || ''));
+    })[0] || null;
+  }
+  function injectFCASales(wrap){
+    if (!wrap || wrap.querySelector('#sale_fcaWrap')) return wrap;
+
+    const finSection = wrap.querySelector('#sale_fin_section');
+    const saveCard = wrap.querySelector('.salesWizardPane[data-sale-step="4"] .salesSectionCard');
+    const host = finSection || saveCard;
+    if (!host) return wrap;
+
+    const box = document.createElement('div');
+    box.id = 'sale_fcaWrap';
+    box.className = 'salesSectionCard';
+    box.style.marginTop = '10px';
+    box.innerHTML = ''
+      + '<div class="salesSectionTitle">FCA / Credit Broking</div>'
+      + '<div class="salesSectionHint">Use these fields for RegData / CCR009 reporting. They do not affect the customer invoice total.</div>'
+      + '<div class="row">'
+      +   '<label>Credit brokered?<select id="sale_fcaIsCreditBrokered"><option value="">Auto / Not set</option><option value="yes">Yes</option><option value="no">No</option></select></label>'
+      +   '<label>Remuneration<select id="sale_fcaRemuneration"><option value="">Not set</option><option>Commission from lender</option><option>Fee from individual</option><option>Commission + fee</option><option>Other revenue</option><option>No remuneration</option></select></label>'
+      +   '<label>Customer channel<select id="sale_fcaCustomerChannel"><option value="">Not set</option><option>In person</option><option>Phone</option><option>Email</option><option>Website</option><option>Social media</option><option>Referral</option><option>Other</option></select></label>'
+      +   '<label>Proactive commission disclosure<select id="sale_fcaCommissionDisclosure"><option value="">Not set</option><option>Yes</option><option>No</option><option>Not applicable</option></select></label>'
+      +   '<label>Proactive value disclosure<select id="sale_fcaCommissionValueDisclosure"><option value="">Not set</option><option>Yes</option><option>No</option><option>Not applicable</option></select></label>'
+      + '</div>'
+      + '<div class="row" style="margin-top:10px">'
+      +   '<label>Commission earned £<input id="sale_fcaCommissionEarned" type="number" step="0.01" placeholder="0"></label>'
+      +   '<label>Fees from individual £<input id="sale_fcaFeeFromIndividual" type="number" step="0.01" placeholder="0"></label>'
+      +   '<label>Other broking revenue £<input id="sale_fcaOtherRevenue" type="number" step="0.01" placeholder="0"></label>'
+      +   '<label>Commission / merchant fees paid £<input id="sale_fcaCommissionPaid" type="number" step="0.01" placeholder="0"></label>'
+      + '</div>'
+      + '<div class="small" style="margin-top:8px">Tip: if you leave commission earned empty, the FCA dashboard will still try to pick up add-ons typed as Commission.</div>';
+
+    if (finSection) finSection.insertAdjacentElement('afterend', box);
+    else host.insertAdjacentElement('beforeend', box);
+
+    const saleBtn = wrap.querySelector('#sale_add');
+    if (saleBtn && !saleBtn.dataset.fcaWrapped){
+      const old = saleBtn.onclick;
+      saleBtn.onclick = function(ev){
+        const reg = String((wrap.querySelector('#sale_reg') || {}).value || '').toUpperCase().trim();
+        const invNo = String((wrap.querySelector('#sale_invNo') || {}).value || '').trim();
+        const date = String((wrap.querySelector('#sale_date') || {}).value || '').trim();
+        const vehicleId = (typeof findVehicleIdByReg === 'function') ? findVehicleIdByReg(reg) : null;
+        const editId = wrap.dataset.fcaEditingSaleId || '';
+        const fcaData = readFCASaleFields(wrap);
+
+        if (typeof old === 'function') old.call(this, ev);
+
+        setTimeout(function(){
+          const saved = findSavedSaleByContext({id: editId, vehicleId: vehicleId, invNo: invNo, date: date});
+          if (!saved) return;
+          Object.assign(saved, fcaData);
+          ensureSaleFCA(saved);
+          saveDB();
+          wrap.dataset.fcaEditingSaleId = saved.id || '';
+          if (typeof addAudit === 'function') addAudit('edit','sale',saved.id || '', 'Saved FCA reporting fields');
+        }, 0);
+      };
+      saleBtn.dataset.fcaWrapped = '1';
+    }
+
+    wrap.addEventListener('click', function(e){
+      const b = e.target && e.target.closest && e.target.closest('button[data-act]');
+      if (!b) return;
+      if (b.dataset.act === 'edit'){
+        const saleId = b.dataset.id || '';
+        wrap.dataset.fcaEditingSaleId = saleId;
+        setTimeout(function(){
+          const s = (db.sales || []).find(function(x){ return x.id === saleId; }) || {};
+          writeFCASaleFields(wrap, s);
+        }, 0);
+      } else if (b.dataset.act === 'del'){
+        if ((wrap.dataset.fcaEditingSaleId || '') === (b.dataset.id || '')) wrap.dataset.fcaEditingSaleId = '';
+      }
+    }, true);
+
+    const regInput = wrap.querySelector('#sale_reg');
+    if (regInput && !regInput.dataset.fcaResetBound){
+      regInput.addEventListener('input', function(){
+        if (!String(regInput.value || '').trim()) {
+          wrap.dataset.fcaEditingSaleId = '';
+          resetFCASaleFields(wrap);
+        }
+      });
+      regInput.dataset.fcaResetBound = '1';
+    }
+
+    const hasFinance = wrap.querySelector('#sale_hasFinance');
+    if (hasFinance && !hasFinance.dataset.fcaBound){
+      hasFinance.addEventListener('change', function(){
+        const brokered = wrap.querySelector('#sale_fcaIsCreditBrokered');
+        if (brokered && !brokered.value) brokered.value = hasFinance.checked ? 'yes' : '';
+      });
+      hasFinance.dataset.fcaBound = '1';
+    }
+
+    return wrap;
+  }
+
+  if (typeof window.viewReports === 'function'){
+    const origViewReports = window.viewReports;
+    window.viewReports = function(){
+      const wrap = origViewReports.apply(this, arguments);
+      try { injectFCAReports(wrap); } catch (e) { console.error('FCA reports patch failed', e); }
+      return wrap;
+    };
+  }
+
+  if (typeof window.viewSales === 'function'){
+    const origViewSales = window.viewSales;
+    window.viewSales = function(){
+      const wrap = origViewSales.apply(this, arguments);
+      try { injectFCASales(wrap); } catch (e) { console.error('FCA sales patch failed', e); }
+      return wrap;
+    };
+  }
+})();
+</script>
 
 </body>
 </html>
