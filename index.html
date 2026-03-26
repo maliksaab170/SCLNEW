@@ -1003,11 +1003,9 @@ window.restoreJSONMerge = function () {
         markPullUsed();
         applyPullLockUI && applyPullLockUI();
         if (typeof window.render === 'function') window.render();
-      } catch (e) {
-        alert('Bad JSON: ' + (e.message || e));
-      }
-    };
-    fr.readAsText(f);
+    } catch (e) {
+      alert(e.message || e);
+    }
   };
 
   i.click();
@@ -1806,7 +1804,7 @@ db.deleted = db.deleted || {};
 if (!db.lastPush) db.lastPush = {};
 db.company = db.company || {};
 let pushEnabled = false;
-const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','Alerts','To-Do','Users','Settings'];
+const DEFAULT_TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Complaints','Directors','Investors','Reports','Alerts','To-Do','Users','Settings'];
 
 // Show backup status in header
 try { renderBackupInfo(); } catch(e) {}
@@ -2317,12 +2315,101 @@ function renderBackupInfo(){
 }
 
 /* ========= Backup / Restore / CSV ========= */
-function backupJSON(){
+async function deriveBackupKeyFromPassword(password, saltB64, iterations){
+  const enc = new TextEncoder();
+  const keyMat = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(String(password||'')),
+    { name:'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name:'PBKDF2',
+      salt:_bytesFromB64(saltB64),
+      iterations:Number(iterations||PASS_ITER_DEFAULT),
+      hash:'SHA-256'
+    },
+    keyMat,
+    { name:'AES-GCM', length:256 },
+    false,
+    ['encrypt','decrypt']
+  );
+}
+
+async function encryptBackupPayload(plainText, password){
+  const salt = _randSaltB64(16);
+  const ivBytes = new Uint8Array(12);
+  crypto.getRandomValues(ivBytes);
+  const ivB64 = _b64FromBytes(ivBytes);
+  const iterations = PASS_ITER_DEFAULT;
+  const key = await deriveBackupKeyFromPassword(password, salt, iterations);
+  const enc = new TextEncoder();
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name:'AES-GCM', iv: ivBytes },
+    key,
+    enc.encode(String(plainText||''))
+  );
+  return {
+    __encrypted:true,
+    format:'starcars-backup-v1',
+    kdf:'PBKDF2-SHA256',
+    cipher:'AES-GCM',
+    iterations,
+    salt,
+    iv: ivB64,
+    data: _b64FromBytes(new Uint8Array(cipherBuf))
+  };
+}
+
+async function decryptBackupPayload(payload, password){
+  if(!payload || !payload.__encrypted) return payload;
+  const key = await deriveBackupKeyFromPassword(password, payload.salt, payload.iterations || PASS_ITER_DEFAULT);
+  const iv = _bytesFromB64(payload.iv || '');
+  const data = _bytesFromB64(payload.data || '');
+  const plainBuf = await crypto.subtle.decrypt(
+    { name:'AES-GCM', iv },
+    key,
+    data
+  );
+  const txt = new TextDecoder().decode(plainBuf);
+  return JSON.parse(txt || '{}');
+}
+
+async function readBackupFileToObject(file){
+  const txt = await file.text();
+  let parsed;
   try{
-    const data = JSON.stringify(db, null, 2); // full DB including db.audit and user passwords
+    parsed = JSON.parse(txt || '{}');
+  }catch(e){
+    throw new Error('Bad JSON: ' + (e.message||e));
+  }
+  if(parsed && parsed.__encrypted){
+    const pw = prompt('Enter backup password');
+    if(pw == null) throw new Error('Backup restore cancelled');
+    try{
+      return await decryptBackupPayload(parsed, pw);
+    }catch(e){
+      throw new Error('Wrong backup password or damaged file');
+    }
+  }
+  return parsed;
+}
+
+async function backupJSON(){
+  try{
+    const pw = prompt('Set a password for this backup file');
+    if(pw == null) return;
+    if(String(pw).length < 6){ alert('Backup password must be at least 6 characters'); return; }
+    const pw2 = prompt('Re-enter backup password');
+    if(pw2 !== pw){ alert('Backup passwords do not match'); return; }
+
+    const data = JSON.stringify(db, null, 2); // full DB including audit and hashed login data
+    const encrypted = await encryptBackupPayload(data, pw);
 
     // create blob + object URL
-    const blob = new Blob([data], {type:'application/json'});
+    const blob = new Blob([JSON.stringify(encrypted, null, 2)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
 
     // create the anchor element correctly (was missing: `a` was not declared)
@@ -2344,7 +2431,7 @@ function backupJSON(){
     saveDB();
 
     if (typeof addAudit === 'function') {
-      addAudit('export','backup','','Full JSON backup');
+      addAudit('export','backup','','Encrypted JSON backup');
     }
 
     if (typeof renderBackupInfo === 'function') {
@@ -2356,22 +2443,20 @@ function backupJSON(){
 }
 
 // Merge-from-backup with id-based merge for ALL arrays
-function restoreJSONMerge() {
+async function restoreJSONMerge() {
   const i = document.createElement('input');
   i.type = 'file';
   i.accept = '.json,application/json';
 
-  i.onchange = () => {
+  i.onchange = async () => {
     const f = i.files && i.files[0];
     if (!f) return;
 
-    const fr = new FileReader();
-    fr.onload = () => {
-      try {
-        const incoming = JSON.parse(fr.result || '{}');
-        if (!incoming || typeof incoming !== 'object') {
-          throw new Error('Backup file has no data');
-        }
+    try {
+      const incoming = await readBackupFileToObject(f);
+      if (!incoming || typeof incoming !== 'object') {
+        throw new Error('Backup file has no data');
+      }
 
         // Make sure db exists
         db = db || {};
@@ -2490,33 +2575,29 @@ function restoreJSONMerge() {
         if (typeof markPullUsed === 'function') markPullUsed();
         if (typeof applyPullLockUI === 'function') applyPullLockUI();
         if (typeof render === 'function') render();
-      } catch (e) {
-        alert('Bad JSON: ' + (e.message || e));
-      }
-    };
-    fr.readAsText(f);
+    } catch (e) {
+      alert(e.message || e);
+    }
   };
 
   i.click();
 }
 
 // Replace-from-backup (full overwrite of local DB)
-function restoreJSONReplace() {
+async function restoreJSONReplace() {
   const i = document.createElement('input');
   i.type = 'file';
   i.accept = '.json,application/json';
 
-  i.onchange = () => {
+  i.onchange = async () => {
     const f = i.files && i.files[0];
     if (!f) return;
 
-    const fr = new FileReader();
-    fr.onload = () => {
-      try {
-        const incoming = JSON.parse(fr.result || '{}');
-        if (!incoming || typeof incoming !== 'object') {
-          throw new Error('Backup file has no data');
-        }
+    try {
+      const incoming = await readBackupFileToObject(f);
+      if (!incoming || typeof incoming !== 'object') {
+        throw new Error('Backup file has no data');
+      }
 
         // Completely replace the in-memory DB with backup
         db = incoming || {};
@@ -2564,14 +2645,12 @@ function restoreJSONReplace() {
           addAudit('import', 'backup', '', 'Replaced from JSON backup');
         }
         alert('Replaced from backup');
-        markPullUsed();
-        applyPullLockUI && applyPullLockUI();
+        if (typeof markPullUsed === 'function') markPullUsed();
+        if (typeof applyPullLockUI === 'function') applyPullLockUI();
         if (typeof render === 'function') render();
-      } catch (e) {
-        alert('Bad JSON: ' + (e.message || e));
-      }
-    };
-    fr.readAsText(f);
+    } catch (e) {
+      alert(e.message || e);
+    }
   };
 
   i.click();
@@ -3211,7 +3290,7 @@ function countChanges(changes) {
 }
 
 /* ========= Navigation & render ========= */
-const TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Customer Complaints','Directors','Investors','Reports','Alerts','To-Do','Users','Settings']; let currentTab=TABS[0];
+const TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','Sold','Credit','Purchase Invoice','Complaints','Directors','Investors','Reports','Alerts','To-Do','Users','Settings']; let currentTab=TABS[0];
 function setTab(t){ currentTab=t; render(); }
 
 /* ========= Quick jump helpers ========= */
@@ -3338,7 +3417,7 @@ function goToSaleSearch(sale){
 }
 
 function goToComplaintSearch(comp){
-  setTab('Customer Complaints');
+  setTab('Complaints');
   setTimeout(function(){
     const inp = document.getElementById('comp_search');
     if (inp){
@@ -3363,7 +3442,7 @@ function renderNav(){
   });
 
   // What shows on top bar (keep it clean + pro)
-  const CORE = ['Dashboard','Vehicles','Sales','Sold','Expenses','Showroom','Reports','To-Do','Settings']
+  const CORE = ['Dashboard','Vehicles','Sales','Sold','Complaints','Expenses','Showroom','Reports','To-Do','Settings']
     .filter(t=>allowed.includes(t));
 
   // Everything else goes in launcher
@@ -3382,12 +3461,12 @@ function renderNav(){
   // ===== App launcher grid (grouped) =====
   const ICON = {
     'Dashboard':'D','Vehicles':'V','Sales':'S','Expenses':'£','Showroom':'🏢','Reports':'R',
-    'Sold':'✓','Credit':'C','Purchase Invoice':'PI','Customer Complaints':'CC',
+    'Sold':'✓','Credit':'C','Purchase Invoice':'PI','Complaints':'CC',
     'Directors':'DIR','Investors':'INV','Users':'U','Alerts':'!','To-Do':'TD','Settings':'⚙'
   };
 
   const GROUPS = [
-    {title:'Sales & Documents', tabs:['Sold','Credit','Purchase Invoice','Customer Complaints']},
+    {title:'Sales & Documents', tabs:['Sold','Credit','Purchase Invoice','Complaints']},
     {title:'Management', tabs:['Directors','Investors','Users']},
     {title:'Tools', tabs:['Alerts','To-Do','Settings']},
   ];
@@ -3698,7 +3777,7 @@ function render(){
   if(!session){ showLogin(true); return; }
   renderNav();
   const app=document.getElementById('app'); app.innerHTML=''; document.getElementById('who').textContent='Logged in: '+session.username+' ('+session.role+')';
-  const views={Dashboard:viewDashboard,Vehicles:viewVehicles,Expenses:viewExpenses,Showroom:viewShowroom,Sales:viewSales,Sold:viewSold,Credit:viewCredit,["Purchase Invoice"]:viewPurchaseInvoice,["Customer Complaints"]:viewComplaints,Directors:viewDirectors,Investors:viewInvestors,Reports:viewReports,Alerts:viewAlerts,["To-Do"]:viewTodo,Users:viewUsers,Settings:viewSettings};
+  const views={Dashboard:viewDashboard,Vehicles:viewVehicles,Expenses:viewExpenses,Showroom:viewShowroom,Sales:viewSales,Sold:viewSold,Credit:viewCredit,["Purchase Invoice"]:viewPurchaseInvoice,["Complaints"]:viewComplaints,Directors:viewDirectors,Investors:viewInvestors,Reports:viewReports,Alerts:viewAlerts,["To-Do"]:viewTodo,Users:viewUsers,Settings:viewSettings};
   const f=views[currentTab]; if(f) app.appendChild(f()); else app.textContent='No view'; refreshLogoBox();
   
   // Re-apply push button state after rendering Settings tab
@@ -12402,13 +12481,13 @@ function viewTodo(){ if(!canTab('To-Do')) return document.createElement('div'); 
   return wrap;
 }
 
-/* ========= Customer Complaints ========= */
+/* ========= Complaints ========= */
 function viewComplaints(){
-  if(!canTab('Customer Complaints')) return document.createElement('div'); 
+  if(!canTab('Complaints')) return document.createElement('div'); 
   const wrap=document.createElement('div'); 
   wrap.className='card';
   
-  wrap.innerHTML=`<h2>Customer Complaints</h2>
+  wrap.innerHTML=`<h2>Complaints</h2>
   <div class="row">
     <input id="comp_date" type="date">
     <input id="comp_customer" placeholder="Customer Name *" style="min-width:180px">
@@ -12462,6 +12541,7 @@ function viewComplaints(){
       <option value="new">New</option>
       <option value="investigating">Investigating</option>
       <option value="resolved">Resolved</option>
+      <option value="sorted">Sorted</option>
       <option value="closed">Closed</option>
       <option value="escalated">Escalated</option>
     </select>
@@ -12478,6 +12558,7 @@ function viewComplaints(){
       <option value="new">New</option>
       <option value="investigating">Investigating</option>
       <option value="resolved">Resolved</option>
+      <option value="sorted">Sorted</option>
       <option value="closed">Closed</option>
       <option value="escalated">Escalated</option>
     </select>
@@ -12887,8 +12968,14 @@ function viewComplaints(){
       complaints = complaints.filter(c => c.severity === filter.severity);
     }
     
-    // Sort by date (newest first)
-    complaints.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    // Sort open complaints first, then newest first
+    const statusRank = { urgent:0, escalated:1, new:2, investigating:3, resolved:4, sorted:5, closed:6 };
+    complaints.sort((a, b) => {
+      const ar = statusRank[String(a.status||'new').toLowerCase()] ?? 99;
+      const br = statusRank[String(b.status||'new').toLowerCase()] ?? 99;
+      if (ar !== br) return ar - br;
+      return new Date(b.date || 0) - new Date(a.date || 0);
+    });
     
     if (complaints.length === 0) {
       const tr = document.createElement('tr');
@@ -12912,6 +12999,8 @@ function viewComplaints(){
         <td>
           <button data-act="view" data-id="${c.id}" title="View Details">View</button>
           <button data-act="pack" data-id="${c.id}" title="Export evidence pack">Evidence</button>
+          ${c.status !== 'sorted' && c.status !== 'closed' ? `<button class="success" data-act="sorted" data-id="${c.id}">Mark Sorted</button>` : ''}
+          ${c.status !== 'closed' ? `<button class="warn" data-act="close" data-id="${c.id}">Close</button>` : ''}
           ${canAction('edit') ? `<button data-act="edit" data-id="${c.id}">Edit</button>` : ''}
           ${canAction('del') ? `<button class="danger" data-act="del" data-id="${c.id}">Delete</button>` : ''}
         </td>
@@ -13141,7 +13230,7 @@ function viewComplaints(){
       alert('No complaints to print.');
       return;
     }
-    let html = `<!doctype html><html><head><meta charset="utf-8"><title>Customer Complaints</title>
+    let html = `<!doctype html><html><head><meta charset="utf-8"><title>Complaints</title>
     <style>
       body{font-family:Arial;font-size:11px;color:#111}
       table{width:100%;border-collapse:collapse}
@@ -13171,7 +13260,7 @@ function viewComplaints(){
 
 </head><body>
     <button class="no-print" onclick="window.print()">Print / Save PDF</button>
-    <h2>Customer Complaints Log</h2>
+    <h2>Complaints Log</h2>
     <table><thead><tr>
       <th>Date</th><th>Customer</th><th>Vehicle</th><th>Summary</th><th>Status</th>
       <th>Severity</th><th>Handler</th><th>Log (mileage/mechanic)</th>
@@ -13299,6 +13388,30 @@ function viewComplaints(){
 
     else if(act === 'pack') {
       openComplaintEvidence(comp);
+    }
+
+    else if(act === 'sorted') {
+      if(!canAction('edit')) return alert('No permission');
+      comp.status = 'sorted';
+      comp.followup = '';
+      comp.updatedAt = new Date().toISOString();
+      if(!comp.resolution) comp.resolution = 'Complaint marked as sorted.';
+      saveDB();
+      try{renderAlertBell();}catch(e){}
+      addAudit('update', 'complaint', comp.id, `${comp.customer || ''} marked sorted`);
+      renderComplaints();
+    }
+
+    else if(act === 'close') {
+      if(!canAction('edit')) return alert('No permission');
+      comp.status = 'closed';
+      comp.followup = '';
+      comp.updatedAt = new Date().toISOString();
+      if(!comp.resolution) comp.resolution = 'Complaint closed.';
+      saveDB();
+      try{renderAlertBell();}catch(e){}
+      addAudit('update', 'complaint', comp.id, `${comp.customer || ''} closed`);
+      renderComplaints();
     }
 
     else if(act === 'edit') {
