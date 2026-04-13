@@ -1001,7 +1001,6 @@ window.restoreJSONMerge = function () {
         }
         alert('Merged from backup');
         markPullUsed();
-        applyPullLockUI && applyPullLockUI();
         if (typeof window.render === 'function') window.render();
     } catch (e) {
       alert(e.message || e);
@@ -1030,7 +1029,6 @@ window.restoreJSONMerge = function () {
           if (typeof window.addAudit === "function") window.addAudit("import","backup","","Replaced from JSON backup");
           alert("Replaced from backup");
           markPullUsed();
-          applyPullLockUI && applyPullLockUI();
           window.render && window.render();
         }catch(e){ alert("Bad JSON: " + (e.message||e)); }
       };
@@ -2176,63 +2174,6 @@ function markPullUsed() {
   sessionStorage.setItem('starcars_pull_used', 'true');
 }
 
-function applyPullLockUI(){
-  // If pull is done, unlock everything
-  if (isPullUsed()){
-    document.querySelectorAll('[data-pull-lock="1"]').forEach(el=>{
-      el.disabled = false;
-      el.removeAttribute('data-pull-lock');
-      el.removeAttribute('title');
-    });
-    const note = document.getElementById('pullLockNote');
-    if (note) note.remove();
-    return;
-  }
-
-  // Not pulled yet -> lock app inputs/buttons (but NOT header/nav)
-  const app = document.getElementById('app');
-  if (!app) return;
-
-  // Show a note at the top of the current tab
-  if (!document.getElementById('pullLockNote')){
-    const note = document.createElement('div');
-    note.id = 'pullLockNote';
-    note.className = 'card';
-    note.style.borderColor = '#ff6b6b';
-    note.innerHTML = `
-      <div style="font-weight:800">⚠️ Editing locked</div>
-      <div class="small" style="margin-top:4px">
-        You must use <b>Pull</b> first on this device to avoid overwriting other PCs.
-        Go to <b>Settings → Pull (Gist → App)</b>.
-      </div>
-      <div class="row" style="margin-top:10px">
-        <button class="primary" id="goSettingsPull">Go to Settings</button>
-      </div>
-    `;
-    app.prepend(note);
-    note.querySelector('#goSettingsPull').onclick = () => setTab('Settings');
-  }
-
-  // Allowlist (things we still want enabled inside Settings)
-  const allowIds = new Set([
-    'c_pull',        // Pull (Normal)
-    'syncPullHard',  // Pull (Hard)
-    'c_isave',       // Save Integrations
-    'c_gistId', 'c_ghToken',
-    'c_autoSync', 'c_autoSyncSec'
-  ]);
-
-  // Disable everything editable inside #app except allowlist
-  app.querySelectorAll('button, input, select, textarea').forEach(el=>{
-    if (allowIds.has(el.id)) return;
-
-    // If element is inside Settings tab, still lock it unless allowlisted
-    el.disabled = true;
-    el.setAttribute('data-pull-lock', '1');
-    el.title = 'Locked until you Pull from Gist';
-  });
-}
-
 function refreshLogoBox(){ const lb=document.getElementById('logoBox'); const logo=(db.company.logo||'').trim(); if(logo){ lb.innerHTML='<img alt="logo" src="'+logo+'">'; } else { lb.textContent='SC'; } }
 initHeader();
 
@@ -2573,7 +2514,6 @@ async function restoreJSONMerge() {
         }
         alert('Merged from backup');
         if (typeof markPullUsed === 'function') markPullUsed();
-        if (typeof applyPullLockUI === 'function') applyPullLockUI();
         if (typeof render === 'function') render();
     } catch (e) {
       alert(e.message || e);
@@ -2646,7 +2586,6 @@ async function restoreJSONReplace() {
         }
         alert('Replaced from backup');
         if (typeof markPullUsed === 'function') markPullUsed();
-        if (typeof applyPullLockUI === 'function') applyPullLockUI();
         if (typeof render === 'function') render();
     } catch (e) {
       alert(e.message || e);
@@ -3790,7 +3729,6 @@ function render(){
       }
     }, 100);
   }
-  applyPullLockUI();
 }
 
 if(!window.__starcarsGlobalLiveRefreshBound){
@@ -5904,6 +5842,8 @@ function viewSales(){
         const v = (db.vehicles || []).find(x => x.id === s.vehicleId) || {};
         return (
           (v.reg || '').toLowerCase().includes(searchTerm) ||
+          (v.make || '').toLowerCase().includes(searchTerm) ||
+          (v.model || '').toLowerCase().includes(searchTerm) ||
           (s.buyer || '').toLowerCase().includes(searchTerm) ||
           String(s.invNo || '').toLowerCase().includes(searchTerm) ||
           (s.phone || '').toLowerCase().includes(searchTerm) ||
@@ -8117,6 +8057,8 @@ function viewCredit(){
       return !searchTerm ||
         (cr.customer||'').toLowerCase().includes(searchTerm) ||
         (cr.vehicle||'').toLowerCase().includes(searchTerm) ||
+        (cr.make||'').toLowerCase().includes(searchTerm) ||
+        (cr.model||'').toLowerCase().includes(searchTerm) ||
         (cr.invoiceNo||'').toLowerCase().includes(searchTerm);
     });
 
@@ -8457,7 +8399,7 @@ function viewPurchaseInvoice(){
     <label style="min-width:320px;flex:1">Notes<textarea id="pi_notes" placeholder="Additional notes"></textarea></label>
   </div>
   <div class="row" style="margin-bottom:12px">
-    <input id="pi_search" placeholder="Search by seller, reg, invoice" style="min-width:320px">
+    <input id="pi_search" placeholder="Search by seller, reg, make, model, invoice" style="min-width:320px">
     <button id="pi_clear_search">Clear</button>
   </div>
   <table class="table" style="margin-top:10px">
@@ -8490,6 +8432,8 @@ function viewPurchaseInvoice(){
     return !filter || 
            (pi.supplier || '').toLowerCase().includes(filter) || 
            (pi.reg || '').toLowerCase().includes(filter) || 
+           (pi.make || '').toLowerCase().includes(filter) ||
+           (pi.model || '').toLowerCase().includes(filter) ||
            (pi.invoiceNo || '').toLowerCase().includes(filter);
   });
 
@@ -12957,6 +12901,8 @@ function viewComplaints(){
       complaints = complaints.filter(c => 
         (c.customer || '').toLowerCase().includes(searchTerm) ||
         (c.vehicle || '').toLowerCase().includes(searchTerm) ||
+        (c.make || '').toLowerCase().includes(searchTerm) ||
+        (c.model || '').toLowerCase().includes(searchTerm) ||
         (c.details || '').toLowerCase().includes(searchTerm) ||
         (c.resolution || '').toLowerCase().includes(searchTerm)
       );
