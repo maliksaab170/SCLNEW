@@ -1079,8 +1079,8 @@ window.restoreJSONMerge = function () {
     <button onclick="changeMyPass()">Change Password</button>
     <button onclick="logout()">Logout</button>
     <button onclick="backupJSON()">Backup</button>
-    <button onclick="restoreJSONMerge()">Restore (merge)</button>
-    <button onclick="restoreJSONReplace()">Restore (replace)</button>
+    <button onclick="confirmRestoreMerge()">Restore (merge)</button>
+    <button onclick="confirmRestoreReplace()">Restore (replace)</button>
     <button onclick="exportAllCSV()">Export CSVs</button>
   </div>
 </header>
@@ -1184,6 +1184,499 @@ function saveDB(){
 }
 function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
 function fmtMoney(n){ n=Number(n||0); const s=n<0?'-':''; n=Math.abs(n); return s+'£'+n.toFixed(2); }
+
+async function confirmRestoreReplace(){
+  const ok = await scConfirm(
+    'Replace restore will overwrite current data in this browser. Make sure you have a backup first.',
+    'Dangerous action'
+  );
+  if(!ok) return;
+  restoreJSONReplace();
+}
+
+function getDashboardKpis(){
+  const vehicles = db.vehicles || [];
+  const sales = db.sales || [];
+  const complaints = db.complaints || [];
+  const today = new Date();
+  const thisMonth = today.toISOString().slice(0,7);
+
+  const inStock = vehicles.filter(v => String(v.status || '').toLowerCase() !== 'sold').length;
+
+  const soldThisMonth = sales.filter(s => {
+    const st = String(s.saleStatus || s.status || 'completed').toLowerCase();
+    return (st === 'completed' || st === 'complete' || st === 'sold') &&
+           String(s.date || '').startsWith(thisMonth);
+  }).length;
+
+  const openComplaints = complaints.filter(c => {
+    const st = String(c.status || '').toLowerCase().trim();
+    return st && !['closed','close','sorted','resolved'].includes(st);
+  }).length;
+
+  const financeOutstanding = sales.filter(s => {
+    const st = String(s.saleStatus || s.status || 'completed').toLowerCase();
+    const isLiveSale = (st === 'completed' || st === 'complete' || st === 'sold');
+
+    const expected = Number(s.financePayout || s.sale_finPayout || s.financeAmount || 0);
+    const received = Number(s.financePayoutAmount || 0);
+    const paid = !!s.financePayoutPaid;
+
+    return isLiveSale && expected > 0 && (!paid || received + 0.01 < expected);
+  }).length;
+
+  const mot30 = (typeof filterByMotDays === 'function')
+    ? filterByMotDays(vehicles.filter(v => String(v.status || '').toLowerCase() !== 'sold'), 30).length
+    : 0;
+
+  const monthRevenue = sales
+    .filter(s => {
+      const st = String(s.saleStatus || s.status || 'completed').toLowerCase();
+      return (st === 'completed' || st === 'complete' || st === 'sold') &&
+             String(s.date || '').startsWith(thisMonth);
+    })
+    .reduce((t,s) => t + Number(s.salePrice || 0), 0);
+
+  return {
+    inStock,
+    soldThisMonth,
+    openComplaints,
+    financeOutstanding,
+    mot30,
+    monthRevenue
+  };
+}
+
+function getCCR009YearPack(year){
+  const y = Number(year || new Date().getFullYear());
+  const sales = (db.sales || [])
+    .filter(s => isCompletedSaleForFCA(s))
+    .filter(s => yearFromDate(s.date) === y)
+    .map(s => autoPopulateFCASale(Object.assign({}, s)));
+
+  const brokered = sales.filter(s => lowerTxt(s.fcaIsCreditBrokered) === 'yes');
+
+  const totals = {
+    year: y,
+    totalSales: sales.length,
+    totalBrokered: brokered.length,
+    totalCreditBrokingRevenue: 0,
+    totalCommissionEarned: 0,
+    totalFeesFromIndividuals: 0,
+    totalOtherRevenue: 0,
+    totalCommissionPaid: 0
+  };
+
+  const lenders = {};
+  const brokers = {};
+  const channels = {};
+  const issues = [];
+
+  brokered.forEach(s => {
+    const commission = Number(s.fcaCommissionEarned || 0);
+    const feeFromCustomer = Number(s.fcaFeeFromIndividual || 0);
+    const otherRevenue = Number(s.fcaOtherRevenue || 0);
+    const commissionPaid = Number(s.fcaCommissionPaid || 0);
+    const revenue = commission + feeFromCustomer + otherRevenue;
+
+    totals.totalCreditBrokingRevenue += revenue;
+    totals.totalCommissionEarned += commission;
+    totals.totalFeesFromIndividuals += feeFromCustomer;
+    totals.totalOtherRevenue += otherRevenue;
+    totals.totalCommissionPaid += commissionPaid;
+
+    const channel = normTxt(s.fcaCustomerChannel) || inferFCAChannelFromSale(s);
+    channels[channel] = (channels[channel] || 0) + 1;
+
+    const relType = normTxt(s.fcaIntroducerType) || inferIntroducerType(s);
+    const firmName = normTxt(s.financeCompany) || '(No finance company entered)';
+
+    const bucket = relType === 'Broker' ? brokers : lenders;
+    if (!bucket[firmName]) {
+      bucket[firmName] = {
+        name: firmName,
+        count: 0,
+        revenue: 0,
+        commissionPaid: 0
+      };
+    }
+
+    bucket[firmName].count += 1;
+    bucket[firmName].revenue += revenue;
+    bucket[firmName].commissionPaid += commissionPaid;
+
+    const reg = ((db.vehicles || []).find(v => v.id === s.vehicleId) || {}).reg || '';
+
+    if (!normTxt(s.financeCompany)) {
+      issues.push({date:s.date, inv:s.invNo || '', reg, customer:s.buyer || '', issue:'Missing finance company'});
+    }
+    if (!normTxt(s.fcaCustomerChannel)) {
+      issues.push({date:s.date, inv:s.invNo || '', reg, customer:s.buyer || '', issue:'Customer channel not set (auto fallback used)'});
+    }
+    if (!normTxt(s.fcaRemuneration)) {
+      issues.push({date:s.date, inv:s.invNo || '', reg, customer:s.buyer || '', issue:'Remuneration not set (auto fallback used)'});
+    }
+    if (Number(s.fcaCommissionEarned || 0) === 0 &&
+        Number(s.fcaFeeFromIndividual || 0) === 0 &&
+        Number(s.fcaOtherRevenue || 0) === 0) {
+      issues.push({date:s.date, inv:s.invNo || '', reg, customer:s.buyer || '', issue:'No broking revenue entered'});
+    }
+  });
+
+  const topLenders = Object.values(lenders)
+    .sort((a,b) => b.revenue - a.revenue || b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0,5);
+
+  const topBrokers = Object.values(brokers)
+    .sort((a,b) => b.revenue - a.revenue || b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0,5);
+
+  const channelRows = Object.keys(channels)
+    .sort((a,b) => channels[b] - channels[a] || a.localeCompare(b))
+    .map(k => ({channel:k, count:channels[k]}));
+
+  return {
+    year: y,
+    sales,
+    brokered,
+    totals,
+    topLenders,
+    topBrokers,
+    channelRows,
+    issues
+  };
+}
+
+function renderCCR009AutoOut(wrap){
+  const year = Number((wrap.querySelector('#fca_year') || {}).value || new Date().getFullYear());
+  const out = wrap.querySelector('#fca_out');
+  if (!out) return;
+
+  const r = getCCR009YearPack(year);
+
+  const lenderRows = r.topLenders.length
+    ? r.topLenders.map((x,i) => `
+      <tr>
+        <td>${i+1}</td>
+        <td>${escapeHtml(x.name)}</td>
+        <td class="right">${x.count}</td>
+        <td class="right">${fmtMoney(x.revenue)}</td>
+        <td class="right">${fmtMoney(x.commissionPaid)}</td>
+      </tr>
+    `).join('')
+    : `<tr><td colspan="5" class="small">No lender data.</td></tr>`;
+
+  const brokerRows = r.topBrokers.length
+    ? r.topBrokers.map((x,i) => `
+      <tr>
+        <td>${i+1}</td>
+        <td>${escapeHtml(x.name)}</td>
+        <td class="right">${x.count}</td>
+        <td class="right">${fmtMoney(x.revenue)}</td>
+        <td class="right">${fmtMoney(x.commissionPaid)}</td>
+      </tr>
+    `).join('')
+    : `<tr><td colspan="5" class="small">No broker data.</td></tr>`;
+
+  const channelRows = r.channelRows.length
+    ? r.channelRows.map(x => `
+      <tr>
+        <td>${escapeHtml(x.channel)}</td>
+        <td class="right">${x.count}</td>
+      </tr>
+    `).join('')
+    : `<tr><td colspan="2" class="small">No customer channel data.</td></tr>`;
+
+  const issueRows = r.issues.length
+    ? r.issues.map(x => `
+      <tr>
+        <td>${ddmmyyyy(x.date)}</td>
+        <td>${escapeHtml(String(x.inv || ''))}</td>
+        <td>${escapeHtml(x.reg || '')}</td>
+        <td>${escapeHtml(x.customer || '')}</td>
+        <td>${escapeHtml(x.issue || '')}</td>
+      </tr>
+    `).join('')
+    : `<tr><td colspan="5" class="small">No missing-data issues found.</td></tr>`;
+
+  out.innerHTML = `
+    <div class="kpiGrid">
+      <div class="kpiCard">
+        <div class="kpiLabel">Completed Sales</div>
+        <div class="kpiValue">${r.totals.totalSales}</div>
+      </div>
+      <div class="kpiCard">
+        <div class="kpiLabel">Brokered Introductions</div>
+        <div class="kpiValue">${r.totals.totalBrokered}</div>
+      </div>
+      <div class="kpiCard">
+        <div class="kpiLabel">Credit Broking Revenue</div>
+        <div class="kpiValue">${fmtMoney(r.totals.totalCreditBrokingRevenue)}</div>
+      </div>
+      <div class="kpiCard">
+        <div class="kpiLabel">Commission Earned</div>
+        <div class="kpiValue">${fmtMoney(r.totals.totalCommissionEarned)}</div>
+      </div>
+      <div class="kpiCard">
+        <div class="kpiLabel">Fees From Individuals</div>
+        <div class="kpiValue">${fmtMoney(r.totals.totalFeesFromIndividuals)}</div>
+      </div>
+      <div class="kpiCard">
+        <div class="kpiLabel">Other Revenue</div>
+        <div class="kpiValue">${fmtMoney(r.totals.totalOtherRevenue)}</div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-top:12px">
+      <div class="card flat">
+        <div class="fcaSectionTitle">Top 5 Lenders by Revenue</div>
+        <div class="tableWrap">
+          <table class="table compact">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th class="right">Introductions</th>
+                <th class="right">Revenue</th>
+                <th class="right">Fees Paid</th>
+              </tr>
+            </thead>
+            <tbody>${lenderRows}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card flat">
+        <div class="fcaSectionTitle">Top Brokers by Revenue</div>
+        <div class="tableWrap">
+          <table class="table compact">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th class="right">Introductions</th>
+                <th class="right">Revenue</th>
+                <th class="right">Fees Paid</th>
+              </tr>
+            </thead>
+            <tbody>${brokerRows}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-top:12px">
+      <div class="card flat">
+        <div class="fcaSectionTitle">Customer Channel Breakdown</div>
+        <div class="tableWrap">
+          <table class="table compact">
+            <thead><tr><th>Channel</th><th class="right">Deals</th></tr></thead>
+            <tbody>${channelRows}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card flat">
+        <div class="fcaSectionTitle">CCR009 Numbers Summary</div>
+        <div class="small">126AA / 126CA Total credit broking revenue: <b>${fmtMoney(r.totals.totalCreditBrokingRevenue)}</b></div>
+        <div class="small">126AB / 126CB Total commission earned: <b>${fmtMoney(r.totals.totalCommissionEarned)}</b></div>
+        <div class="small">126AC / 126CC Total fees from individuals: <b>${fmtMoney(r.totals.totalFeesFromIndividuals)}</b></div>
+        <div class="small">126AD / 126CD Other revenue: <b>${fmtMoney(r.totals.totalOtherRevenue)}</b></div>
+        <div class="small">126AE / 126CE Commission / merchant fees paid: <b>${fmtMoney(r.totals.totalCommissionPaid)}</b></div>
+        <div class="small">126AF / 126CF Total introductions: <b>${r.totals.totalBrokered}</b></div>
+      </div>
+    </div>
+
+    <div class="card flat" style="margin-top:12px">
+      <div class="fcaSectionTitle">Readiness / Missing Data</div>
+      <div class="tableWrap">
+        <table class="table compact">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Invoice</th>
+              <th>Reg</th>
+              <th>Customer</th>
+              <th>Issue</th>
+            </tr>
+          </thead>
+          <tbody>${issueRows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function ensureSaleFCA(s){
+  s = s || {};
+  if (typeof s.fcaIsCreditBrokered === 'undefined') s.fcaIsCreditBrokered = '';
+  if (typeof s.fcaRemuneration === 'undefined') s.fcaRemuneration = '';
+  if (typeof s.fcaCommissionEarned === 'undefined') s.fcaCommissionEarned = 0;
+  if (typeof s.fcaFeeFromIndividual === 'undefined') s.fcaFeeFromIndividual = 0;
+  if (typeof s.fcaOtherRevenue === 'undefined') s.fcaOtherRevenue = 0;
+  if (typeof s.fcaCommissionPaid === 'undefined') s.fcaCommissionPaid = 0;
+  if (typeof s.fcaCustomerChannel === 'undefined') s.fcaCustomerChannel = '';
+  if (typeof s.fcaCommissionDisclosure === 'undefined') s.fcaCommissionDisclosure = '';
+  if (typeof s.fcaCommissionValueDisclosure === 'undefined') s.fcaCommissionValueDisclosure = '';
+  if (typeof s.fcaIntroducerType === 'undefined') s.fcaIntroducerType = '';
+  return s;
+}
+
+function normTxt(v){
+  return String(v || '').trim();
+}
+
+function lowerTxt(v){
+  return normTxt(v).toLowerCase();
+}
+
+function isCompletedSaleForFCA(s){
+  const st = lowerTxt(s.saleStatus || s.status || 'completed');
+  return st === 'completed' || st === 'complete' || st === 'sold';
+}
+
+function yearFromDate(d){
+  return Number(String(d || '').slice(0,4)) || 0;
+}
+
+function inferFCAChannelFromSale(s){
+  const manual = normTxt(s.fcaCustomerChannel);
+  if (manual) return manual;
+
+  const lead = lowerTxt(s.leadSource);
+  if (['website','web','online','autotrader','auto trader','car gurus','cargurus','motors','ebay'].includes(lead)) return 'Website';
+  if (['facebook','instagram','social','social media','tiktok'].includes(lead)) return 'Social media';
+  if (['phone','telephone','call'].includes(lead)) return 'Phone';
+  if (['email'].includes(lead)) return 'Email';
+
+  return 'In person';
+}
+
+function inferCreditBrokeredFromSale(s){
+  if (normTxt(s.fcaIsCreditBrokered)) return lowerTxt(s.fcaIsCreditBrokered) === 'yes';
+  return Number(s.finance || 0) > 0 || normTxt(s.financeCompany) !== '';
+}
+
+function inferRemunerationFromSale(s){
+  if (normTxt(s.fcaRemuneration)) return s.fcaRemuneration;
+
+  const comm = Number(s.fcaCommissionEarned || 0);
+  const fee  = Number(s.fcaFeeFromIndividual || 0);
+  const oth  = Number(s.fcaOtherRevenue || 0);
+
+  if (comm > 0 && fee > 0) return 'Commission + fee';
+  if (comm > 0) return 'Commission from lender';
+  if (fee > 0) return 'Fee from individual';
+  if (oth > 0) return 'Other revenue';
+  if (inferCreditBrokeredFromSale(s)) return 'Commission from lender';
+  return 'No remuneration';
+}
+
+function inferDisclosureFlag(s, which){
+  const current = which === 'value'
+    ? normTxt(s.fcaCommissionValueDisclosure)
+    : normTxt(s.fcaCommissionDisclosure);
+
+  if (current) return current;
+
+  // Your filled return says "Always" for both disclosures
+  return 'Yes';
+}
+
+function inferIntroducerType(s){
+  if (normTxt(s.fcaIntroducerType)) return s.fcaIntroducerType;
+
+  const lead = lowerTxt(s.leadSource);
+  if (['dsg finance','motion finance','broker','broker referral','credit broker'].includes(lead)) {
+    return 'Broker';
+  }
+  return 'Lender';
+}
+
+function sumCommissionFromAddons(s){
+  const addons = Array.isArray(s.addons) ? s.addons : [];
+  return addons.reduce((t, a) => {
+    const name = lowerTxt(a.name || a.type || a.label);
+    if (name.includes('commission')) return t + Number(a.sellAmount || a.amount || 0);
+    return t;
+  }, 0);
+}
+
+function autoPopulateFCASale(s){
+  s = ensureSaleFCA(s || {});
+
+  const brokered = inferCreditBrokeredFromSale(s);
+  s.fcaIsCreditBrokered = brokered ? 'yes' : 'no';
+
+  if (!normTxt(s.fcaRemuneration)) {
+    s.fcaRemuneration = inferRemunerationFromSale(s);
+  }
+
+  if (!normTxt(s.fcaCustomerChannel)) {
+    s.fcaCustomerChannel = inferFCAChannelFromSale(s);
+  }
+
+  if (!normTxt(s.fcaCommissionDisclosure)) {
+    s.fcaCommissionDisclosure = inferDisclosureFlag(s, 'commission');
+  }
+
+  if (!normTxt(s.fcaCommissionValueDisclosure)) {
+    s.fcaCommissionValueDisclosure = inferDisclosureFlag(s, 'value');
+  }
+
+  if (!normTxt(s.fcaIntroducerType)) {
+    s.fcaIntroducerType = inferIntroducerType(s);
+  }
+
+  if (!Number(s.fcaCommissionEarned || 0)) {
+    const addonCommission = sumCommissionFromAddons(s);
+    if (addonCommission > 0) s.fcaCommissionEarned = addonCommission;
+  }
+
+  return s;
+}
+
+async function confirmRestoreMerge(){
+  const ok = await scConfirm(
+    'Merge restore will add/update records from the selected backup into your current data.',
+    'Confirm merge restore'
+  );
+  if(!ok) return;
+  restoreJSONMerge();
+}
+
+function renderDashboardKpiCards(){
+  const k = getDashboardKpis();
+
+  return `
+    <div class="kpiGrid">
+      <div class="kpiCard">
+        <div class="kpiLabel">Sold This Month</div>
+        <div class="kpiValue">${k.soldThisMonth}</div>
+      </div>
+
+      <div class="kpiCard">
+        <div class="kpiLabel">Open Complaints</div>
+        <div class="kpiValue">${k.openComplaints}</div>
+      </div>
+
+      <div class="kpiCard">
+        <div class="kpiLabel">Finance Payouts Outstanding</div>
+        <div class="kpiValue">${k.financeOutstanding}</div>
+      </div>
+
+      <div class="kpiCard">
+        <div class="kpiLabel">MOT Due In 30 Days</div>
+        <div class="kpiValue">${k.mot30}</div>
+      </div>
+
+      <div class="kpiCard">
+        <div class="kpiLabel">Sales This Month</div>
+        <div class="kpiValue">${fmtMoney(k.monthRevenue)}</div>
+      </div>
+    </div>
+  `;
+}
 
 function showApps(){
   const o=document.getElementById('appsOverlay');
@@ -2136,7 +2629,15 @@ async function verifyUserPassword(user, plainPassword){
   return false;
 }
 
-function logout(){sessionStorage.removeItem('starcars_sess'); sessionStorage.removeItem('starcars_pull_used'); session=null; showLogin(true); initHeader();}
+async function logout(){
+  const ok = await scConfirm('Are you sure you want to logout?', 'Confirm logout');
+  if(!ok) return;
+
+  session = null;
+  sessionStorage.removeItem('starcars_sess');
+  showLogin(true);
+}
+
 function switchUser(){ logout(); }
 function initHeader(){ const el=document.getElementById('who'); el.textContent=session?('Logged in: '+session.username+' ('+session.role+')'):'Not logged in'; refreshLogoBox(); }
 
@@ -2279,6 +2780,7 @@ async function deriveBackupKeyFromPassword(password, saltB64, iterations){
   );
 }
 
+
 async function encryptBackupPayload(plainText, password){
   const salt = _randSaltB64(16);
   const ivBytes = new Uint8Array(12);
@@ -2306,16 +2808,75 @@ async function encryptBackupPayload(plainText, password){
 
 async function decryptBackupPayload(payload, password){
   if(!payload || !payload.__encrypted) return payload;
+
+  if((payload.format || 'starcars-backup-v1') !== 'starcars-backup-v1'){
+    throw new Error('Backup format not supported');
+  }
+
+  if(!payload.salt || !payload.iv || !payload.data){
+    throw new Error('Encrypted backup is missing fields');
+  }
+
   const key = await deriveBackupKeyFromPassword(password, payload.salt, payload.iterations || PASS_ITER_DEFAULT);
   const iv = _bytesFromB64(payload.iv || '');
   const data = _bytesFromB64(payload.data || '');
+
+  if(!iv || !iv.length || !data || !data.length){
+    throw new Error('Encrypted backup is damaged');
+  }
+
   const plainBuf = await crypto.subtle.decrypt(
     { name:'AES-GCM', iv },
     key,
     data
   );
+
   const txt = new TextDecoder().decode(plainBuf);
-  return JSON.parse(txt || '{}');
+  let parsed;
+  try{
+    parsed = JSON.parse(txt || '{}');
+  }catch(e){
+    throw new Error('Decrypted backup is not valid JSON');
+  }
+  return parsed;
+}
+
+function _looksLikeStarCarsBackupData(obj){
+  return !!(
+    obj &&
+    typeof obj === 'object' &&
+    (
+      Array.isArray(obj.users) ||
+      Array.isArray(obj.vehicles) ||
+      Array.isArray(obj.sales) ||
+      Array.isArray(obj.showroomExpenses) ||
+      Array.isArray(obj.vehicleExpenses) ||
+      obj.company ||
+      obj.audit ||
+      obj.settings
+    )
+  );
+}
+
+function validateBackupObject(parsed){
+  if(!parsed || typeof parsed !== 'object' || Array.isArray(parsed)){
+    throw new Error('Backup file has no valid data');
+  }
+
+  // Main supported format: full DB object
+  if (_looksLikeStarCarsBackupData(parsed)) {
+    return parsed;
+  }
+
+  // Legacy/nested wrappers sometimes store DB in one of these keys
+  const candidates = ['db','payload','backup','dataObject'];
+  for(const k of candidates){
+    if(_looksLikeStarCarsBackupData(parsed[k])){
+      return parsed[k];
+    }
+  }
+
+  throw new Error('Backup structure not recognised');
 }
 
 async function readBackupFileToObject(file){
@@ -2326,17 +2887,24 @@ async function readBackupFileToObject(file){
   }catch(e){
     throw new Error('Bad JSON: ' + (e.message||e));
   }
+
+  // Encrypted wrapper backup
   if(parsed && parsed.__encrypted){
     const pw = prompt('Enter backup password');
     if(pw == null) throw new Error('Backup restore cancelled');
     try{
-      return await decryptBackupPayload(parsed, pw);
+      const decrypted = await decryptBackupPayload(parsed, pw);
+      return validateBackupObject(decrypted);
     }catch(e){
-      throw new Error('Wrong backup password or damaged file');
+      if ((e && e.message) === 'Backup format not supported') throw e;
+      throw new Error('Wrong backup password or incompatible backup file');
     }
   }
-  return parsed;
+
+  // Plain JSON backup
+  return validateBackupObject(parsed);
 }
+
 
 async function backupJSON(){
   try{
@@ -2401,12 +2969,28 @@ async function restoreJSONMerge() {
 
         // Make sure db exists
         db = db || {};
+        db.deleted = db.deleted || {};
 
-        // If backup contains deleted map, merge it first
+        // IMPORTANT:
+        // If an item exists in the backup, remove its deleted flag from local.
+        // Otherwise a wrongly-deleted local item gets merged in, then deleted again.
+        Object.keys(incoming).forEach(k => {
+          const val = incoming[k];
+
+          if (!Array.isArray(val)) return;
+
+          db.deleted[k] = db.deleted[k] || {};
+
+          for (const item of val) {
+            if (item && item.id && db.deleted[k][item.id]) {
+              delete db.deleted[k][item.id];
+            }
+          }
+        });
+
+        // If backup contains deleted map, merge it AFTER clearing deleted flags
         if (incoming.deleted && typeof mergeDeletedMaps === 'function') {
           db.deleted = mergeDeletedMaps(db.deleted, incoming.deleted);
-        } else {
-          db.deleted = db.deleted || {};
         }
 
         Object.keys(incoming).forEach(k => {
@@ -3886,6 +4470,8 @@ function viewDashboard(){
         <div class="stat">${fmtMoney(stockValue)}</div>
       </div>
     </div>
+
+    ${renderDashboardKpiCards()}
     ` : `
     <div class="grid4">
       <div class="card"><div class="small">Vehicles In Stock</div><div class="stat">${inStock}</div></div>
@@ -6539,10 +7125,28 @@ function viewSales(){
     const r = arr[i];
     if(!r) return;
 
-    if(act === 'del'){
-      if(!confirm('Delete this receipt line?')) return;
-      arr.splice(i,1);
-      renderReceiptsTable();
+    if(act === 'delSale'){
+      (async ()=>{
+        const sale = db.sales.find(x => x.id === id);
+        const reg = ((db.vehicles || []).find(v => v.id === sale?.vehicleId)?.reg) || '';
+        const inv = sale?.invNo || '';
+
+        const ok = await scConfirm(
+          `Delete sale ${inv ? '(' + inv + ')' : ''} ${reg ? 'for ' + reg : ''}?`,
+          'Delete sale'
+        );
+        if(!ok) return;
+
+        markDeleted('sales', id);
+        db.sales = db.sales.filter(x => x.id !== id);
+
+        saveDB();
+        try{ renderAlertBell(); }catch(e){}
+        addAudit('delete','sale',id,inv || reg || '');
+        if(typeof rows === 'function') rows();
+        else if(typeof render === 'function') render();
+      })();
+      return;
     }
 
     if(act === 'toggle'){
@@ -14283,6 +14887,14 @@ render();
     if (auditCard) auditCard.insertAdjacentElement('beforebegin', card);
     else wrap.appendChild(card);
 
+    const runBtn = wrap.querySelector('#fca_run');
+    if (runBtn && !runBtn.dataset.boundFcaRun){
+      runBtn.onclick = function(){
+        renderCCR009AutoOut(wrap);
+      };
+      runBtn.dataset.boundFcaRun = '1';
+    }
+
     const run = function(){ renderFCAReportInto(wrap); };
     const btnRun = wrap.querySelector('#fca_run');
     const btnCsv = wrap.querySelector('#fca_export_csv');
@@ -14397,6 +15009,7 @@ render();
           if (!saved) return;
           Object.assign(saved, fcaData);
           ensureSaleFCA(saved);
+          autoPopulateFCASale(saved);
           saveDB();
           wrap.dataset.fcaEditingSaleId = saved.id || '';
           if (typeof addAudit === 'function') addAudit('edit','sale',saved.id || '', 'Saved FCA reporting fields');
