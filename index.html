@@ -992,7 +992,51 @@ window.restoreJSONMerge = function () {
 
             for (const item of val) {
               if (item && item.id) {
-                byId[item.id] = item; // backup wins
+
+                // ===== VEHICLE SAFE MERGE (KEEP LATEST MOT EXPIRY) =====
+                if (k === 'vehicles' && byId[item.id]) {
+
+                  const existing = byId[item.id];
+
+                  const existingMot =
+                    existing.motExpiry ||
+                    existing.lastMotExpiry ||
+                    '';
+
+                  const incomingMot =
+                    item.motExpiry ||
+                    item.lastMotExpiry ||
+                    '';
+
+                  const existingMotDate = existing.motUpdatedAt || '';
+                  const incomingMotDate = item.motUpdatedAt || '';
+
+                  const merged = Object.assign({}, existing, item);
+
+                  const keepExistingMot =
+                    existingMot &&
+                    (
+                      !incomingMot ||
+                      String(existingMot) >= String(incomingMot) ||
+                      (existingMotDate && incomingMotDate && String(existingMotDate) >= String(incomingMotDate))
+                    );
+
+                  if (keepExistingMot) {
+                    merged.motExpiry = existingMot;
+                    merged.lastMotExpiry = existingMot;
+                    merged.lastMotDate = existing.lastMotDate || merged.lastMotDate || '';
+                    merged.lastMotMileage = existing.lastMotMileage || merged.lastMotMileage || '';
+                    merged.motUpdatedAt = existing.motUpdatedAt || merged.motUpdatedAt || '';
+                  }
+
+                  byId[item.id] = merged;
+
+                } else {
+
+                  byId[item.id] = item;
+
+                }
+
               } else {
                 noId.push(item);
               }
@@ -4623,65 +4667,139 @@ window.openVehicleByReg = function(reg){
 function globalSearch(){
   const input = document.getElementById('global_search');
   if (!input) return;
-  const raw = input.value || '';
-  const q = raw.trim();
+
+  const q = (input.value || '').trim();
   if (!q) return;
 
   const up = q.toUpperCase();
   const low = q.toLowerCase();
+  const qReg = normReg(q);
   const phoneDigits = q.replace(/\D+/g,'');
 
-  const vehicles   = db.vehicles   || [];
-  const sales      = db.sales      || [];
+  const vehicles = db.vehicles || [];
+  const sales = db.sales || [];
   const complaints = db.complaints || [];
 
-  let matchVehicle   = null;
-  let matchSale      = null;
-  let matchComplaint = null;
+  const results = [];
 
-  // 1) Try vehicle by REG / VIN / make / model
-  if (vehicles.length){
-    matchVehicle = vehicles.find(v => normReg(v.reg) === normReg(up)) || null;
-    if (!matchVehicle){
-      matchVehicle = vehicles.find(v =>
-        (v.reg   || '').toUpperCase().includes(up)   ||
-        (v.vin   || '').toUpperCase().includes(up)   ||
-        (v.make  || '').toLowerCase().includes(low)  ||
-        (v.model || '').toLowerCase().includes(low)
-      ) || null;
+  vehicles.forEach(v => {
+    const match =
+      normReg(v.reg || '') === qReg ||
+      String(v.reg || '').toUpperCase().includes(up) ||
+      String(v.vin || '').toUpperCase().includes(up) ||
+      String(v.make || '').toLowerCase().includes(low) ||
+      String(v.model || '').toLowerCase().includes(low);
+
+    if (match) {
+      let label = 'Original Purchase / Stock';
+      if (v.isPartEx || v.source === 'PX' || v.stockType === 'PX' || v.originalSaleId) label = 'Part Exchange Vehicle';
+      if (String(v.status || '').toLowerCase() === 'sold') label = 'Sold / Old Stock Record';
+
+      results.push({
+        type: 'vehicle',
+        title: `${v.reg || ''} — ${v.make || ''} ${v.model || ''}`,
+        sub: `${label} | Status: ${v.status || 'for sale'} | Purchase: £${Number(v.purchase || 0).toFixed(2)}`,
+        action: () => goToVehicleSearch(v.reg || q)
+      });
     }
+  });
+
+  sales.forEach(s => {
+    const v = vehicles.find(x => x.id === s.vehicleId) || {};
+    const saleReg = s.reg || s.vehicleReg || v.reg || '';
+
+    const match =
+      normReg(saleReg || '') === qReg ||
+      String(saleReg || '').toUpperCase().includes(up) ||
+      String(s.invNo || s.invoiceNo || '').toUpperCase().includes(up) ||
+      String(s.buyer || s.customer || '').toLowerCase().includes(low) ||
+      String(s.phone || '').replace(/\D+/g,'').includes(phoneDigits) ||
+      String(s.make || v.make || '').toLowerCase().includes(low) ||
+      String(s.model || v.model || '').toLowerCase().includes(low);
+
+    if (match) {
+      results.push({
+        type: 'sale',
+        title: `${saleReg} — Sold Record / Invoice ${s.invNo || s.invoiceNo || ''}`,
+        sub: `Customer: ${s.buyer || s.customer || ''} | Sale date: ${s.date || s.saleDate || ''}`,
+        action: () => goToSaleSearch(s)
+      });
+    }
+
+    if (s.pxReg && normReg(s.pxReg) === qReg) {
+      results.push({
+        type: 'px-sale',
+        title: `${s.pxReg} — PX Taken In Against Sale`,
+        sub: `PX allowance: £${Number(s.pxAllowance || 0).toFixed(2)} | Main sold car: ${saleReg}`,
+        action: () => goToSaleSearch(s)
+      });
+    }
+  });
+
+  complaints.forEach(c => {
+    if (
+      normReg(c.vehicle || '') === qReg ||
+      String(c.customer || '').toLowerCase().includes(low) ||
+      String(c.vehicle || '').toUpperCase().includes(up)
+    ) {
+      results.push({
+        type: 'complaint',
+        title: `${c.vehicle || ''} — Complaint Record`,
+        sub: `Customer: ${c.customer || ''} | Status: ${c.status || ''}`,
+        action: () => goToComplaintSearch(c)
+      });
+    }
+  });
+
+  if (!results.length) {
+    alert('No matching vehicle, sale, PX or complaint found for "' + q + '".');
+    return;
   }
 
-  // 2) Try sale by invoice / buyer / phone
-  if (sales.length){
-    matchSale = sales.find(s => {
-      const inv   = (s.invNo   || '').toString().toUpperCase();
-      const buyer = (s.buyer   || '').toLowerCase();
-      const phone = (s.phone   || '').replace(/\D+/g,'');
-      return inv === up ||
-             inv.includes(up) ||
-             buyer.includes(low) ||
-             (phoneDigits && phone && phone.indexOf(phoneDigits) !== -1);
-    }) || null;
+  if (results.length === 1) {
+    results[0].action();
+    return;
   }
 
-  // 3) Try complaint by customer / reg
-  if (complaints.length){
-    matchComplaint = complaints.find(c =>
-      (c.customer || '').toLowerCase().includes(low) ||
-      normReg(c.vehicle || '') === normReg(up)
-    ) || null;
-  }
+  showGlobalSearchChoices(q, results);
+}
 
-  if (matchVehicle){
-    goToVehicleSearch(matchVehicle.reg || q);
-  } else if (matchSale){
-    goToSaleSearch(matchSale);
-  } else if (matchComplaint){
-    goToComplaintSearch(matchComplaint);
-  } else {
-    alert('No matching vehicle, sale or complaint found for "'+q+'".');
-  }
+function showGlobalSearchChoices(q, results){
+  const overlay = document.createElement('div');
+  overlay.className = 'modalOverlay';
+
+  overlay.innerHTML = `
+    <div class="modalBox" style="width:min(760px,96vw)">
+      <div class="modalHead">
+        <span>Choose record for: ${escHtml(q)}</span>
+        <button type="button" onclick="this.closest('.modalOverlay').remove()">✕</button>
+      </div>
+
+      <div class="modalBody">
+        <div class="small" style="margin-bottom:10px">
+          This REG/search appears in more than one place. Please choose the correct record.
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${results.map((r,i)=>`
+            <button class="block" style="text-align:left" onclick="window.__globalSearchChoice(${i})">
+              <b>${escHtml(r.title)}</b><br>
+              <span class="small">${escHtml(r.sub)}</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+
+  window.__globalSearchResults = results;
+  window.__globalSearchChoice = function(i){
+    const r = window.__globalSearchResults[i];
+    overlay.remove();
+    if (r && typeof r.action === 'function') r.action();
+  };
+
+  document.body.appendChild(overlay);
 }
 
 function goToVehicleSearch(term){
@@ -5716,6 +5834,7 @@ function viewVehicles(){
   </select>
   </label>
     <label>Supplier Invoice #<input id="v_supplier" placeholder="INV-001"></label>
+    <label>Warning Supplier<select id="v_warningSupplier"><option value="">-- Select warning supplier only if needed --</option></select></label>
     <label>VIN (optional)<input id="v_vin"></label>
     <label>MOT Expiry<input id="v_motExpiry" type="date" placeholder="Optional"></label>
     <label>Status<select id="v_status"><option value="for sale">for sale</option><option value="sold">sold</option></select></label>
@@ -5775,6 +5894,12 @@ function viewVehicles(){
     <label class="small" style="display: flex; align-items: center; margin: 0;">
       <input type="checkbox" id="veh_notready"> Not Ready
     </label>
+    <label class="small" style="display: flex; align-items: center; margin: 0;">
+      Warning Supplier
+      <select id="veh_warningSupplierFilter" style="padding: 4px 6px; font-size: 12px; background: #0f1628; border: 1px solid var(--line); color: var(--ink); border-radius: 6px; margin-left:4px;">
+        <option value="">All suppliers</option>
+      </select>
+    </label>
     <!-- NEW: MOT Expiry Filter -->
     <label class="small" style="display: flex; align-items: center; margin: 0;">
       <select id="veh_motFilter" style="padding: 4px 6px; font-size: 12px; background: #0f1628; border: 1px solid var(--line); color: var(--ink); border-radius: 6px;">
@@ -5809,6 +5934,42 @@ function viewVehicles(){
         .join('\n');
   }
 
+  function vehWarningSupplierValue(v){
+    return String((v && (v.warningSupplier || v.supplierWarningSupplier || v.supplierNameForWarning)) || '').trim();
+  }
+
+  function htmlEscLocal(v){
+    return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function populateVehWarningSupplierFilter(){
+    const sel = wrap.querySelector('#veh_warningSupplierFilter');
+    if(!sel) return;
+
+    const current = sel.value || '';
+    const names = new Set();
+
+    (db.vehicles || []).forEach(v => {
+      const name = vehWarningSupplierValue(v);
+      if(name) names.add(name);
+    });
+
+    try{
+      if(typeof window.starCarsSupplierWarningList === 'function'){
+        window.starCarsSupplierWarningList().forEach(n => { if(String(n||'').trim()) names.add(String(n).trim()); });
+      }else if(db.company && Array.isArray(db.company.supplierWarnings)){
+        db.company.supplierWarnings.forEach(n => { if(String(n||'').trim()) names.add(String(n).trim()); });
+      }
+    }catch(e){}
+
+    const sorted = Array.from(names).sort((a,b)=>a.localeCompare(b));
+    sel.innerHTML = '<option value="">All suppliers</option>' + sorted.map(n => `<option value="${htmlEscLocal(n)}">${htmlEscLocal(n)}</option>`).join('');
+
+    if(current) sel.value = current;
+  }
+
+  populateVehWarningSupplierFilter();
+
   let editId=null; const body=wrap.querySelector('#vehBody');
 
   function rows(q='', mode='instock'){
@@ -5837,7 +5998,9 @@ function viewVehicles(){
   const investorOnly = wrap.querySelector('#veh_investoronly')?.checked;
   const pxOnly = wrap.querySelector('#veh_pxonly')?.checked;
   const notReadyOnly = wrap.querySelector('#veh_notready')?.checked;
-  const motFilter = wrap.querySelector('#veh_motFilter')?.value || '';
+  
+  const warningSupplierFilter = (wrap.querySelector('#veh_warningSupplierFilter')?.value || '').trim().toLowerCase();
+const motFilter = wrap.querySelector('#veh_motFilter')?.value || '';
   const daysFilter = wrap.querySelector('#veh_daysFilter')?.value;
   
   (db.vehicles||[]).forEach(v=>{
@@ -5856,7 +6019,13 @@ function viewVehicles(){
 
     if (notReadyOnly && (v.status === 'sold' || v.readyForSale)) return;
     
-    // Apply search filter
+    
+    if (warningSupplierFilter) {
+      const ws = vehWarningSupplierValue(v).toLowerCase();
+      if (ws !== warningSupplierFilter) return;
+    }
+
+// Apply search filter
     if (q) {
       const hay = ((v.reg || '') + ' ' + (v.make || '') + ' ' + (v.model || '') + ' ' + (v.supplier || '')).toLowerCase();
       if (!hay.includes(q)) return;
@@ -5940,6 +6109,7 @@ function viewVehicles(){
     </td>
     <td>
       <div>${v.supplier||''}</div>
+      ${vehWarningSupplierValue(v) ? '<div class="small" style="color:#ffb86b;">Warn Supplier: ' + vehWarningSupplierValue(v) + '</div>' : ''}
       ${v.supplierNote ? '<div class="small" style="color:#53a8ff;">' + v.supplierNote + '</div>' : ''}
       <div class="small">${v.vin ? ('VIN: ' + v.vin) : ''}</div>
     </td>
@@ -6041,6 +6211,9 @@ function viewVehicles(){
   } 
   applyVehFilter(); 
   });
+
+    const WARN_SUP_FILTER = wrap.querySelector('#veh_warningSupplierFilter');
+  if(WARN_SUP_FILTER) WARN_SUP_FILTER.addEventListener('change', applyVehFilter);
 
   const CHK_NR = wrap.querySelector('#veh_notready');
   if(CHK_NR) CHK_NR.addEventListener('change', (e) => {
@@ -6484,7 +6657,8 @@ function viewVehicles(){
   }
 
   })(),
-  supplier:wrap.querySelector('#v_supplier').value.trim(), 
+  supplier:wrap.querySelector('#v_supplier').value.trim(), // supplier invoice number / old field
+  warningSupplier: (wrap.querySelector('#v_warningSupplier') ? wrap.querySelector('#v_warningSupplier').value.trim() : ((db.vehicles.find(x=>x.id===editId)||{}).warningSupplier || '')), 
   // Preserve part-ex specific fields when editing
   supplierNote: wrap.querySelector('#v_supplierNote') ? wrap.querySelector('#v_supplierNote').value : (db.vehicles.find(x=>x.id===editId)?.supplierNote || ''),
   originalSaleId: wrap.querySelector('#v_originalSaleId') ? wrap.querySelector('#v_originalSaleId').value : (db.vehicles.find(x=>x.id===editId)?.originalSaleId || null),
@@ -6516,7 +6690,8 @@ function viewVehicles(){
     }
     if(editId){ const i=db.vehicles.findIndex(x=>x.id===editId); db.vehicles[i]=v; saveDB(); try{renderAlertBell();}catch(e){}; addAudit('update','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); editId=null; }
     else { db.vehicles.unshift(v); saveDB(); try{renderAlertBell();}catch(e){}; addAudit('add','vehicle',v.id,v.reg+' '+(v.make||'')+' '+(v.model||'')); }
-    rows(); ['v_reg','v_make','v_model','v_notReadyReason','v_prepNotes','v_colour','v_fuel','v_engineSize','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_vin','v_motExpiry'].forEach(k=>document.getElementById(k).value='');
+    populateVehWarningSupplierFilter();
+    rows(); ['v_reg','v_make','v_model','v_notReadyReason','v_prepNotes','v_colour','v_fuel','v_engineSize','v_mileage','v_purchase','v_purchaseDate','v_firstReg','v_investor','v_supplier','v_warningSupplier','v_vin','v_motExpiry'].forEach(k=>{ const el=document.getElementById(k); if(el) el.value=''; });
     
     document.getElementById('v_prepStage').value='None';
     
@@ -7676,12 +7851,122 @@ function viewSales(){
     const regEl = wrap.querySelector('#sale_reg');
     const priceEl = wrap.querySelector('#sale_price');
 
-    if(regEl) regEl.addEventListener('input', updateSaleCostProfitPreview);
-    if(regEl) regEl.addEventListener('change', updateSaleCostProfitPreview);
+    function cleanWarnReg(v){
+      return String(v || '').trim().toUpperCase().replace(/\s+/g,'');
+    }
+
+    function warnNorm(v){
+      return String(v || '').trim().toLowerCase();
+    }
+
+    function getSupplierWarningListDirect(){
+      try{
+        if(typeof window.starCarsSupplierWarningList === 'function'){
+          return window.starCarsSupplierWarningList();
+        }
+        db.company = db.company || {};
+        return Array.isArray(db.company.supplierWarnings) ? db.company.supplierWarnings : [];
+      }catch(e){
+        return [];
+      }
+    }
+
+    function vehicleWarningSupplierDirect(v){
+      return String((v && (
+        v.warningSupplier ||
+        v.supplierWarningSupplier ||
+        v.supplierNameForWarning
+      )) || '').trim();
+    }
+
+    function isWarningSupplierDirect(name){
+      name = warnNorm(name);
+      if(!name) return false;
+
+      return getSupplierWarningListDirect().map(warnNorm).some(function(x){
+        return x && (x === name || name.indexOf(x) !== -1 || x.indexOf(name) !== -1);
+      });
+    }
+
+    function showSupplierWarningDirect(forcePopup){
+      try{
+        const reg = cleanWarnReg(regEl ? regEl.value : '');
+        if(!reg) return;
+
+        const v = (db.vehicles || []).find(x => cleanWarnReg(x.reg) === reg);
+        if(!v) return;
+
+        const supplier = vehicleWarningSupplierDirect(v);
+        const hit = isWarningSupplierDirect(supplier);
+
+        let box = wrap.querySelector('#sale_supplier_warning_direct_box');
+        if(!box){
+          box = document.createElement('div');
+          box.id = 'sale_supplier_warning_direct_box';
+          box.style.margin = '10px 0';
+          box.style.padding = '14px';
+          box.style.border = '3px solid #ff6b6b';
+          box.style.borderRadius = '12px';
+          box.style.background = 'rgba(255,107,107,.24)';
+          box.style.color = '#fff';
+          box.style.fontWeight = '900';
+          box.style.fontSize = '15px';
+
+          const info = wrap.querySelector('#sale_vehicleInfo');
+          if(info && info.parentNode){
+            info.parentNode.insertBefore(box, info.nextSibling);
+          }else{
+            wrap.insertBefore(box, wrap.firstChild);
+          }
+        }
+
+        if(!supplier || !hit){
+          box.style.display = 'none';
+          box.innerHTML = '';
+          return;
+        }
+
+        const msg = '⚠️ SUPPLIER WARNING: ' + (v.reg || reg) + ' is linked to warning supplier "' + supplier + '". Please double-check before completing the sale.';
+
+        box.style.display = '';
+        box.innerHTML = msg.replace(/[&<>"']/g, function(c){
+          return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        });
+
+        const key = cleanWarnReg(v.reg) + '|' + warnNorm(supplier);
+        if(forcePopup || window.__lastDirectSupplierWarningKey !== key){
+          window.__lastDirectSupplierWarningKey = key;
+          if(typeof window.scAlert === 'function'){
+            window.scAlert(msg, 'Supplier Warning');
+          }else{
+            alert(msg);
+          }
+        }
+      }catch(e){
+        console.warn('Direct sales supplier warning failed', e);
+      }
+    }
+
+    if(regEl) regEl.addEventListener('input', function(){
+      updateSaleCostProfitPreview();
+      clearTimeout(window.__directSupplierWarningTimer);
+      window.__directSupplierWarningTimer = setTimeout(function(){ showSupplierWarningDirect(true); }, 250);
+    });
+
+    if(regEl) regEl.addEventListener('change', function(){
+      updateSaleCostProfitPreview();
+      setTimeout(function(){ showSupplierWarningDirect(true); }, 80);
+    });
+
+    if(regEl) regEl.addEventListener('blur', function(){
+      setTimeout(function(){ showSupplierWarningDirect(false); }, 80);
+    });
+
     if(priceEl) priceEl.addEventListener('input', updateSaleCostProfitPreview);
 
     // Run once on Sales tab load
     updateSaleCostProfitPreview();
+    setTimeout(function(){ showSupplierWarningDirect(false); }, 250);
   })();
 
   function backfillSaleDebtors(){
@@ -9189,6 +9474,10 @@ try {
     const existingPx = (db.vehicles || []).find(v => v.originalSaleId === sale.id);
     const base = {
       reg: pxReg,
+      source: 'PX',
+      stockType: 'PX',
+      isPartEx: true,
+      status: 'for sale',
       make: sale.pxMake || '',
       model: sale.pxModel || '',
       colour: '',
@@ -9314,7 +9603,7 @@ function viewSold(){
   <div class="row" style="margin-bottom: 16px; padding: 10px; background: rgba(19, 26, 43, 0.5); border-radius: 10px;">
     <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; width: 100%;">
       <div style="flex: 1; min-width: 220px;">
-        <label class="small" for="sold_search">Search (REG / Customer / Phone / Invoice)</label>
+        <label class="small" for="sold_search">Search (REG / Make / Model / Customer / Phone / Invoice)</label>
         <input id="sold_search" placeholder="Type to search..." style="width: 100%;">
       </div>
       <div style="flex: 0 0 220px; min-width: 220px;">
@@ -9364,6 +9653,8 @@ function viewSold(){
         const v = (db.vehicles||[]).find(x => x.id === s.vehicleId) || {};
         const hay = (
           (v.reg||'') + ' ' +
+          (v.make||'') + ' ' +
+          (v.model||'') + ' ' +
           (s.buyer||'') + ' ' +
           (s.phone||'') + ' ' +
           (s.invNo||'')
@@ -18249,6 +18540,300 @@ try{ renderBackupInfo(); }catch(_){ }
       return w;
     };
   }
+})();
+</script>
+
+
+
+<script id="starcars_supplier_warning_patch_v2">
+/* ===== Supplier Warning on Sales Tab + Settings List (safe patch v2) ===== */
+(function(){
+  if (window.__starcars_supplier_warning_patch_v2__) return;
+  window.__starcars_supplier_warning_patch_v2__ = true;
+
+  function esc(v){
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  function norm(v){ return String(v || '').trim().toLowerCase(); }
+
+  function ensureSupplierWarningSettings(){
+    if (!window.db) window.db = {};
+    db.company = db.company || {};
+    if (!Array.isArray(db.company.supplierWarnings)) {
+      if (typeof db.company.supplierWarnings === 'string') {
+        db.company.supplierWarnings = db.company.supplierWarnings.split(/\n|,/).map(function(x){ return x.trim(); }).filter(Boolean);
+      } else {
+        db.company.supplierWarnings = [];
+      }
+    }
+    return db.company.supplierWarnings;
+  }
+
+  window.starCarsSupplierWarningList = function(){
+    return ensureSupplierWarningSettings().map(function(x){ return String(x || '').trim(); }).filter(Boolean);
+  };
+
+  window.starCarsFindVehicleByRegForSupplierWarning = function(reg){
+    reg = String(reg || '').trim().toUpperCase();
+    if (!reg) return null;
+    return (db.vehicles || []).find(function(v){
+      return String((v && v.reg) || '').trim().toUpperCase() === reg;
+    }) || null;
+  };
+
+  window.starCarsSupplierWarningForReg = function(reg){
+    var v = window.starCarsFindVehicleByRegForSupplierWarning(reg);
+    if (!v) return null;
+    var supplier = String(v.supplier || '').trim();
+    if (!supplier) return null;
+
+    var hit = window.starCarsSupplierWarningList().find(function(name){
+      var a = norm(name), b = norm(supplier);
+      return a && (a === b || b.indexOf(a) !== -1 || a.indexOf(b) !== -1);
+    });
+    if (!hit) return null;
+
+    return {
+      vehicle: v,
+      supplier: supplier,
+      matched: hit,
+      message: 'WARNING: This vehicle was bought from supplier "' + supplier + '".'
+    };
+  };
+
+  function showSupplierWarningBox(wrap, opts){
+    opts = opts || {};
+    var regEl = wrap && wrap.querySelector && wrap.querySelector('#sale_reg');
+    var box = wrap && wrap.querySelector && wrap.querySelector('#sale_supplierWarn');
+    if (!regEl || !box) return null;
+
+    var warn = window.starCarsSupplierWarningForReg(regEl.value);
+    if (!warn) {
+      box.style.display = 'none';
+      box.innerHTML = '';
+      return null;
+    }
+
+    var v = warn.vehicle || {};
+    box.style.display = '';
+    box.innerHTML = '<b>⚠ Supplier Warning</b><br>'
+      + 'This vehicle <b>' + esc(String(v.reg || '').toUpperCase()) + '</b> was bought from supplier: '
+      + '<b>' + esc(warn.supplier) + '</b>.'
+      + '<br><span class="small">Please check with manager before completing the sale.</span>';
+
+    var reg = String(v.reg || '').toUpperCase();
+    if (opts.popup && box.dataset.lastSupplierWarningReg !== reg) {
+      box.dataset.lastSupplierWarningReg = reg;
+      setTimeout(function(){ alert(warn.message + '\n\nPlease check with manager before completing the sale.'); }, 50);
+    }
+    return warn;
+  }
+
+  function injectSalesSupplierWarning(wrap){
+    if (!wrap || !wrap.querySelector) return wrap;
+    var regEl = wrap.querySelector('#sale_reg');
+    if (!regEl) return wrap;
+
+    var box = wrap.querySelector('#sale_supplierWarn');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'sale_supplierWarn';
+      box.style.cssText = 'display:none;margin-top:10px;padding:12px;border-radius:12px;border:1px solid rgba(255,196,87,.55);background:rgba(255,196,87,.14);color:#ffe9b8;font-weight:800;';
+      var info = wrap.querySelector('#sale_vehicleInfo');
+      if (info && info.parentNode) info.parentNode.insertBefore(box, info.nextSibling);
+      else if (regEl.closest && regEl.closest('.salesSectionCard')) regEl.closest('.salesSectionCard').appendChild(box);
+      else regEl.parentNode.appendChild(box);
+    }
+
+    if (!regEl.dataset.supplierWarningBound) {
+      var refresh = function(){ showSupplierWarningBox(wrap, {popup:true}); };
+      regEl.addEventListener('input', refresh);
+      regEl.addEventListener('change', refresh);
+      regEl.dataset.supplierWarningBound = '1';
+    }
+    setTimeout(function(){ showSupplierWarningBox(wrap, {popup:false}); }, 0);
+
+    var saveBtn = wrap.querySelector('#sale_add');
+    if (saveBtn && !saveBtn.dataset.supplierWarningWrapped) {
+      var oldClick = saveBtn.onclick;
+      saveBtn.onclick = function(ev){
+        var warn = showSupplierWarningBox(wrap, {popup:false});
+        if (warn) {
+          var ok = confirm('SUPPLIER WARNING\n\nThis vehicle was bought from supplier: ' + warn.supplier + '\n\nDo you still want to continue recording this sale?');
+          if (!ok) return false;
+        }
+        if (typeof oldClick === 'function') return oldClick.call(this, ev);
+        return true;
+      };
+      saveBtn.dataset.supplierWarningWrapped = '1';
+    }
+    return wrap;
+  }
+
+  function injectSettingsSupplierWarning(wrap){
+    if (!wrap || !wrap.querySelector || wrap.querySelector('#supplierWarningsCard')) return wrap;
+    ensureSupplierWarningSettings();
+
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.id = 'supplierWarningsCard';
+    card.innerHTML = '<h3>Supplier Warning List</h3>'
+      + '<div class="small" style="margin-bottom:8px">Add one supplier per line. When a salesperson selects a vehicle from this supplier in Sales, the system shows an immediate warning and asks again before saving.</div>'
+      + '<textarea id="c_supplierWarnings" placeholder="Example:\nSupplier B" style="width:100%;min-height:95px">' + esc(window.starCarsSupplierWarningList().join('\n')) + '</textarea>'
+      + '<div class="row" style="margin-top:8px"><button id="c_supplierWarningsSave" class="primary" type="button">Save Supplier Warnings</button></div>';
+
+    var grid = wrap.querySelector('.grid2') || wrap;
+    grid.appendChild(card);
+
+    card.querySelector('#c_supplierWarningsSave').onclick = function(){
+      var txt = String(card.querySelector('#c_supplierWarnings').value || '');
+      db.company = db.company || {};
+      db.company.supplierWarnings = txt.split(/\n|,/).map(function(x){ return x.trim(); }).filter(Boolean);
+      if (typeof saveDB === 'function') saveDB();
+      if (typeof addAudit === 'function') addAudit('update','settings','','Updated supplier warning list');
+      alert('Supplier warning list saved.');
+    };
+    return wrap;
+  }
+
+  function wrapViews(){
+    if (typeof window.viewSales === 'function' && !window.viewSales.__supplierWarningWrappedV2) {
+      var oldSales = window.viewSales;
+      window.viewSales = function(){
+        var wrap = oldSales.apply(this, arguments);
+        try { injectSalesSupplierWarning(wrap); } catch(e) { console.warn('Supplier warning Sales patch failed', e); }
+        return wrap;
+      };
+      window.viewSales.__supplierWarningWrappedV2 = true;
+    }
+
+    if (typeof window.viewSettings === 'function' && !window.viewSettings.__supplierWarningWrappedV2) {
+      var oldSettings = window.viewSettings;
+      window.viewSettings = function(){
+        var wrap = oldSettings.apply(this, arguments);
+        try { injectSettingsSupplierWarning(wrap); } catch(e) { console.warn('Supplier warning Settings patch failed', e); }
+        return wrap;
+      };
+      window.viewSettings.__supplierWarningWrappedV2 = true;
+    }
+  }
+
+  wrapViews();
+  setTimeout(wrapViews, 0);
+})();
+</script>
+
+
+
+
+
+
+
+
+
+
+
+<script id="starcars_supplier_warning_dropdown_keeper_v14">
+(function(){
+  if(window.__supplier_warning_dropdown_keeper_v14__) return;
+  window.__supplier_warning_dropdown_keeper_v14__ = true;
+
+  function esc(v){
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  function list(){
+    try{
+      if(typeof window.starCarsSupplierWarningList === 'function') return window.starCarsSupplierWarningList();
+      db.company = db.company || {};
+      return Array.isArray(db.company.supplierWarnings) ? db.company.supplierWarnings : [];
+    }catch(e){ return []; }
+  }
+
+  function populate(root, selected){
+    root = root || document;
+    var sel = root.querySelector && root.querySelector('#v_warningSupplier');
+    if(!sel) return;
+    var cur = selected != null ? selected : sel.value;
+    sel.innerHTML = '<option value="">-- Select warning supplier only if needed --</option>' +
+      list().map(function(s){ return '<option value="'+esc(s)+'">'+esc(s)+'</option>'; }).join('');
+    if(cur){
+      sel.value = cur;
+      if(sel.value !== cur){
+        var opt = document.createElement('option');
+        opt.value = cur; opt.textContent = cur + ' (saved)';
+        sel.appendChild(opt); sel.value = cur;
+      }
+    }
+  }
+
+  function cleanReg(v){ return String(v || '').trim().toUpperCase().replace(/\s+/g,''); }
+  function findVehicle(reg){
+    reg = cleanReg(reg);
+    return (db.vehicles || []).find(function(v){ return cleanReg(v.reg) === reg; });
+  }
+
+  document.addEventListener('click', function(e){
+    var t = e.target;
+    if(!t) return;
+
+    if(t.id === 'v_add'){
+      var regEl = document.getElementById('v_reg');
+      var sel = document.getElementById('v_warningSupplier');
+      var reg = regEl ? cleanReg(regEl.value) : '';
+      var val = sel ? String(sel.value || '').trim() : '';
+      setTimeout(function(){
+        var v = findVehicle(reg);
+        if(v){
+          v.warningSupplier = val;
+          v.supplierWarningSupplier = val;
+          v.updatedAt = new Date().toISOString();
+          try{ if(typeof saveDB === 'function') saveDB(); }catch(e){}
+        }
+      }, 300);
+    }
+
+    var act = t.getAttribute && t.getAttribute('data-act');
+    var id = t.getAttribute && t.getAttribute('data-id');
+    if(act === 'edit' && id){
+      setTimeout(function(){
+        var v = (db.vehicles || []).find(function(x){ return String(x.id) === String(id); });
+        if(v) populate(document, v.warningSupplier || v.supplierWarningSupplier || '');
+      }, 150);
+    }
+
+    var txt = String(t.id || '') + ' ' + String(t.textContent || '');
+    if(/supplierwarningssave/i.test(txt) || /save supplier warnings/i.test(txt)){
+      setTimeout(function(){ populate(document); }, 150);
+    }
+  }, true);
+
+  if(typeof window.viewVehicles === 'function' && !window.viewVehicles.__dropdownKeeperV14){
+    var old = window.viewVehicles;
+    window.viewVehicles = function(){
+      var out = old.apply(this, arguments);
+      setTimeout(function(){ populate(out); }, 80);
+      return out;
+    };
+    window.viewVehicles.__dropdownKeeperV14 = true;
+  }
+
+  if(typeof window.render === 'function' && !window.render.__dropdownKeeperRenderV14){
+    var oldRender = window.render;
+    window.render = function(){
+      var out = oldRender.apply(this, arguments);
+      setTimeout(function(){ populate(document); }, 250);
+      return out;
+    };
+    window.render.__dropdownKeeperRenderV14 = true;
+  }
+
+  setTimeout(function(){ populate(document); }, 500);
 })();
 </script>
 
